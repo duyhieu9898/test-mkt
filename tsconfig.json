@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "@1person/core": ["./packages/core/src"],
+      "@1person/core/*": ["./packages/core/src/*"],
+      "@1person/ui": ["./packages/ui/src"],
+      "@1person/ui/*": ["./packages/ui/src/*"],
+      "@1person/agents": ["./packages/agents/src"],
+      "@1person/agents/*": ["./packages/agents/src/*"],
+      "@1person/config": ["./packages/config"],
+      "@1person/config/*": ["./packages/config/*"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".next", ".turbo"]
+}

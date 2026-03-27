@@ -1,0 +1,46 @@
+{
+  "name": "@1person/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@1person/core": "workspace:*",
+    "@anthropic-ai/sdk": "^0.20.0",
+    "@hono/node-server": "^1.8.0",
+    "@hono/zod-validator": "^0.2.0",
+    "bcryptjs": "^2.4.3",
+    "bullmq": "^5.1.0",
+    "dotenv": "^17.3.1",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.0.0",
+    "ioredis": "^5.3.0",
+    "jsonwebtoken": "^9.0.0",
+    "nanoid": "^5.0.0",
+    "openai": "^4.28.0",
+    "ua-parser-js": "^2.0.9",
+    "uuid": "^13.0.0",
+    "ws": "^8.16.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.0",
+    "@types/ua-parser-js": "^0.7.39",
+    "@types/uuid": "^11.0.0",
+    "@vitest/coverage-v8": "^4.1.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.0"
+  }
+}

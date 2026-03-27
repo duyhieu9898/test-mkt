@@ -1,0 +1,195 @@
+AI COMPANY OS - WORKFLOW DIAGRAM
+=================================
+Version: 2.0.0 | Updated: 2025-03-13
+
+COMPLETE ARCHITECTURE WITH REASONING LOOP
+==========================================
+
+User Input
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│            WORKFLOW RUNNER                  │
+│         (Main Entry Point)                  │
+└─────────────────┬───────────────────────────┘
+                  │
+    ┌─────────────┼─────────────┐
+    ▼             ▼             ▼
+┌───────────────────────────────────────────────────┐
+│           CEO REASONING LOOP                       │
+│              (plan → act → reflect)               │
+│                                                    │
+│  ┌─────────┐    ┌─────────┐    ┌─────────────┐   │
+│  │  PLAN   │───►│   ACT   │───►│   REFLECT   │   │
+│  │         │    │         │    │             │   │
+│  │• SWOT   │    │• Execute│    │• Outcomes   │   │
+│  │• Goals  │    │• Delegate│   │• Learnings  │   │
+│  │• Strategy│   │• Notify │    │• Adjust     │   │
+│  │• Risks  │    │         │    │             │   │
+│  └─────────┘    └─────────┘    └──────┬──────┘   │
+│                                       │          │
+│                    ┌──────────────────┘          │
+│                    │ (Feedback to next cycle)    │
+│                    ▼                             │
+└───────────────────────────────────────────────────┘
+                  │
+    ┌─────────────┼─────────────┐
+    ▼             ▼             ▼
+┌───────┐   ┌─────────┐   ┌───────────┐
+│  CEO  │◄──│ COMPANY │──►│ORCHESTRATOR│
+│ BRAIN │   │  STATE  │   │           │
+└───┬───┘   └─────────┘   └─────┬─────┘
+    │                           │
+    └───────────┬───────────────┘
+                ▼
+┌─────────────────────────────────────────────┐
+│         GOAL DECOMPOSITION                  │
+│     (Objective → Subtasks)                  │
+└─────────────────┬───────────────────────────┘
+                  ▼
+┌─────────────────────────────────────────────┐
+│          TASK GRAPH ENGINE                  │
+│           (DAG Execution)                   │
+└─────────────────┬───────────────────────────┘
+                  ▼
+┌─────────────────────────────────────────────┐
+│              AGENTS                         │
+│  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐          │
+│  │ CEO │ │ MKT │ │SALES│ │ ... │          │
+│  └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘          │
+│     └───────┴───┬───┴───────┘              │
+│                 ▼                           │
+│      COMMUNICATION PROTOCOL                 │
+│   {sender, receiver, goal, context,         │
+│    constraints, expectedOutput}             │
+└─────────────────┬───────────────────────────┘
+                  ▼
+┌─────────────────────────────────────────────┐
+│          EXECUTION LAYER                    │
+│    (LLM + Budget + Memory-Enhanced)         │
+└─────────────────┬───────────────────────────┘
+                  │
+    ┌─────────────┼─────────────┐
+    ▼             ▼             ▼
+┌───────┐   ┌─────────┐   ┌───────────┐
+│MEMORY │   │EVALUATION│   │ EVOLUTION │
+│(vector)│   │ (KPIs)  │   │(A/B test) │
+└───┬───┘   └────┬────┘   └─────┬─────┘
+    │            │              │
+    └────────────┼──────────────┘
+                 ▼
+┌─────────────────────────────────────────────┐
+│            AUTO-SPAWN                       │
+│    (Dynamic Agent Creation/Retirement)      │
+└─────────────────┬───────────────────────────┘
+                  │
+                  ▼
+         ┌───────────────┐
+         │ FEEDBACK LOOP │
+         │ (→ CEO Agent) │
+         └───────────────┘
+
+
+WORKFLOW SCHEDULES
+==================
+
+┌──────────────┬───────────┬────────────────────────────────┐
+│ Workflow     │ Interval  │ Operations                     │
+├──────────────┼───────────┼────────────────────────────────┤
+│ Operational  │ 5 min     │ Execute tasks, communication,  │
+│              │           │ rebalance workload             │
+├──────────────┼───────────┼────────────────────────────────┤
+│ Strategic    │ 1 hour    │ CEO brief, strategic decisions,│
+│              │           │ set priorities                 │
+├──────────────┼───────────┼────────────────────────────────┤
+│ Maintenance  │ 24 hours  │ Agent evolution, evaluation,   │
+│              │           │ cleanup, memory consolidation  │
+└──────────────┴───────────┴────────────────────────────────┘
+
+
+SERVICE FILE MAP
+================
+
+workflow-runner.ts      → Main entry point
+company-state-engine.ts → State management
+ceo-brain.ts            → Strategic decisions
+agent-orchestrator.ts   → Agent coordination
+goal-decomposition.ts   → Objective breakdown
+task-graph.ts           → DAG execution
+agent-runtime.ts        → Task execution
+agent-communication.ts  → Structured messaging
+memory.ts               → Vector memory (pgvector)
+evaluation.ts           → Performance assessment
+evolution.ts            → Agent evolution
+self-improvement.ts     → Autonomous improvement
+auto-spawn.ts           → Dynamic agent creation
+
+
+AGENT COMMUNICATION PROTOCOL
+============================
+
+Message Structure:
+{
+  "sender": "agent-uuid",
+  "receiver": "agent-uuid",
+  "messageType": "task_delegation|request_help|decision_request|...",
+  "priority": "critical|high|normal|low",
+  "goal": "What sender wants to achieve",
+  "context": {
+    "taskId": "...",
+    "situation": "...",
+    "relevantData": {...}
+  },
+  "constraints": {
+    "deadline": "ISO date",
+    "budget": 100,
+    "requiredCapabilities": [...]
+  },
+  "expectedOutput": {
+    "format": "task_result|decision|information|...",
+    "description": "What sender expects back"
+  },
+  "content": {
+    "summary": "Brief summary",
+    "details": "Full details",
+    "actions": [...],
+    "recommendations": [...]
+  }
+}
+
+
+COMPANY STATE STRUCTURE
+=======================
+
+{
+  "currentStrategy": {...},
+  "budgetState": {
+    "totalBudget": 1000,
+    "spent": 250,
+    "remaining": 750,
+    "monthlyBurn": 50,
+    "projectedRunway": 15
+  },
+  "agentState": {
+    "total": 5,
+    "byStatus": {"active": 3, "idle": 2},
+    "avgPerformance": 78,
+    "topPerformers": [...],
+    "capacityUtilization": 65
+  },
+  "taskState": {
+    "total": 50,
+    "byStatus": {"completed": 40, "pending": 10},
+    "successRate": 85,
+    "blockedTasks": [...]
+  },
+  "healthScore": 82,
+  "healthIndicators": {
+    "agentHealth": 85,
+    "budgetHealth": 75,
+    "taskHealth": 85,
+    "communicationHealth": 80,
+    "growthHealth": 80
+  },
+  "activeAlerts": [...]
+}

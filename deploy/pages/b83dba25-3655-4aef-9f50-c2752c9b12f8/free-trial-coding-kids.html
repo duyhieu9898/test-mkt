@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Free Coding Trial for Kids | Kid Leader Hub</title>
+  <meta name="description" content="Give your child a free coding class. Learn programming through fun projects. Ages 6-15. 100% English environment in Ho Chi Minh City.">
+  <meta property="og:title" content="Free Coding Trial for Kids | Kid Leader Hub">
+  <meta property="og:description" content="Your child's first step into tech. Free trial class — learn coding through fun projects.">
+  <meta property="og:type" content="website">
+  <meta name="keywords" content="coding for kids, programming classes, kid leader hub, free trial">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1e293b; line-height: 1.6; }
+    .container { max-width: 800px; margin: 0 auto; padding: 0 20px; }
+
+    /* Hero */
+    .hero { padding: 60px 20px 40px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%); color: white; text-align: center; }
+    .hero h1 { font-size: 2.2em; font-weight: 800; margin-bottom: 12px; line-height: 1.2; }
+    .hero p { font-size: 1.15em; opacity: 0.9; margin-bottom: 20px; max-width: 600px; margin-left: auto; margin-right: auto; }
+    .hero .badge { display: inline-block; background: rgba(255,255,255,0.2); padding: 6px 16px; border-radius: 20px; font-size: 0.85em; margin-bottom: 20px; }
+    .hero .stats { display: flex; justify-content: center; gap: 30px; margin-top: 20px; }
+    .hero .stat { text-align: center; }
+    .hero .stat-num { font-size: 1.5em; font-weight: 800; }
+    .hero .stat-label { font-size: 0.8em; opacity: 0.8; }
+
+    /* Form */
+    .form-section { padding: 40px 20px; background: white; }
+    .form-card { max-width: 500px; margin: -60px auto 0; background: white; border-radius: 16px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.15); position: relative; z-index: 2; }
+    .form-card h2 { font-size: 1.4em; margin-bottom: 4px; text-align: center; }
+    .form-card .subtitle { color: #64748b; text-align: center; margin-bottom: 24px; font-size: 0.95em; }
+    .form-card input, .form-card select { width: 100%; padding: 12px 16px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 1em; margin-bottom: 12px; outline: none; transition: border-color 0.2s; }
+    .form-card input:focus, .form-card select:focus { border-color: #6366f1; }
+    .form-card button { width: 100%; padding: 14px; background: #6366f1; color: white; border: none; border-radius: 8px; font-size: 1.1em; font-weight: 700; cursor: pointer; transition: background 0.2s; }
+    .form-card button:hover { background: #4f46e5; }
+    .form-card button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .form-card .privacy { font-size: 0.75em; color: #94a3b8; text-align: center; margin-top: 12px; }
+    .form-card .success { display: none; text-align: center; padding: 20px; }
+    .form-card .success h3 { color: #059669; font-size: 1.3em; margin-bottom: 8px; }
+
+    /* Benefits */
+    .benefits { padding: 50px 20px; background: #f8fafc; }
+    .benefits h2 { text-align: center; font-size: 1.6em; margin-bottom: 30px; }
+    .benefit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; max-width: 800px; margin: 0 auto; }
+    .benefit { background: white; padding: 24px; border-radius: 12px; border: 1px solid #e2e8f0; }
+    .benefit .icon { font-size: 2em; margin-bottom: 8px; }
+    .benefit h3 { font-size: 1.1em; margin-bottom: 4px; }
+    .benefit p { color: #64748b; font-size: 0.9em; }
+
+    /* Social Proof */
+    .social-proof { padding: 40px 20px; text-align: center; }
+    .social-proof h2 { font-size: 1.4em; margin-bottom: 20px; }
+    .testimonials { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; max-width: 800px; margin: 0 auto; }
+    .testimonial { background: #f8fafc; padding: 20px; border-radius: 12px; max-width: 350px; text-align: left; }
+    .testimonial q { font-style: italic; color: #475569; font-size: 0.95em; }
+    .testimonial .author { margin-top: 10px; font-weight: 600; font-size: 0.85em; }
+
+    /* Final CTA */
+    .final-cta { padding: 50px 20px; background: #6366f1; color: white; text-align: center; }
+    .final-cta h2 { font-size: 1.6em; margin-bottom: 8px; }
+    .final-cta p { opacity: 0.9; margin-bottom: 20px; }
+    .final-cta button { padding: 14px 40px; background: white; color: #6366f1; border: none; border-radius: 8px; font-size: 1.1em; font-weight: 700; cursor: pointer; }
+
+    .footer { padding: 20px; text-align: center; color: #94a3b8; font-size: 0.8em; }
+
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 1.6em; }
+      .hero .stats { flex-direction: column; gap: 10px; }
+      .benefit-grid { grid-template-columns: 1fr; }
+      .testimonials { flex-direction: column; align-items: center; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="badge">🎓 Limited spots available</div>
+  <h1>Your Child's First Step Into Coding</h1>
+  <p>Free trial class at Kid Leader Hub. Learn programming through fun projects in a 100% English environment. Ages 6-15.</p>
+  <div class="stats">
+    <div class="stat"><div class="stat-num">500+</div><div class="stat-label">Students trained</div></div>
+    <div class="stat"><div class="stat-num">100%</div><div class="stat-label">English environment</div></div>
+    <div class="stat"><div class="stat-num">Free</div><div class="stat-label">Trial class</div></div>
+  </div>
+</section>
+
+<!-- Lead Capture Form -->
+<section class="form-section">
+  <div class="form-card" id="lead-form-card">
+    <div id="form-content">
+      <h2>Book a Free Trial Class</h2>
+      <p class="subtitle">No payment required. See if your child loves it.</p>
+      <form id="lead-form" onsubmit="submitLead(event)">
+        <input type="text" name="name" placeholder="Parent's name" required>
+        <input type="email" name="email" placeholder="Email address" required>
+        <input type="tel" name="phone" placeholder="Phone number">
+        <select name="age" required>
+          <option value="">Child's age</option>
+          <option value="5-7">5-7 years</option>
+          <option value="8-10">8-10 years</option>
+          <option value="11-13">11-13 years</option>
+          <option value="14-15">14-15 years</option>
+        </select>
+        <button type="submit" id="submit-btn">Book Free Trial →</button>
+      </form>
+      <p class="privacy">No spam. We respect your privacy.</p>
+    </div>
+    <div class="success" id="success-msg">
+      <h3>🎉 You're in!</h3>
+      <p>We'll contact you within 24 hours to schedule your child's free trial class.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Benefits -->
+<section class="benefits">
+  <h2>Why Parents Choose Kid Leader Hub</h2>
+  <div class="benefit-grid">
+    <div class="benefit">
+      <div class="icon">🎮</div>
+      <h3>Learn Through Play</h3>
+      <p>Minecraft, Roblox, LEGO Robotics — kids learn coding through games they love.</p>
+    </div>
+    <div class="benefit">
+      <div class="icon">🌍</div>
+      <h3>100% English</h3>
+      <p>Full immersion English environment develops both tech and language skills.</p>
+    </div>
+    <div class="benefit">
+      <div class="icon">👨‍🏫</div>
+      <h3>Expert Teachers</h3>
+      <p>Experienced instructors with international training and child-friendly approach.</p>
+    </div>
+    <div class="benefit">
+      <div class="icon">📱</div>
+      <h3>Real Skills</h3>
+      <p>Python, Scratch, Robotics — skills that prepare kids for the digital future.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Social Proof -->
+<section class="social-proof">
+  <h2>What Parents Say</h2>
+  <div class="testimonials">
+    <div class="testimonial">
+      <q>My son was hooked after the first class. He now builds his own games in Roblox!</q>
+      <div class="author">— Nguyễn Thị Mai, parent of 10-year-old</div>
+    </div>
+    <div class="testimonial">
+      <q>The English immersion is a huge bonus. My daughter improved both her coding AND English skills.</q>
+      <div class="author">— Trần Minh Tuấn, parent of 12-year-old</div>
+    </div>
+  </div>
+</section>
+
+<!-- Final CTA -->
+<section class="final-cta">
+  <h2>Spots Are Limited — Book Now</h2>
+  <p>Give your child the gift of coding. Free trial, no commitment.</p>
+  <button onclick="document.getElementById('lead-form-card').scrollIntoView({behavior:'smooth'})">Book Free Trial →</button>
+</section>
+
+<footer class="footer">
+  <p>© 2026 Kid Leader Hub | Quận 7, Hồ Chí Minh | Powered by 1Person AI</p>
+</footer>
+
+<!-- 1Person Tracking + UTM Attribution Script -->
+<script>
+// Parse UTM params from URL
+function getUTMParams() {
+  var params = new URLSearchParams(window.location.search);
+  return {
+    utm_source: params.get('utm_source') || '',
+    utm_medium: params.get('utm_medium') || '',
+    utm_campaign: params.get('utm_campaign') || '',
+    utm_content: params.get('utm_content') || '',
+    utm_term: params.get('utm_term') || '',
+  };
+}
+
+// Generate visitor/session IDs
+function getVisitorId() {
+  var id = localStorage.getItem('_1p_vid');
+  if (!id) { id = 'v_' + Math.random().toString(36).substr(2, 12) + Date.now().toString(36); localStorage.setItem('_1p_vid', id); }
+  return id;
+}
+function getSessionId() {
+  var id = sessionStorage.getItem('_1p_sid');
+  if (!id) { id = 's_' + Math.random().toString(36).substr(2, 12) + Date.now().toString(36); sessionStorage.setItem('_1p_sid', id); }
+  return id;
+}
+
+var COMPANY_ID = 'b83dba25-3655-4aef-9f50-c2752c9b12f8';
+var API_BASE = 'http://localhost:8004/api/v1/tracking';
+var utmParams = getUTMParams();
+var visitorId = getVisitorId();
+var sessionId = getSessionId();
+
+// Track session with UTM on page load
+(function() {
+  fetch(API_BASE + '/public/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      companyId: COMPANY_ID,
+      visitorId: visitorId,
+      sessionId: sessionId,
+      utm_source: utmParams.utm_source,
+      utm_medium: utmParams.utm_medium,
+      utm_campaign: utmParams.utm_campaign,
+      utm_content: utmParams.utm_content,
+      utm_term: utmParams.utm_term,
+      referrer: document.referrer,
+      landingPage: window.location.href,
+    }),
+  }).catch(function(){});
+
+  // Track page view
+  fetch(API_BASE + '/public/pageview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      companyId: COMPANY_ID,
+      sessionId: sessionId,
+      url: window.location.href,
+      path: window.location.pathname,
+      title: document.title,
+      pageType: 'landing_page',
+    }),
+  }).catch(function(){});
+})();
+
+// Lead form submission
+async function submitLead(e) {
+  e.preventDefault();
+  var btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Submitting...';
+
+  var form = document.getElementById('lead-form');
+  var data = {
+    firstName: form.name.value,
+    email: form.email.value,
+    phone: form.phone.value,
+    source: 'landing_page',
+    notes: 'Free trial request. Child age: ' + form.age.value,
+    pageUrl: window.location.href,
+  };
+
+  try {
+    // Submit to chatbot widget endpoint (public, no auth)
+    var res = await fetch('http://localhost:8004/api/v1/chatbot/widget/' + COMPANY_ID + '/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: 'New lead: ' + data.firstName + ' (' + data.email + ') - child age ' + form.age.value,
+        visitorName: data.firstName,
+        visitorEmail: data.email,
+      }),
+    });
+
+    // Submit to lead capture endpoint
+    try {
+      await fetch('http://localhost:8004/api/v1/lead-capture/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId: COMPANY_ID,
+          email: data.email,
+          name: data.firstName,
+          phone: data.phone,
+          source: utmParams.utm_source || 'landing_page',
+          metadata: { childAge: form.age.value, page: 'free-trial-coding-kids', ...utmParams },
+        }),
+      });
+    } catch(e) {}
+
+    // Track conversion with full revenue attribution
+    try {
+      await fetch(API_BASE + '/public/conversion/attributed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId: COMPANY_ID,
+          sessionId: sessionId,
+          type: 'lead',
+          revenue: 0,
+          metadata: {
+            email: data.email,
+            childAge: form.age.value,
+            page: 'free-trial-coding-kids',
+            utm: utmParams,
+          },
+        }),
+      });
+    } catch(e) {}
+
+    // Show success
+    document.getElementById('form-content').style.display = 'none';
+    document.getElementById('success-msg').style.display = 'block';
+
+    // Track conversion on ad platforms
+    if (typeof fbq !== 'undefined') fbq('track', 'Lead');
+    if (typeof gtag !== 'undefined') gtag('event', 'generate_lead');
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Book Free Trial \u2192';
+    alert('Something went wrong. Please try again.');
+  }
+}
+</script>
+</body>
+</html>

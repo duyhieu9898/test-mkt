@@ -1,0 +1,62 @@
+{
+  "name": "@1person/workflow",
+  "version": "0.1.0",
+  "description": "AI Company OS - Workflow Orchestration System",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./engines": {
+      "import": "./dist/engines/index.js",
+      "types": "./dist/engines/index.d.ts"
+    },
+    "./events": {
+      "import": "./dist/events/index.js",
+      "types": "./dist/events/index.d.ts"
+    },
+    "./plugins": {
+      "import": "./dist/plugins/index.js",
+      "types": "./dist/plugins/index.d.ts"
+    },
+    "./types": {
+      "import": "./dist/types/index.js",
+      "types": "./dist/types/index.d.ts"
+    },
+    "./landing-pages/blocks": {
+      "import": "./dist/landing-pages/blocks/index.js",
+      "types": "./dist/landing-pages/blocks/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "peerDependencies": {
+    "@1person/core": "workspace:*"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "workflow",
+    "orchestration",
+    "ai",
+    "agents",
+    "automation"
+  ],
+  "author": "1Person",
+  "license": "MIT"
+}
