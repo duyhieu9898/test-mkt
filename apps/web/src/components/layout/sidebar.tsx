@@ -20,6 +20,7 @@ import {
   Brain,
   Image,
   Shield,
+  Search,
 } from 'lucide-react';
 import { useCompanies } from '@/lib/api/hooks';
 
@@ -28,6 +29,7 @@ const navigation = [
   { name: 'Dashboard', href: '', icon: LayoutDashboard },
   { name: 'My Pages', href: '/landing-pages', icon: FileText },
   { name: 'Marketing', href: '/marketing', icon: Megaphone },
+  { name: 'SEO Engine', href: '/seo-engine', icon: Search },
   { name: 'Assets', href: '/assets', icon: Image },
   { name: 'Knowledge', href: '/knowledge', icon: BookOpen },
   { name: 'AI Brain', href: '/ai-brain', icon: Shield },

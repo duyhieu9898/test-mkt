@@ -240,3 +240,68 @@ export const videoProjectsRelations = relations(videoProjects, ({ one }) => ({
   company: one(companies, { fields: [videoProjects.companyId], references: [companies.id] }),
   campaign: one(campaigns, { fields: [videoProjects.campaignId], references: [campaigns.id] }),
 }));
+
+// === BLOG POSTS ===
+
+export const blogPosts = pgTable(
+  'blog_posts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+    title: varchar('title', { length: 500 }).notNull(),
+    slug: varchar('slug', { length: 500 }).notNull(),
+    metaDescription: text('meta_description'),
+    content: text('content').notNull(),
+    excerpt: text('excerpt'),
+    keyword: varchar('keyword', { length: 255 }),
+    searchIntent: varchar('search_intent', { length: 50 }),
+    tags: jsonb('tags').default([]),
+    faq: jsonb('faq').default([]),
+    schemaMarkup: jsonb('schema_markup'),
+    wordCount: integer('word_count'),
+    language: varchar('language', { length: 10 }).default('en'),
+    status: varchar('status', { length: 20 }).default('draft'), // draft, published, pushed_to_cms
+    cmsPostId: integer('cms_post_id'), // WordPress post ID after push
+    cmsPostUrl: text('cms_post_url'),
+    seoJobId: varchar('seo_job_id', { length: 64 }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    companyIdx: index('blog_posts_company_idx').on(table.companyId),
+    keywordIdx: index('blog_posts_keyword_idx').on(table.keyword),
+    statusIdx: index('blog_posts_status_idx').on(table.status),
+  })
+);
+
+export const blogPostsRelations = relations(blogPosts, ({ one }) => ({
+  company: one(companies, { fields: [blogPosts.companyId], references: [companies.id] }),
+}));
+
+// === PRODUCT CATALOG ===
+
+export const productCatalog = pgTable(
+  'product_catalog',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+    name: varchar('name', { length: 255 }).notNull(),
+    description: text('description'),
+    url: text('url'),
+    category: varchar('category', { length: 100 }),
+    keywords: jsonb('keywords').default([]),
+    seoStatus: varchar('seo_status', { length: 20 }).default('pending'), // pending, crawled, planned, generated, published
+    generatedPages: jsonb('generated_pages').default([]),
+    generatedBlogs: jsonb('generated_blogs').default([]),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    companyIdx: index('product_catalog_company_idx').on(table.companyId),
+    seoStatusIdx: index('product_catalog_seo_status_idx').on(table.seoStatus),
+  })
+);
+
+export const productCatalogRelations = relations(productCatalog, ({ one }) => ({
+  company: one(companies, { fields: [productCatalog.companyId], references: [companies.id] }),
+}));

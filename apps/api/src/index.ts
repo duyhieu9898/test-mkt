@@ -48,6 +48,7 @@ import chatbotRouter from './routes/chatbot';
 import meetingsRouter from './routes/meetings';
 import leadsRouter from './routes/leads';
 import tenantAIRouter from './routes/tenant-ai';
+import seoEngineRouter from './routes/seo-engine';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -144,6 +145,7 @@ api.route('/chatbot', chatbotRouter);
 api.route('/meetings', meetingsRouter);
 api.route('/leads', leadsRouter);
 api.route('/tenant-ai', tenantAIRouter);
+api.route('/seo-engine', seoEngineRouter);
 
 // Mount API
 app.route('/api/v1', api);
