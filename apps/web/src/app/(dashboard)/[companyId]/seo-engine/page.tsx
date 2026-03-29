@@ -144,7 +144,10 @@ export default function ContentHubPage() {
     queryKey: ['seo-suggestions', companyId],
     queryFn: () => api.get(`/seo-engine/company/${companyId}/suggestions`, { token: token! }),
     enabled: !!token,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 30 * 60 * 1000, // 30 min — only refresh on manual "Refresh" click
+    gcTime: 60 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
 
   // ─── Fetch content pipeline stats ─────────────────────────────
@@ -469,7 +472,12 @@ export default function ContentHubPage() {
           className="gap-2 shrink-0"
           disabled={suggestionsLoading}
           onClick={() => {
-            qc.invalidateQueries({ queryKey: ['seo-suggestions'] });
+            // Force server to regenerate (bust cache)
+            qc.setQueryData(['seo-suggestions', companyId], undefined);
+            qc.fetchQuery({
+              queryKey: ['seo-suggestions', companyId],
+              queryFn: () => api.get(`/seo-engine/company/${companyId}/suggestions?refresh=true`, { token: token! }),
+            });
             qc.invalidateQueries({ queryKey: ['seo-results'] });
             qc.invalidateQueries({ queryKey: ['seo-blogs'] });
             toast.success('Refreshing content suggestions...');

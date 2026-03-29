@@ -423,8 +423,19 @@ seoEngineRouter.post(
 // AI CONTENT SUGGESTIONS
 // ===============================================================
 
+// Cache suggestions per company — avoid calling LLM on every page load
+const suggestionsCache = new Map<string, { data: any; timestamp: number }>();
+const SUGGESTIONS_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
 seoEngineRouter.get('/company/:companyId/suggestions', async (c) => {
   const companyId = c.req.param('companyId');
+  const forceRefresh = c.req.query('refresh') === 'true';
+
+  // Return cached if fresh
+  const cached = suggestionsCache.get(companyId);
+  if (cached && !forceRefresh && Date.now() - cached.timestamp < SUGGESTIONS_CACHE_TTL) {
+    return c.json(cached.data);
+  }
 
   try {
     const { buildBusinessContext } = await import('../services/business-context');
@@ -491,12 +502,17 @@ Focus on topics that would drive traffic and leads for this specific business.`,
 
     const parsed = extractJSON(text);
 
-    return c.json({
+    const result = {
       needsSetup: false,
       blogTopics: parsed?.blogTopics || [],
       keywordOpportunities: parsed?.keywordOpportunities || [],
       contentGaps: parsed?.contentGaps || [],
-    });
+    };
+
+    // Cache for 30 minutes
+    suggestionsCache.set(companyId, { data: result, timestamp: Date.now() });
+
+    return c.json(result);
   } catch (err: any) {
     console.error('[SEO Engine] Suggestions failed:', err);
 
