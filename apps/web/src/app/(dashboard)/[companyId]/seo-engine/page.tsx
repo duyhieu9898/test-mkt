@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,7 @@ import {
 import {
   Search, Rocket, Loader2, Plus, X, CheckCircle2, Clock, AlertCircle,
   Globe, FileText, PenTool, Share2, Key, ExternalLink, ArrowRight, Info,
-  Sparkles, BarChart3, Trash2, Eye, Zap, RefreshCw,
+  Sparkles, BarChart3, Trash2, Eye, Zap, RefreshCw, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api/client';
@@ -91,6 +91,7 @@ export default function ContentHubPage() {
   const companyId = params.companyId as string;
   const token = useAuthStore((state) => state.token);
   const qc = useQueryClient();
+  const router = useRouter();
 
   // Active job tracking
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -118,6 +119,21 @@ export default function ContentHubPage() {
   // WordPress categories
   const [wpCategories, setWpCategories] = useState<Array<{ id: number; name: string }>>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+
+  // Generation results panel
+  const [generationResult, setGenerationResult] = useState<{
+    blogs: number;
+    landingPages: number;
+    banners: number;
+    socialPosts: number;
+  } | null>(null);
+
+  // Blog expand/preview
+  const [expandedBlog, setExpandedBlog] = useState<string | null>(null);
+  const [blogContent, setBlogContent] = useState<Record<string, string>>({});
+
+  // Generating progress
+  const [generatingTopicCount, setGeneratingTopicCount] = useState(0);
 
   // Pipeline state
   const [isStartingPipeline, setIsStartingPipeline] = useState(false);
@@ -227,6 +243,7 @@ export default function ContentHubPage() {
 
   const generateFromTopics = async (topics: BlogTopic[]) => {
     setIsGenerating(true);
+    setGeneratingTopicCount(topics.length);
     try {
       const res = await api.post<any>(
         `/seo-engine/company/${companyId}/generate-from-suggestion`,
@@ -240,6 +257,8 @@ export default function ContentHubPage() {
         },
         { token: token! }
       );
+      setGenerationResult(res.counts);
+      setTimeout(() => setGenerationResult(null), 30000);
       toast.success(res.message || `Created ${res.counts?.blogs || 0} blog posts, ${res.counts?.landingPages || 0} pages, ${res.counts?.banners || 0} banners, ${res.counts?.socialPosts || 0} social posts`);
       setSelectedTopics(new Set());
       qc.invalidateQueries({ queryKey: ['seo-results'] });
@@ -363,10 +382,32 @@ export default function ContentHubPage() {
     }
   };
 
-  const handleDeletePost = async (postId: string) => {
-    // Blog posts are stored in company settings, so we just remove from UI
-    // In a full implementation you'd have a DELETE endpoint
-    toast.info('Blog post removal is coming soon');
+  const handleDeleteBlog = async (blogId: string) => {
+    if (!token || !confirm('Delete this blog post? This cannot be undone.')) return;
+    try {
+      await api.delete(`/seo-engine/company/${companyId}/blogs/${blogId}`, { token });
+      toast.success('Blog post deleted');
+      qc.invalidateQueries({ queryKey: ['seo-results'] });
+      qc.invalidateQueries({ queryKey: ['seo-blogs'] });
+      setExpandedBlog(null);
+    } catch {
+      toast.error('Could not delete blog post');
+    }
+  };
+
+  const toggleBlogExpand = async (blogId: string) => {
+    if (expandedBlog === blogId) {
+      setExpandedBlog(null);
+      return;
+    }
+    setExpandedBlog(blogId);
+
+    if (!blogContent[blogId] && token) {
+      try {
+        const res = await api.get<any>(`/seo-engine/company/${companyId}/blogs/${blogId}`, { token });
+        setBlogContent(prev => ({ ...prev, [blogId]: res.content || '' }));
+      } catch {}
+    }
   };
 
   const handleGenerateFromKeyword = async (kw: any, type: 'blog' | 'all') => {
@@ -444,6 +485,21 @@ export default function ContentHubPage() {
         <ProgressPhase job={jobStatus} />
       )}
 
+      {/* Generating Progress */}
+      {isGenerating && (
+        <Card className="border-blue-200 bg-blue-50/50">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+              <div>
+                <p className="font-medium text-blue-900">Creating content for {generatingTopicCount} topic{generatingTopicCount !== 1 ? 's' : ''}...</p>
+                <p className="text-xs text-blue-700 mt-0.5">Generating blog posts, landing pages, banners, and social posts. This may take a minute.</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Section A: AI Content Suggestions */}
       {!hasActiveJob && (
         <SuggestionsSection
@@ -461,27 +517,77 @@ export default function ContentHubPage() {
         />
       )}
 
+      {/* Generation Results Panel */}
+      {generationResult && (
+        <Card className="border-green-200 bg-green-50/50">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="font-semibold text-green-900 flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5" /> Content Generated Successfully
+                </p>
+                <div className="mt-2 space-y-1 text-sm text-green-800">
+                  {generationResult.blogs > 0 && (
+                    <p className="flex items-center gap-2">
+                      <FileText className="w-3.5 h-3.5" /> {generationResult.blogs} Blog Posts
+                      <button className="text-xs text-green-600 hover:underline" onClick={() => document.getElementById('blog-section')?.scrollIntoView({ behavior: 'smooth' })}>View below ↓</button>
+                    </p>
+                  )}
+                  {generationResult.landingPages > 0 && (
+                    <p className="flex items-center gap-2">
+                      <Globe className="w-3.5 h-3.5" /> {generationResult.landingPages} Landing Pages
+                      <Link href={`/${companyId}/landing-pages`} className="text-xs text-green-600 hover:underline">Go to Pages →</Link>
+                    </p>
+                  )}
+                  {generationResult.banners > 0 && (
+                    <p className="flex items-center gap-2">
+                      <PenTool className="w-3.5 h-3.5" /> {generationResult.banners} Banners
+                      <Link href={`/${companyId}/marketing`} className="text-xs text-green-600 hover:underline">Go to Marketing →</Link>
+                    </p>
+                  )}
+                  {generationResult.socialPosts > 0 && (
+                    <p className="flex items-center gap-2">
+                      <Share2 className="w-3.5 h-3.5" /> {generationResult.socialPosts} Social Posts
+                      <Link href={`/${companyId}/marketing`} className="text-xs text-green-600 hover:underline">Go to Marketing →</Link>
+                    </p>
+                  )}
+                </div>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setGenerationResult(null)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Section B: Content Pipeline Status */}
       {!hasActiveJob && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard
-            icon={<FileText className="w-5 h-5 text-blue-500" />}
-            label="Landing Pages"
-            value={landingPages.length}
-            detail={`${landingPages.filter((p: any) => p.status === 'published').length} published`}
-          />
-          <StatCard
-            icon={<PenTool className="w-5 h-5 text-purple-500" />}
-            label="Blog Posts"
-            value={blogPosts.length}
-            detail={`${blogPosts.filter((p: any) => p.status === 'published' || p.status === 'pushed_to_cms').length} published`}
-          />
-          <StatCard
-            icon={<Share2 className="w-5 h-5 text-pink-500" />}
-            label="Social Posts"
-            value={socialCount}
-            detail="created"
-          />
+          <div className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => router.push(`/${companyId}/landing-pages`)}>
+            <StatCard
+              icon={<FileText className="w-5 h-5 text-blue-500" />}
+              label="Landing Pages"
+              value={landingPages.length}
+              detail={`${landingPages.filter((p: any) => p.status === 'published').length} published`}
+            />
+          </div>
+          <div className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => document.getElementById('blog-section')?.scrollIntoView({ behavior: 'smooth' })}>
+            <StatCard
+              icon={<PenTool className="w-5 h-5 text-purple-500" />}
+              label="Blog Posts"
+              value={blogPosts.length}
+              detail={`${blogPosts.filter((p: any) => p.status === 'published' || p.status === 'pushed_to_cms').length} published`}
+            />
+          </div>
+          <div className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => router.push(`/${companyId}/marketing`)}>
+            <StatCard
+              icon={<Share2 className="w-5 h-5 text-pink-500" />}
+              label="Social Posts"
+              value={socialCount}
+              detail="created"
+            />
+          </div>
           <StatCard
             icon={<Key className="w-5 h-5 text-amber-500" />}
             label="Keywords"
@@ -493,7 +599,7 @@ export default function ContentHubPage() {
 
       {/* Section C: Blog Posts List */}
       {!hasActiveJob && blogPosts.length > 0 && (
-        <Card>
+        <Card id="blog-section">
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-semibold flex items-center gap-2">
@@ -509,49 +615,43 @@ export default function ContentHubPage() {
 
             <div className="space-y-3">
               {blogPosts.map((post: any) => (
-                <div
-                  key={post.id}
-                  className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                >
-                  <Checkbox
-                    checked={selectedPosts.has(post.id)}
-                    onCheckedChange={() => togglePost(post.id)}
-                    className="mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm">{post.title}</p>
-                    <div className="flex items-center gap-3 mt-1 flex-wrap">
-                      {post.keyword && (
-                        <Badge variant="secondary" className="text-xs">
-                          {post.keyword}
-                        </Badge>
-                      )}
-                      {post.wordCount && (
-                        <span className="text-xs text-muted-foreground">
-                          {post.wordCount.toLocaleString()} words
-                        </span>
-                      )}
-                      <Badge
-                        variant="outline"
-                        className={`text-xs ${
-                          post.status === 'published' || post.status === 'pushed_to_cms'
-                            ? 'border-green-300 text-green-700'
-                            : ''
-                        }`}
-                      >
-                        {post.status === 'pushed_to_cms' ? 'On WordPress' : post.status === 'published' ? 'Published' : 'Draft'}
-                      </Badge>
+                <div key={post.id} className="border rounded-lg overflow-hidden">
+                  {/* Header -- click to expand */}
+                  <div
+                    className="p-3 flex items-center gap-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                    onClick={() => toggleBlogExpand(post.id)}
+                  >
+                    <Checkbox checked={selectedPosts.has(post.id)} onClick={(e) => { e.stopPropagation(); togglePost(post.id); }} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{post.title}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {post.keyword && <Badge variant="outline" className="text-[10px]">{post.keyword}</Badge>}
+                        <span className="text-[10px] text-muted-foreground">{post.word_count || post.wordCount} words</span>
+                        <Badge className={`text-[10px] ${post.status === 'draft' ? 'bg-gray-100 text-gray-600' : 'bg-green-100 text-green-700'}`}>{post.status}</Badge>
+                      </div>
                     </div>
+                    <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${expandedBlog === post.id ? 'rotate-180' : ''}`} />
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {post.url && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-                        <a href={post.url} target="_blank" rel="noopener noreferrer">
-                          <Eye className="w-4 h-4" />
-                        </a>
-                      </Button>
-                    )}
-                  </div>
+
+                  {/* Expanded content */}
+                  {expandedBlog === post.id && (
+                    <div className="border-t">
+                      <div className="p-4 max-h-[400px] overflow-y-auto prose prose-sm max-w-none"
+                        dangerouslySetInnerHTML={{ __html: blogContent[post.id] || '<p class="text-muted-foreground">Loading preview...</p>' }}
+                      />
+                      <div className="p-3 bg-muted/20 border-t flex gap-2">
+                        <Button size="sm" variant="outline" className="text-xs gap-1" onClick={() => handleDeleteBlog(post.id)}>
+                          <Trash2 className="w-3 h-3" /> Delete
+                        </Button>
+                        <Button size="sm" variant="outline" className="text-xs gap-1" onClick={() => {
+                          togglePost(post.id);
+                          document.getElementById('wp-publish-section')?.scrollIntoView({ behavior: 'smooth' });
+                        }}>
+                          <Globe className="w-3 h-3" /> Publish to WordPress
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

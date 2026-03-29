@@ -701,4 +701,87 @@ seoEngineRouter.post(
   }
 );
 
+// ===============================================================
+// GET SINGLE BLOG POST
+// ===============================================================
+
+seoEngineRouter.get('/company/:companyId/blogs/:blogId', async (c) => {
+  const companyId = c.req.param('companyId');
+  const blogId = c.req.param('blogId');
+
+  try {
+    const { blogPosts: blogPostsTable } = await import('@1person/core/db');
+
+    const post = await db.query.blogPosts.findFirst({
+      where: and(eq(blogPostsTable.id, blogId), eq(blogPostsTable.companyId, companyId)),
+    });
+
+    if (!post) {
+      return c.json({ error: 'Blog post not found' }, 404);
+    }
+
+    return c.json(post);
+  } catch (err) {
+    console.error('[SEO Engine] Get blog post failed:', err);
+    return c.json({ error: 'Could not load blog post.' }, 500);
+  }
+});
+
+// ===============================================================
+// UPDATE BLOG POST
+// ===============================================================
+
+seoEngineRouter.patch(
+  '/company/:companyId/blogs/:blogId',
+  zValidator('json', z.object({
+    title: z.string().min(1).optional(),
+    keyword: z.string().optional(),
+    metaDescription: z.string().optional(),
+  })),
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const blogId = c.req.param('blogId');
+    const body = c.req.valid('json');
+
+    try {
+      const { blogPosts: blogPostsTable } = await import('@1person/core/db');
+
+      const [updated] = await db.update(blogPostsTable)
+        .set({ ...body, updatedAt: new Date() })
+        .where(and(eq(blogPostsTable.id, blogId), eq(blogPostsTable.companyId, companyId)))
+        .returning();
+
+      if (!updated) {
+        return c.json({ error: 'Blog post not found' }, 404);
+      }
+
+      return c.json(updated);
+    } catch (err) {
+      console.error('[SEO Engine] Update blog post failed:', err);
+      return c.json({ error: 'Could not update blog post.' }, 500);
+    }
+  }
+);
+
+// ===============================================================
+// DELETE BLOG POST
+// ===============================================================
+
+seoEngineRouter.delete('/company/:companyId/blogs/:blogId', async (c) => {
+  const companyId = c.req.param('companyId');
+  const blogId = c.req.param('blogId');
+
+  try {
+    const { blogPosts: blogPostsTable } = await import('@1person/core/db');
+
+    await db.delete(blogPostsTable)
+      .where(and(eq(blogPostsTable.id, blogId), eq(blogPostsTable.companyId, companyId)));
+
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('[SEO Engine] Delete blog post failed:', err);
+    return c.json({ error: 'Could not delete blog post.' }, 500);
+  }
+});
+
 export default seoEngineRouter;
