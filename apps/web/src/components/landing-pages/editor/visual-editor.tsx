@@ -7,7 +7,8 @@ import { useEditorStore } from '@/stores/editor-store';
 import { EditorToolbar } from './editor-toolbar';
 import { EditorCanvas } from './editor-canvas';
 import { EditorSidebar } from './editor-sidebar';
-import { useUpdateLandingPageSections, useUpdateLandingPageStatus } from '@/lib/api/hooks';
+import { useUpdateLandingPageSections } from '@/lib/api/hooks';
+import { PublishDialog } from '../publish-dialog';
 import type { BlockContent } from '@1person/workflow/landing-pages/blocks';
 
 // Auto-save debounce time in ms
@@ -39,7 +40,7 @@ interface VisualEditorProps {
 
 export function VisualEditor({ page, companyId }: VisualEditorProps) {
   const router = useRouter();
-  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedBlocksRef = useRef<string>('');
@@ -55,7 +56,6 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
   } = useEditorStore();
 
   const updateSections = useUpdateLandingPageSections();
-  const updateStatus = useUpdateLandingPageStatus();
 
   // Initialize editor with page data
   useEffect(() => {
@@ -148,29 +148,12 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
     router.push(`/${companyId}/landing-pages`);
   }, [companyId, router]);
 
-  // Handle publish
+  // Handle publish — save first, then open the publish dialog
   const handlePublish = useCallback(async () => {
     if (!editorPage) return;
-
-    setIsPublishing(true);
-    try {
-      // First, save any pending changes
-      await handleSave(true);
-
-      // Then update status to published/live
-      await updateStatus.mutateAsync({
-        pageId: page.id,
-        status: 'live',
-      });
-
-      toast.success('Page published successfully!');
-    } catch (error) {
-      console.error('Failed to publish:', error);
-      toast.error('Failed to publish page');
-    } finally {
-      setIsPublishing(false);
-    }
-  }, [editorPage, page.id, handleSave, updateStatus]);
+    await handleSave(true);
+    setPublishDialogOpen(true);
+  }, [editorPage, handleSave]);
 
   // Handle primary color change
   const handlePrimaryColorChange = useCallback(
@@ -234,7 +217,7 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
         onBack={handleBack}
         onPublish={handlePublish}
         pageSlug={page.slug}
-        isPublishing={isPublishing}
+        isPublishing={false}
         autoSaveEnabled={autoSaveEnabled}
         onAutoSaveToggle={setAutoSaveEnabled}
       />
@@ -245,6 +228,15 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
           onPrimaryColorChange={handlePrimaryColorChange}
         />
       </div>
+      <PublishDialog
+        open={publishDialogOpen}
+        onOpenChange={setPublishDialogOpen}
+        pageId={page.id}
+        companyId={companyId}
+        onPublished={() => {
+          toast.success('Page is now live!');
+        }}
+      />
     </div>
   );
 }

@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 // router used for navigation
-import Link from 'next/link';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -11,7 +10,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageGeneratorWizard, type PageConfig } from '@/components/landing-pages/page-generator-wizard';
 import {
@@ -43,7 +41,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -62,8 +59,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
 import { api } from '@/lib/api/client';
 import { useAuthStore } from '@/stores/auth-store';
 import {
@@ -73,6 +68,7 @@ import {
   useDeleteLandingPage,
   type LandingPage,
 } from '@/lib/api/hooks';
+import { PublishDialog } from '@/components/landing-pages/publish-dialog';
 
 const statusConfig: Record<
   string,
@@ -126,14 +122,6 @@ export default function LandingPagesPage() {
   const [generatingPageId, setGeneratingPageId] = useState<string | null>(null);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [publishPageId, setPublishPageId] = useState<string | null>(null);
-  const [publishTarget, setPublishTarget] = useState<'builtin' | 'wordpress' | 'aws'>('builtin');
-  const [publishWpPath, setPublishWpPath] = useState('');
-  const [publishWpStatus, setPublishWpStatus] = useState<'draft' | 'publish'>('publish');
-  const [isPublishing, setIsPublishing] = useState(false);
-  const [awsBucket, setAwsBucket] = useState('');
-  const [awsRegion, setAwsRegion] = useState('ap-southeast-1');
-  const [awsAccessKey, setAwsAccessKey] = useState('');
-  const [awsSecretKey, setAwsSecretKey] = useState('');
   const token = useAuthStore((state) => state.token);
   const queryClient = useQueryClient();
 
@@ -184,49 +172,6 @@ export default function LandingPagesPage() {
   const handlePublishClick = (pageId: string) => {
     setPublishPageId(pageId);
     setPublishDialogOpen(true);
-  };
-
-  const handlePublish = async () => {
-    if (!token || !publishPageId) return;
-    setIsPublishing(true);
-    try {
-      const body: any = { target: publishTarget };
-
-      if (publishTarget === 'wordpress') {
-        body.wordpress = {
-          parentPath: publishWpPath || undefined,
-          pageStatus: publishWpStatus,
-        };
-      } else if (publishTarget === 'aws') {
-        if (!awsBucket || !awsAccessKey || !awsSecretKey) {
-          toast.error('Please fill in all AWS fields');
-          setIsPublishing(false);
-          return;
-        }
-        body.aws = {
-          bucket: awsBucket,
-          region: awsRegion,
-          accessKeyId: awsAccessKey,
-          secretAccessKey: awsSecretKey,
-        };
-      }
-
-      const res = await api.post<{ success: boolean; publishedUrl: string; message: string }>(
-        `/landing-pages/${publishPageId}/publish`, body, { token }
-      );
-
-      if (res.success) {
-        toast.success(res.message);
-        setPublishDialogOpen(false);
-        queryClient.invalidateQueries({ queryKey: ['landingPages', companyId] });
-      } else {
-        toast.error('Publishing failed');
-      }
-    } catch (err: any) {
-      toast.error(err.message || 'Could not publish page');
-    } finally {
-      setIsPublishing(false);
-    }
   };
 
   const handleUnpublish = async (pageId: string) => {
@@ -734,100 +679,17 @@ export default function LandingPagesPage() {
       </Tabs>
 
       {/* Publish Dialog */}
-      <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Publish Landing Page</DialogTitle>
-            <DialogDescription>Choose where to publish your page</DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-3">
-            <div className="space-y-2">
-              {/* Built-in */}
-              <div
-                className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${publishTarget === 'builtin' ? 'border-primary bg-primary/5' : 'border-muted hover:border-primary/30'}`}
-                onClick={() => setPublishTarget('builtin')}
-              >
-                <div className="flex items-center gap-2">
-                  <div className={`w-4 h-4 rounded-full border-2 ${publishTarget === 'builtin' ? 'border-primary bg-primary' : 'border-muted-foreground/30'}`} />
-                  <div>
-                    <p className="font-medium text-sm">Built-in Hosting</p>
-                    <p className="text-xs text-muted-foreground">Instant — hosted by 1Person</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* WordPress */}
-              <div
-                className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${publishTarget === 'wordpress' ? 'border-primary bg-primary/5' : 'border-muted hover:border-primary/30'}`}
-                onClick={() => setPublishTarget('wordpress')}
-              >
-                <div className="flex items-center gap-2">
-                  <div className={`w-4 h-4 rounded-full border-2 ${publishTarget === 'wordpress' ? 'border-primary bg-primary' : 'border-muted-foreground/30'}`} />
-                  <div>
-                    <p className="font-medium text-sm">WordPress</p>
-                    <p className="text-xs text-muted-foreground">Publish as a page on your WordPress site</p>
-                  </div>
-                </div>
-                {publishTarget === 'wordpress' && (
-                  <div className="mt-3 pl-6 space-y-2">
-                    <div>
-                      <Label className="text-xs">Parent page path (optional)</Label>
-                      <Input
-                        value={publishWpPath}
-                        onChange={(e) => setPublishWpPath(e.target.value)}
-                        placeholder="/en/products-land"
-                        className="text-xs h-8 mt-1"
-                      />
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Leave empty to publish at root level</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs">Status</Label>
-                      <Select value={publishWpStatus} onValueChange={(v) => setPublishWpStatus(v as any)}>
-                        <SelectTrigger className="h-8 text-xs mt-1"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="publish">Publish immediately</SelectItem>
-                          <SelectItem value="draft">Save as draft</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* AWS S3 */}
-              <div
-                className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${publishTarget === 'aws' ? 'border-primary bg-primary/5' : 'border-muted hover:border-primary/30'}`}
-                onClick={() => setPublishTarget('aws')}
-              >
-                <div className="flex items-center gap-2">
-                  <div className={`w-4 h-4 rounded-full border-2 ${publishTarget === 'aws' ? 'border-primary bg-primary' : 'border-muted-foreground/30'}`} />
-                  <div>
-                    <p className="font-medium text-sm">AWS S3</p>
-                    <p className="text-xs text-muted-foreground">Host as static page on Amazon S3</p>
-                  </div>
-                </div>
-                {publishTarget === 'aws' && (
-                  <div className="mt-3 pl-6 space-y-2">
-                    <Input value={awsBucket} onChange={(e) => setAwsBucket(e.target.value)} placeholder="Bucket name" className="text-xs h-8" />
-                    <Input value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} placeholder="Region (e.g., ap-southeast-1)" className="text-xs h-8" />
-                    <Input value={awsAccessKey} onChange={(e) => setAwsAccessKey(e.target.value)} placeholder="Access Key ID" className="text-xs h-8" />
-                    <Input value={awsSecretKey} onChange={(e) => setAwsSecretKey(e.target.value)} placeholder="Secret Access Key" type="password" className="text-xs h-8" />
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPublishDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handlePublish} disabled={isPublishing} className="gap-2">
-              {isPublishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
-              {isPublishing ? 'Publishing...' : 'Publish'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {publishPageId && (
+        <PublishDialog
+          open={publishDialogOpen}
+          onOpenChange={setPublishDialogOpen}
+          pageId={publishPageId}
+          companyId={companyId}
+          onPublished={() => {
+            queryClient.invalidateQueries({ queryKey: ['landingPages', companyId] });
+          }}
+        />
+      )}
     </div>
   );
 }

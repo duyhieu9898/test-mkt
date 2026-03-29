@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -27,10 +27,11 @@ import {
   MessageSquare,
   HelpCircle,
 } from 'lucide-react';
-import { useLandingPage, useUpdateLandingPageStatus } from '@/lib/api/hooks';
+import { useLandingPage } from '@/lib/api/hooks';
 import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api/client';
 import { toast } from 'sonner';
+import { PublishDialog } from '@/components/landing-pages/publish-dialog';
 
 // Icon mapping for features
 const iconMap: Record<string, React.ReactNode> = {
@@ -57,18 +58,9 @@ export default function LandingPagePreview() {
   const pageId = params.pageId as string;
   const companyId = params.companyId as string;
   const [isGenerating, setIsGenerating] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
 
   const { data: page, isLoading, error, refetch } = useLandingPage(pageId);
-  const updateStatus = useUpdateLandingPageStatus();
-
-  const handlePublish = async () => {
-    try {
-      await updateStatus.mutateAsync({ pageId, status: 'published' });
-      toast.success('Landing page published!');
-    } catch (err) {
-      toast.error('Failed to publish page');
-    }
-  };
 
   const handleCopyUrl = () => {
     if (page?.slug) {
@@ -145,20 +137,25 @@ export default function LandingPagePreview() {
             {page.status === 'ready' && (
               <Button
                 size="sm"
-                onClick={handlePublish}
-                disabled={updateStatus.isPending}
+                onClick={() => setPublishDialogOpen(true)}
               >
-                {updateStatus.isPending ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <Globe className="w-4 h-4 mr-2" />
-                )}
+                <Globe className="w-4 h-4 mr-2" />
                 Publish
               </Button>
             )}
           </div>
         </div>
       </div>
+
+      <PublishDialog
+        open={publishDialogOpen}
+        onOpenChange={setPublishDialogOpen}
+        pageId={pageId}
+        companyId={companyId}
+        onPublished={() => {
+          refetch();
+        }}
+      />
 
       {/* Landing Page Preview */}
       <div className="bg-white text-gray-900">
