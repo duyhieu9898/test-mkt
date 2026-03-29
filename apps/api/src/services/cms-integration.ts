@@ -131,6 +131,38 @@ export class CMSIntegration {
     }));
   }
 
+  /**
+   * Resolve a category name to a WordPress category ID, creating it if needed.
+   */
+  async resolveOrCreateCategory(
+    siteUrl: string,
+    username: string,
+    appPassword: string,
+    categoryName: string
+  ): Promise<number> {
+    const categories = await this.getCategories(siteUrl, username, appPassword);
+    const existing = categories.find(c => c.name.toLowerCase() === categoryName.toLowerCase());
+    if (existing) return existing.id;
+
+    // Create new category
+    const baseUrl = this.normalizeUrl(siteUrl);
+    const response = await fetch(`${baseUrl}/wp-json/wp/v2/categories`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(username, appPassword),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: categoryName }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Could not create category "${categoryName}" (HTTP ${response.status})`);
+    }
+
+    const data = await response.json();
+    return data.id;
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------

@@ -112,6 +112,13 @@ export default function ContentHubPage() {
   const [publishStatus, setPublishStatus] = useState<'draft' | 'publish'>('draft');
   const [isPublishing, setIsPublishing] = useState(false);
 
+  // Keyword generation
+  const [isGeneratingKeyword, setIsGeneratingKeyword] = useState<string | null>(null);
+
+  // WordPress categories
+  const [wpCategories, setWpCategories] = useState<Array<{ id: number; name: string }>>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>('');
+
   // Pipeline state
   const [isStartingPipeline, setIsStartingPipeline] = useState(false);
 
@@ -173,6 +180,18 @@ export default function ContentHubPage() {
     enabled: !!token && !activeJobId,
   });
 
+  // ─── Load WP categories when connected ─────────────────────
+  const { data: wpCategoriesData } = useQuery<{ categories: Array<{ id: number; name: string }> }>({
+    queryKey: ['wp-categories', companyId],
+    queryFn: () => api.get(`/seo-engine/company/${companyId}/wordpress/categories`, { token: token! }),
+    enabled: !!token && !!wpStatus?.connected,
+  });
+
+  // Sync fetched categories to state
+  if (wpCategoriesData?.categories && wpCategories.length === 0 && wpCategoriesData.categories.length > 0) {
+    setWpCategories(wpCategoriesData.categories);
+  }
+
   // ─── Derived data ───────────────────────────────────────────
 
   const blogPosts = results?.blogPosts || [];
@@ -209,7 +228,7 @@ export default function ContentHubPage() {
   const generateFromTopics = async (topics: BlogTopic[]) => {
     setIsGenerating(true);
     try {
-      const res = await api.post<{ message: string; blogPosts: any[] }>(
+      const res = await api.post<any>(
         `/seo-engine/company/${companyId}/generate-from-suggestion`,
         {
           suggestions: topics.map(t => ({
@@ -221,9 +240,13 @@ export default function ContentHubPage() {
         },
         { token: token! }
       );
-      toast.success(res.message || 'Blog posts generated!');
+      toast.success(res.message || `Created ${res.counts?.blogs || 0} blog posts, ${res.counts?.landingPages || 0} pages, ${res.counts?.banners || 0} banners, ${res.counts?.socialPosts || 0} social posts`);
       setSelectedTopics(new Set());
-      qc.invalidateQueries({ queryKey: ['seo-results', companyId] });
+      qc.invalidateQueries({ queryKey: ['seo-results'] });
+      qc.invalidateQueries({ queryKey: ['seo-blogs'] });
+      qc.invalidateQueries({ queryKey: ['banners'] });
+      qc.invalidateQueries({ queryKey: ['campaigns'] });
+      qc.invalidateQueries({ queryKey: ['landing-pages'] });
     } catch (err: any) {
       toast.error(err.message || 'Could not generate blog posts');
     } finally {
@@ -268,6 +291,12 @@ export default function ContentHubPage() {
       setWpUsername('');
       setWpAppPassword('');
       qc.invalidateQueries({ queryKey: ['wp-status', companyId] });
+
+      // Load categories after successful connect
+      try {
+        const catRes = await api.get<{ categories: any[] }>(`/seo-engine/company/${companyId}/wordpress/categories`, { token: token! });
+        setWpCategories(catRes.categories || []);
+      } catch {}
     } catch (err: any) {
       toast.error(err.message || 'Could not connect to WordPress');
     } finally {
@@ -321,6 +350,7 @@ export default function ContentHubPage() {
         {
           blogPostIds: Array.from(selectedPosts),
           status: publishStatus,
+          categoryId: selectedCategory ? parseInt(selectedCategory) : undefined,
         },
         { token: token! }
       );
@@ -337,6 +367,40 @@ export default function ContentHubPage() {
     // Blog posts are stored in company settings, so we just remove from UI
     // In a full implementation you'd have a DELETE endpoint
     toast.info('Blog post removal is coming soon');
+  };
+
+  const handleGenerateFromKeyword = async (kw: any, type: 'blog' | 'all') => {
+    if (!token) return;
+    setIsGeneratingKeyword(kw.keyword);
+    try {
+      const res = await api.post<any>(`/seo-engine/company/${companyId}/generate-from-suggestion`, {
+        keywords: [{ keyword: kw.keyword, volume: kw.volume, competition: kw.competition || kw.difficulty }],
+      }, { token });
+      toast.success(res.message || `Content created for "${kw.keyword}"`);
+      qc.invalidateQueries({ queryKey: ['seo-results'] });
+      qc.invalidateQueries({ queryKey: ['seo-blogs'] });
+      qc.invalidateQueries({ queryKey: ['banners'] });
+      qc.invalidateQueries({ queryKey: ['landing-pages'] });
+    } catch {
+      toast.error('Could not generate content');
+    } finally {
+      setIsGeneratingKeyword(null);
+    }
+  };
+
+  const handleGenerateFromGap = async (gap: string) => {
+    if (!token) return;
+    try {
+      toast.info(`Creating content for: "${gap.substring(0, 50)}..."`);
+      const res = await api.post<any>(`/seo-engine/company/${companyId}/generate-from-suggestion`, {
+        keywords: [{ keyword: gap, volume: 'medium', competition: 'medium' }],
+      }, { token });
+      toast.success(res.message || 'Content created!');
+      qc.invalidateQueries({ queryKey: ['seo-results'] });
+      qc.invalidateQueries({ queryKey: ['seo-blogs'] });
+    } catch {
+      toast.error('Could not create content');
+    }
   };
 
   // ─── Pipeline progress (when active) ────────────────────────
@@ -371,9 +435,12 @@ export default function ContentHubPage() {
           selectedTopics={selectedTopics}
           isGenerating={isGenerating}
           companyId={companyId}
+          isGeneratingKeyword={isGeneratingKeyword}
           onToggleTopic={toggleTopic}
           onGenerateSelected={handleGenerateSelected}
           onGenerateAll={handleGenerateAll}
+          onGenerateFromKeyword={handleGenerateFromKeyword}
+          onGenerateFromGap={handleGenerateFromGap}
         />
       )}
 
@@ -495,29 +562,53 @@ export default function ContentHubPage() {
                 </div>
 
                 {blogPosts.length > 0 && (
-                  <div className="flex items-center gap-3">
-                    <Select value={publishStatus} onValueChange={(v) => setPublishStatus(v as any)}>
-                      <SelectTrigger className="w-40">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="draft">As Draft</SelectItem>
-                        <SelectItem value="publish">Publish Now</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="space-y-3">
+                    {/* Category selector */}
+                    {wpCategories.length > 0 && (
+                      <div>
+                        <Label className="text-xs">Publish to category</Label>
+                        <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                          <SelectTrigger className="h-8 text-xs mt-1">
+                            <SelectValue placeholder="Select category..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {wpCategories.map(cat => (
+                              <SelectItem key={cat.id} value={String(cat.id)}>{cat.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+
+                    {/* Status selector */}
+                    <div>
+                      <Label className="text-xs">Publish as</Label>
+                      <Select value={publishStatus} onValueChange={(v) => setPublishStatus(v as any)}>
+                        <SelectTrigger className="h-8 text-xs mt-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="draft">Draft (review first)</SelectItem>
+                          <SelectItem value="publish">Publish immediately</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Push button */}
                     <Button
+                      className="w-full gap-2"
                       onClick={handlePublish}
                       disabled={selectedPosts.size === 0 || isPublishing}
                     >
                       {isPublishing ? (
                         <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin" />
                           Publishing...
                         </>
                       ) : (
                         <>
-                          <ArrowRight className="w-4 h-4 mr-2" />
-                          Push {selectedPosts.size > 0 ? `${selectedPosts.size} Post${selectedPosts.size > 1 ? 's' : ''}` : 'Selected'} to WordPress
+                          <ArrowRight className="w-4 h-4" />
+                          Push {selectedPosts.size} post{selectedPosts.size !== 1 ? 's' : ''} to WordPress
                         </>
                       )}
                     </Button>
@@ -665,18 +756,24 @@ function SuggestionsSection({
   selectedTopics,
   isGenerating,
   companyId,
+  isGeneratingKeyword,
   onToggleTopic,
   onGenerateSelected,
   onGenerateAll,
+  onGenerateFromKeyword,
+  onGenerateFromGap,
 }: {
   suggestions: Suggestions | undefined;
   isLoading: boolean;
   selectedTopics: Set<string>;
   isGenerating: boolean;
   companyId: string;
+  isGeneratingKeyword: string | null;
   onToggleTopic: (id: string) => void;
   onGenerateSelected: () => void;
   onGenerateAll: () => void;
+  onGenerateFromKeyword: (kw: any, type: 'blog' | 'all') => void;
+  onGenerateFromGap: (gap: string) => void;
 }) {
   // Loading state
   if (isLoading) {
@@ -842,6 +939,7 @@ function SuggestionsSection({
                         <th className="pb-2 font-medium">Keyword</th>
                         <th className="pb-2 font-medium">Volume</th>
                         <th className="pb-2 font-medium">Difficulty</th>
+                        <th className="text-right text-xs font-medium text-muted-foreground p-2">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -863,6 +961,30 @@ function SuggestionsSection({
                               {kw.difficulty}
                             </Badge>
                           </td>
+                          <td className="p-2 text-right">
+                            <div className="flex gap-1 justify-end">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 text-[10px] px-2"
+                                disabled={isGeneratingKeyword === kw.keyword}
+                                onClick={() => onGenerateFromKeyword(kw, 'blog')}
+                              >
+                                {isGeneratingKeyword === kw.keyword ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                                Blog
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 text-[10px] px-2"
+                                disabled={isGeneratingKeyword === kw.keyword}
+                                onClick={() => onGenerateFromKeyword(kw, 'all')}
+                              >
+                                {isGeneratingKeyword === kw.keyword ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                                All
+                              </Button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -879,14 +1001,21 @@ function SuggestionsSection({
                   <AlertCircle className="w-4 h-4 text-blue-500" />
                   Content Gaps
                 </h3>
-                <ul className="space-y-2">
+                <div className="space-y-0">
                   {gaps.map((gap, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm">
-                      <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
-                      <span className="text-muted-foreground">{gap}</span>
-                    </li>
+                    <div key={i} className="flex items-center justify-between py-1.5 border-b last:border-0">
+                      <p className="text-sm text-muted-foreground flex-1">{gap}</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] px-2 shrink-0 ml-2 gap-1"
+                        onClick={() => onGenerateFromGap(gap)}
+                      >
+                        <Sparkles className="w-3 h-3" /> Create
+                      </Button>
+                    </div>
                   ))}
-                </ul>
+                </div>
               </CardContent>
             </Card>
           )}

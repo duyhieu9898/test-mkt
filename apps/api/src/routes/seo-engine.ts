@@ -9,7 +9,8 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { companies } from '@1person/core/db';
+import { companies, landingPages, banners, socialPosts } from '@1person/core/db';
+import { CMSIntegration } from '../services/cms-integration';
 import { authMiddleware } from '../middleware/auth';
 
 const seoEngineRouter = new Hono();
@@ -295,6 +296,35 @@ seoEngineRouter.post('/company/:companyId/wordpress/test', async (c) => {
 });
 
 // ===============================================================
+// WORDPRESS — GET CATEGORIES
+// ===============================================================
+
+seoEngineRouter.get('/company/:companyId/wordpress/categories', async (c) => {
+  const companyId = c.req.param('companyId');
+
+  try {
+    const company = await db.query.companies.findFirst({
+      where: eq(companies.id, companyId),
+    });
+
+    if (!company) {
+      return c.json({ error: 'Company not found' }, 404);
+    }
+
+    const wpSettings = (company?.settings as any)?.wordpress;
+    if (!wpSettings?.siteUrl) {
+      return c.json({ categories: [] });
+    }
+
+    const cms = new CMSIntegration();
+    const categories = await cms.getCategories(wpSettings.siteUrl, wpSettings.username, wpSettings.appPassword);
+    return c.json({ categories });
+  } catch {
+    return c.json({ categories: [], error: 'Could not load categories' });
+  }
+});
+
+// ===============================================================
 // WORDPRESS — PUBLISH BLOG POSTS
 // ===============================================================
 
@@ -303,10 +333,13 @@ seoEngineRouter.post(
   zValidator('json', z.object({
     blogPostIds: z.array(z.string()).min(1),
     status: z.enum(['draft', 'publish']).default('draft'),
+    categoryId: z.number().optional(),
+    categoryName: z.string().optional(),
   })),
   async (c) => {
     const companyId = c.req.param('companyId');
-    const { blogPostIds, status } = c.req.valid('json');
+    const body = c.req.valid('json');
+    const { blogPostIds } = body;
 
     try {
       const company = await db.query.companies.findFirst({
@@ -325,59 +358,50 @@ seoEngineRouter.post(
       }
 
       const seoData = settings.seo || {};
-      const blogPosts: any[] = seoData.blogPosts || [];
+      const blogPostsList: any[] = seoData.blogPosts || [];
 
-      const authHeader = 'Basic ' + Buffer.from(`${wp.username}:${wp.appPassword}`).toString('base64');
+      const cms = new CMSIntegration();
       const results: Array<{ id: string; title: string; success: boolean; wpUrl?: string; error?: string }> = [];
 
+      // Resolve category once for all posts
+      let categoryId = body.categoryId;
+      if (!categoryId && body.categoryName) {
+        try {
+          categoryId = await cms.resolveOrCreateCategory(wp.siteUrl, wp.username, wp.appPassword, body.categoryName);
+        } catch (catErr) {
+          console.error('[SEO Engine] Category resolution failed:', catErr);
+        }
+      }
+
       for (const postId of blogPostIds) {
-        const post = blogPosts.find((p: any) => p.id === postId);
-        if (!post) {
+        const blogPost = blogPostsList.find((p: any) => p.id === postId);
+        if (!blogPost) {
           results.push({ id: postId, title: 'Unknown', success: false, error: 'Post not found' });
           continue;
         }
 
         try {
-          const wpResponse = await fetch(`${wp.siteUrl}/wp-json/wp/v2/posts`, {
-            method: 'POST',
-            headers: {
-              'Authorization': authHeader,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              title: post.title,
-              content: post.content || post.body || '',
-              status,
-              meta: {
-                _yoast_wpseo_focuskw: post.keyword || '',
-                _yoast_wpseo_metadesc: post.metaDescription || '',
-              },
-            }),
+          const result = await cms.publishPost(wp.siteUrl, wp.username, wp.appPassword, {
+            title: blogPost.title,
+            content: blogPost.content || blogPost.body || '',
+            excerpt: blogPost.excerpt || '',
+            status: body.status || 'draft',
+            categories: categoryId ? [categoryId] : undefined,
+            tags: (blogPost.tags || []) as string[],
           });
 
-          if (wpResponse.ok) {
-            const wpPost = await wpResponse.json();
-            results.push({
-              id: postId,
-              title: post.title,
-              success: true,
-              wpUrl: wpPost.link,
-            });
-          } else {
-            const errBody = await wpResponse.text();
-            results.push({
-              id: postId,
-              title: post.title,
-              success: false,
-              error: `WordPress returned ${wpResponse.status}`,
-            });
-          }
+          results.push({
+            id: postId,
+            title: blogPost.title,
+            success: true,
+            wpUrl: result.url,
+          });
         } catch (pubErr: any) {
           results.push({
             id: postId,
-            title: post.title,
+            title: blogPost.title,
             success: false,
-            error: pubErr.message,
+            error: pubErr.message || 'Publishing failed',
           });
         }
       }
@@ -500,26 +524,65 @@ seoEngineRouter.post(
     suggestions: z.array(z.object({
       title: z.string(),
       keyword: z.string(),
-      searchIntent: z.enum(['informational', 'commercial', 'transactional']).default('informational'),
-    })).min(1),
+      searchIntent: z.string().optional(),
+    })).optional(),
+    keywords: z.array(z.object({
+      keyword: z.string(),
+      volume: z.string().optional(),
+      competition: z.string().optional(),
+    })).optional(),
     language: z.string().default('en'),
   })),
   async (c) => {
     const companyId = c.req.param('companyId');
-    const { suggestions, language } = c.req.valid('json');
+    const body = c.req.valid('json');
+    const language = body.language;
 
     try {
       const { BlogGenerator } = await import('../services/blog-generator');
       const { blogPosts: blogPostsTable } = await import('@1person/core/db');
+      const { llmGenerate } = await import('../lib/llm');
+      const { buildBusinessContext } = await import('../services/business-context');
       const generator = new BlogGenerator();
 
-      const created: any[] = [];
+      // Merge suggestions + keywords into one list
+      const allSuggestions: Array<{ title: string; keyword: string; searchIntent: string }> = [];
 
-      for (const suggestion of suggestions) {
+      if (body.suggestions?.length) {
+        for (const s of body.suggestions) {
+          allSuggestions.push({ title: s.title, keyword: s.keyword, searchIntent: s.searchIntent || 'informational' });
+        }
+      }
+
+      if (body.keywords?.length) {
+        const ctx = await buildBusinessContext(companyId);
+        for (const kw of body.keywords) {
+          try {
+            const { text } = await llmGenerate([{
+              role: 'user',
+              content: `Generate a compelling blog post title for the keyword "${kw.keyword}" in the context of: ${ctx.companyName} - ${ctx.industry}. Return ONLY the title, nothing else.`,
+            }], { maxTokens: 100 });
+
+            const title = text.trim().replace(/^["']|["']$/g, '');
+            allSuggestions.push({ title, keyword: kw.keyword, searchIntent: 'informational' });
+          } catch (titleErr) {
+            console.error(`[SEO Engine] Title generation failed for "${kw.keyword}":`, titleErr);
+          }
+        }
+      }
+
+      if (allSuggestions.length === 0) {
+        return c.json({ error: 'Provide at least one suggestion or keyword.' }, 400);
+      }
+
+      const results: any[] = [];
+
+      for (const suggestion of allSuggestions) {
         try {
+          // --- Blog post ---
           const post = await generator.generateBlogPost(companyId, {
             keyword: suggestion.keyword,
-            searchIntent: suggestion.searchIntent,
+            searchIntent: suggestion.searchIntent as any,
             language,
             targetWordCount: 1500,
           });
@@ -541,19 +604,99 @@ seoEngineRouter.post(
             status: 'draft',
           }).returning();
 
-          created.push(saved);
+          results.push(saved);
+
+          // --- Landing page ---
+          try {
+            const slug = suggestion.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').substring(0, 80);
+            await db.insert(landingPages).values({
+              companyId,
+              name: suggestion.title,
+              slug,
+              description: `Landing page for ${suggestion.keyword}`,
+              originalPrompt: suggestion.title,
+              status: 'draft',
+              content: {
+                headline: suggestion.title,
+                subheadline: post.excerpt || post.metaDescription,
+                ctaText: 'Get Started',
+              },
+              seo: {
+                title: suggestion.title,
+                description: post.metaDescription,
+                keywords: [suggestion.keyword, ...(post.tags || []).slice(0, 3)],
+              },
+            });
+          } catch (lpErr) {
+            console.error(`[SEO Engine] Landing page creation failed for "${suggestion.keyword}":`, lpErr);
+          }
+
+          // --- 3 banners (different angles) ---
+          try {
+            const angleThemes: Record<string, { primary: string; secondary: string; text: string; ctaBg: string; ctaText: string }> = {
+              benefit: { primary: '#6366f1', secondary: '#8b5cf6', text: '#fff', ctaBg: '#fff', ctaText: '#6366f1' },
+              urgency: { primary: '#dc2626', secondary: '#7c2d12', text: '#fff', ctaBg: '#fbbf24', ctaText: '#1e293b' },
+              'social-proof': { primary: '#1e3a5f', secondary: '#3b82f6', text: '#fff', ctaBg: '#3b82f6', ctaText: '#fff' },
+            };
+
+            for (const [angle, theme] of Object.entries(angleThemes)) {
+              const headline = suggestion.title.split(' ').slice(0, 8).join(' ');
+              await db.insert(banners).values({
+                companyId,
+                name: `${headline} - ${angle}`,
+                size: '1200x628',
+                status: 'draft',
+                copy: { headline, subheadline: post.excerpt?.substring(0, 60), cta: 'Learn More', brandColor: theme.primary },
+                design: {
+                  layout: angle === 'social-proof' ? 'testimonial' : angle === 'urgency' ? 'bold-cta' : 'center',
+                  backgroundType: 'gradient',
+                  backgroundValue: `linear-gradient(135deg, ${theme.primary}, ${theme.secondary})`,
+                  colorTheme: theme,
+                  typography: { headlineSize: 'lg', headlineWeight: 800, alignment: 'center' },
+                  overlayOpacity: 0.6,
+                },
+                angle,
+                strategyTag: angle,
+              });
+            }
+          } catch (bannerErr) {
+            console.error(`[SEO Engine] Banner creation failed for "${suggestion.keyword}":`, bannerErr);
+          }
+
+          // --- 2 social posts ---
+          try {
+            for (const platform of ['linkedin', 'facebook']) {
+              await db.insert(socialPosts).values({
+                companyId,
+                platform,
+                content: `${post.excerpt || suggestion.title}\n\n${(post.tags || []).slice(0, 5).map((t: string) => `#${t.replace(/\s+/g, '')}`).join(' ')}`,
+                hashtags: (post.tags || []).slice(0, 5) as string[],
+                status: 'draft',
+              });
+            }
+          } catch (socialErr) {
+            console.error(`[SEO Engine] Social post creation failed for "${suggestion.keyword}":`, socialErr);
+          }
+
         } catch (genErr) {
           console.error(`[SEO Engine] Blog generation failed for "${suggestion.keyword}":`, genErr);
         }
       }
 
       return c.json({
-        message: `${created.length} blog post(s) generated`,
-        blogPosts: created,
+        generated: results.length,
+        posts: results,
+        counts: {
+          blogs: results.length,
+          landingPages: results.length,
+          banners: results.length * 3,
+          socialPosts: results.length * 2,
+        },
+        message: `Created ${results.length} blog posts, ${results.length} landing pages, ${results.length * 3} banners, ${results.length * 2} social posts`,
       });
     } catch (err: any) {
       console.error('[SEO Engine] Generate from suggestion failed:', err);
-      return c.json({ error: 'Could not generate blog posts.' }, 500);
+      return c.json({ error: 'Could not generate content. Please try again.' }, 500);
     }
   }
 );
