@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 // router used for navigation
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -34,6 +35,8 @@ import {
   Copy,
   Settings,
   BarChart3,
+  Image,
+  Share2,
 } from 'lucide-react';
 import {
   Dialog,
@@ -60,6 +63,8 @@ import {
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { api } from '@/lib/api/client';
+import { useAuthStore } from '@/stores/auth-store';
 import {
   useLandingPages,
   useGenerateLandingPage,
@@ -117,6 +122,9 @@ export default function LandingPagesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [generatingPageId, setGeneratingPageId] = useState<string | null>(null);
+  const token = useAuthStore((state) => state.token);
+  const queryClient = useQueryClient();
 
   // Auto-open dialog if action=generate query param is present
   useEffect(() => {
@@ -142,6 +150,25 @@ export default function LandingPagesPage() {
   });
 
   // handleGeneratePage is now handled by PageGeneratorWizard
+
+  const handleGenerateContent = async (pageId: string, types: string[]) => {
+    setGeneratingPageId(pageId);
+    toast.info('Generating content from your page...');
+    try {
+      await api.post(
+        `/landing-pages/company/${companyId}/pages/${pageId}/generate-content`,
+        { types },
+        { token: token! }
+      );
+      toast.success('Content generated! Check Content Hub and Marketing for your new content.');
+      queryClient.invalidateQueries({ queryKey: ['seo-results', companyId] });
+      queryClient.invalidateQueries({ queryKey: ['landingPages', companyId] });
+    } catch {
+      toast.error('Could not generate content. Please try again.');
+    } finally {
+      setGeneratingPageId(null);
+    }
+  };
 
   const handlePublish = async (pageId: string) => {
     try {
@@ -519,6 +546,50 @@ export default function LandingPagesPage() {
                         <ExternalLink className="w-3 h-3" />
                         View Live
                       </a>
+                    )}
+                    {page.status === 'published' && (
+                      <div className="flex gap-1.5 mt-2 pt-2 border-t flex-wrap" onClick={(e) => e.stopPropagation()}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs gap-1"
+                          disabled={generatingPageId === page.id}
+                          onClick={() => handleGenerateContent(page.id, ['blog'])}
+                        >
+                          <FileText className="w-3 h-3" /> Blog Posts
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs gap-1"
+                          disabled={generatingPageId === page.id}
+                          onClick={() => handleGenerateContent(page.id, ['banner'])}
+                        >
+                          <Image className="w-3 h-3" /> Banners
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs gap-1"
+                          disabled={generatingPageId === page.id}
+                          onClick={() => handleGenerateContent(page.id, ['social'])}
+                        >
+                          <Share2 className="w-3 h-3" /> Social
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="text-xs gap-1 bg-primary"
+                          disabled={generatingPageId === page.id}
+                          onClick={() => handleGenerateContent(page.id, ['blog', 'banner', 'social'])}
+                        >
+                          {generatingPageId === page.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-3 h-3" />
+                          )}
+                          Generate All
+                        </Button>
+                      </div>
                     )}
                   </CardContent>
                 </Card>

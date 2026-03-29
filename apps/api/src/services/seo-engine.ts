@@ -16,6 +16,7 @@ import {
   landingPageSections,
   socialPosts,
   blogPosts,
+  knowledgeBase,
 } from '@1person/core/db';
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { buildBusinessContext, type BusinessContext } from './business-context';
@@ -146,11 +147,26 @@ export class SEOEngine {
     const language = options.language || 'en';
 
     try {
-      // Step 1: Scan
-      const scanResult = await this.step1_scan(job, options);
+      let scanResult: WebsiteAnalysisResult | null = null;
+      let businessCtx: BusinessContext;
 
-      // Step 2: Understand business
-      const businessCtx = await this.step2_understand(job);
+      // Check if company already has FTUX data — skip scan + understand if so
+      const preCtx = await buildBusinessContext(job.companyId);
+      const hasFTUXData = preCtx.fullContext.length > 200;
+
+      if (hasFTUXData && !options.websiteUrl && !options.products?.length) {
+        // Skip scan and understand — already done during FTUX
+        job.results.businessType = preCtx.businessType || preCtx.industry;
+        job.progress = { currentStep: 1, totalSteps: 7, stepName: 'Scanning website', details: 'Using existing business analysis' };
+        job.progress = { currentStep: 2, totalSteps: 7, stepName: 'Understanding business', details: `${preCtx.companyName} — ${preCtx.industry}` };
+        businessCtx = preCtx;
+      } else {
+        // Step 1: Scan
+        scanResult = await this.step1_scan(job, options);
+
+        // Step 2: Understand business
+        businessCtx = await this.step2_understand(job);
+      }
 
       // Step 3: Keywords
       const clusters = await this.step3_keywords(job, businessCtx, scanResult, language);
@@ -577,6 +593,15 @@ All text in ${language}.`,
       });
     }
 
+    // Feedback loop: record in knowledge_base so future suggestions avoid duplicates
+    await db.insert(knowledgeBase).values({
+      companyId,
+      category: 'content_created',
+      title: item.title,
+      content: `Landing page created: "${item.title}" targeting keyword "${item.keyword}". Intent: ${item.searchIntent}.`,
+      source: 'seo_engine',
+    }).onConflictDoNothing();
+
     return page.id;
   }
 
@@ -616,6 +641,15 @@ All text in ${language}.`,
 
     const inserted = insertedRows[0];
     if (!inserted) throw new Error('Failed to insert blog post into database');
+
+    // Feedback loop: record in knowledge_base so future suggestions avoid duplicates
+    await db.insert(knowledgeBase).values({
+      companyId,
+      category: 'content_created',
+      title: post.title,
+      content: `Blog post created: "${post.title}" targeting keyword "${item.keyword}". Intent: ${item.searchIntent}. ${post.wordCount} words.`,
+      source: 'seo_engine',
+    }).onConflictDoNothing();
 
     return inserted.id;
   }
@@ -742,6 +776,54 @@ Rules:
     }));
 
     job.progress.details = `Created ${insertedCount} social posts for content promotion.`;
+  }
+
+  // ===========================================================================
+  // SUGGESTIONS — AI-powered content recommendations
+  // ===========================================================================
+
+  async generateSuggestions(companyId: string): Promise<{
+    blogTopics: Array<{ title: string; keyword: string; searchIntent: string; impact: 'high' | 'medium' | 'low'; reason: string }>;
+    keywordOpportunities: Array<{ keyword: string; volume: string; competition: string; contentType: string }>;
+    contentGaps: string[];
+  }> {
+    const ctx = await buildBusinessContext(companyId);
+
+    // Check what content already exists (to avoid duplicates)
+    const existingBlogs = await db.select({ keyword: blogPosts.keyword, title: blogPosts.title })
+      .from(blogPosts).where(eq(blogPosts.companyId, companyId));
+    const existingPages = await db.select({ name: landingPages.name })
+      .from(landingPages).where(eq(landingPages.companyId, companyId));
+
+    const existingContent = [
+      ...existingBlogs.map(b => b.title),
+      ...existingPages.map(p => p.name),
+    ];
+
+    // Use LLM to suggest new content
+    const { text } = await llmGenerate([{
+      role: 'system',
+      content: 'You are an SEO strategist. Suggest content that will drive traffic and conversions. Be specific to this business. Do NOT suggest topics already covered.',
+    }, {
+      role: 'user',
+      content: `Suggest SEO content for this business.
+
+BUSINESS: ${ctx.fullContext.substring(0, 1500)}
+
+ALREADY CREATED (do NOT suggest these again):
+${existingContent.join('\n')}
+
+Return JSON:
+{
+  "blogTopics": [{ "title": "...", "keyword": "...", "searchIntent": "informational|commercial|transactional", "impact": "high|medium|low", "reason": "why this topic matters" }],
+  "keywordOpportunities": [{ "keyword": "...", "volume": "high|medium|low", "competition": "high|medium|low", "contentType": "blog|landing_page|comparison" }],
+  "contentGaps": ["topics competitors cover that you don't"]
+}
+
+Generate 5-8 blog topics, 8-10 keywords, 3-5 content gaps.`,
+    }], { maxTokens: 2000 });
+
+    return extractJSON(text) || { blogTopics: [], keywordOpportunities: [], contentGaps: [] };
   }
 
   // ===========================================================================

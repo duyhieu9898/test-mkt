@@ -575,4 +575,252 @@ RULES:
   }
 });
 
+// =============================================================================
+// CONTENT CASCADE — Generate content from a landing page
+// =============================================================================
+
+const generateContentSchema = z.object({
+  types: z.array(z.enum(['blog', 'banner', 'social', 'video'])).min(1),
+  language: z.string().optional(),
+});
+
+landingPagesRouter.post(
+  '/company/:companyId/pages/:pageId/generate-content',
+  zValidator('json', generateContentSchema),
+  async (c) => {
+    const { userId } = c.get('user');
+    const companyId = c.req.param('companyId');
+    const pageId = c.req.param('pageId');
+    const { types, language } = c.req.valid('json');
+
+    await checkCompanyOwnership(companyId, userId);
+
+    // 1. Load the landing page + its sections
+    const page = await db.query.landingPages.findFirst({
+      where: eq(landingPages.id, pageId),
+    });
+
+    if (!page) {
+      throw new HTTPException(404, { message: 'Landing page not found' });
+    }
+
+    const { landingPageSections } = await import('@1person/core/db');
+    const sections = await db.select().from(landingPageSections)
+      .where(eq(landingPageSections.pageId, pageId));
+
+    // 2. Build context from page content
+    const pageContent = sections.map(s => `${s.type}: ${JSON.stringify(s.content)}`).join('\n');
+    const { buildBusinessContext } = await import('../services/business-context');
+    const ctx = await buildBusinessContext(companyId);
+
+    // 3. For each requested type, generate content
+    const results: any = { blog: [], banner: [], social: [], video: [] };
+
+    if (types.includes('blog')) {
+      try {
+        const { BlogGenerator } = await import('../services/blog-generator');
+        const { blogPosts: blogPostsTable } = await import('@1person/core/db');
+        const generator = new BlogGenerator();
+
+        // Generate 2 blog posts with different search intents
+        for (const intent of ['informational', 'commercial'] as const) {
+          try {
+            const post = await generator.generateBlogPost(companyId, {
+              keyword: page.name || '',
+              searchIntent: intent,
+              language: language || 'en',
+              relatedProducts: [page.name || ''],
+              targetWordCount: 1500,
+            });
+
+            const [saved] = await db.insert(blogPostsTable).values({
+              companyId,
+              title: post.title,
+              slug: post.slug,
+              metaDescription: post.metaDescription,
+              content: post.content,
+              excerpt: post.excerpt,
+              keyword: page.name || '',
+              searchIntent: intent,
+              tags: post.tags as any,
+              faq: post.faq as any,
+              schemaMarkup: post.schemaMarkup as any,
+              wordCount: post.wordCount,
+              language: language || 'en',
+              status: 'draft',
+            }).returning();
+
+            results.blog.push(saved);
+          } catch (blogErr) {
+            console.error(`[Landing Pages] Blog generation failed for intent ${intent}:`, blogErr);
+          }
+        }
+      } catch (err) {
+        console.error('[Landing Pages] Blog module import failed:', err);
+      }
+    }
+
+    if (types.includes('banner')) {
+      try {
+        const { llmGenerate, extractJSON } = await import('../lib/llm');
+        const { banners: bannersTable } = await import('@1person/core/db');
+
+        const { text } = await llmGenerate([
+          {
+            role: 'system',
+            content: `You are a marketing banner copywriter. Generate banner copy variations for a product page.
+Respond ONLY with a JSON array. No markdown.`,
+          },
+          {
+            role: 'user',
+            content: `Create 3 banner copy variations for this product:
+
+Page: ${page.name}
+Description: ${page.description || 'N/A'}
+Business: ${ctx.companyName} (${ctx.industry})
+Page content summary: ${pageContent.substring(0, 800)}
+
+Return JSON array:
+[
+  {
+    "headline": "Short catchy headline",
+    "subheadline": "Supporting text",
+    "ctaText": "Button text",
+    "style": "modern"
+  }
+]`,
+          },
+        ], { maxTokens: 1000 });
+
+        const bannerData = extractJSON(text);
+        const bannerItems = Array.isArray(bannerData) ? bannerData : [];
+
+        for (const item of bannerItems.slice(0, 3)) {
+          try {
+            const [saved] = await db.insert(bannersTable).values({
+              companyId,
+              name: `${page.name} Banner`,
+              headline: item.headline || page.name || '',
+              subheadline: item.subheadline || '',
+              ctaText: item.ctaText || 'Learn More',
+              size: '1200x628',
+              format: 'image' as any,
+              status: 'draft' as any,
+              designData: item as any,
+            }).returning();
+            results.banner.push(saved);
+          } catch (bannerErr) {
+            console.error('[Landing Pages] Banner insert failed:', bannerErr);
+          }
+        }
+      } catch (err) {
+        console.error('[Landing Pages] Banner generation failed:', err);
+      }
+    }
+
+    if (types.includes('social')) {
+      try {
+        const { llmGenerate, extractJSON } = await import('../lib/llm');
+        const { socialPosts: socialPostsTable } = await import('@1person/core/db');
+
+        const { text } = await llmGenerate([
+          {
+            role: 'system',
+            content: `You are a social media marketing expert. Generate social post copy for multiple platforms.
+Respond ONLY with a JSON array. No markdown.`,
+          },
+          {
+            role: 'user',
+            content: `Create 3 social media posts promoting this product page:
+
+Page: ${page.name}
+Description: ${page.description || 'N/A'}
+Business: ${ctx.companyName} (${ctx.industry})
+
+Return JSON array:
+[
+  {
+    "platform": "twitter" | "linkedin" | "instagram",
+    "content": "Post text with hashtags",
+    "tone": "professional" | "casual" | "exciting"
+  }
+]
+
+One post per platform: Twitter, LinkedIn, Instagram.`,
+          },
+        ], { maxTokens: 1000 });
+
+        const postData = extractJSON(text);
+        const postItems = Array.isArray(postData) ? postData : [];
+
+        for (const item of postItems.slice(0, 3)) {
+          try {
+            const [saved] = await db.insert(socialPostsTable).values({
+              companyId,
+              platform: item.platform || 'twitter',
+              content: item.content || '',
+              status: 'draft' as any,
+            }).returning();
+            results.social.push(saved);
+          } catch (socialErr) {
+            console.error('[Landing Pages] Social post insert failed:', socialErr);
+          }
+        }
+      } catch (err) {
+        console.error('[Landing Pages] Social generation failed:', err);
+      }
+    }
+
+    if (types.includes('video')) {
+      try {
+        const { llmGenerate, extractJSON } = await import('../lib/llm');
+
+        const { text } = await llmGenerate([
+          {
+            role: 'system',
+            content: `You are a video marketing strategist. Generate a video script outline.
+Respond ONLY with a JSON object. No markdown.`,
+          },
+          {
+            role: 'user',
+            content: `Create a short promotional video script for this product:
+
+Page: ${page.name}
+Description: ${page.description || 'N/A'}
+Business: ${ctx.companyName} (${ctx.industry})
+Page content: ${pageContent.substring(0, 600)}
+
+Return JSON:
+{
+  "title": "Video title",
+  "duration": "30s" | "60s",
+  "scenes": [
+    { "scene": 1, "description": "Visual description", "narration": "Voiceover text", "duration": "5s" }
+  ],
+  "callToAction": "Final CTA text"
+}`,
+          },
+        ], { maxTokens: 1000 });
+
+        const videoScript = extractJSON(text);
+        if (videoScript) {
+          results.video.push({ type: 'script', ...videoScript });
+        }
+      } catch (err) {
+        console.error('[Landing Pages] Video script generation failed:', err);
+      }
+    }
+
+    const totalGenerated =
+      results.blog.length + results.banner.length +
+      results.social.length + results.video.length;
+
+    return c.json({
+      success: true,
+      results,
+      message: `${totalGenerated} content piece(s) generated from your page`,
+    });
+  }
+);
+
 export { landingPagesRouter };

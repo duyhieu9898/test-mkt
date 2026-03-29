@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { db } from '../lib/db';
-import { companies, departments, agents, tasks, users, strategyHorizons } from '@1person/core/db';
+import { companies, departments, agents, tasks, users, strategyHorizons, knowledgeBase } from '@1person/core/db';
 import { eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { env } from '../lib/env';
@@ -390,6 +390,101 @@ function generateFallback(prompt: string): AIGeneratedCompany {
     ...template,
     companyName: customName,
   };
+}
+
+// =============================================================================
+// FTUX → Knowledge Base Bridge
+// Populates structured knowledge entries from website analysis
+// =============================================================================
+
+async function populateKnowledgeFromAnalysis(companyId: string, analysis: any) {
+  const entries: Array<{ category: string; title: string; content: string; source: string }> = [];
+
+  // Products/Services
+  if (analysis.businessInfo?.offerings) {
+    for (const offering of analysis.businessInfo.offerings) {
+      entries.push({
+        category: 'product',
+        title: offering,
+        content: `Product/service offered: ${offering}`,
+        source: 'website_analysis',
+      });
+    }
+  }
+
+  // Target Audience
+  if (analysis.businessInfo?.audience) {
+    entries.push({
+      category: 'customer',
+      title: 'Target Audience',
+      content: analysis.businessInfo.audience,
+      source: 'website_analysis',
+    });
+  }
+
+  // Business Type + Value Proposition
+  if (analysis.businessInfo?.businessType) {
+    entries.push({
+      category: 'company_info',
+      title: 'Business Type',
+      content: `${analysis.businessInfo.businessType}. ${analysis.businessInfo.valueProposition || ''}`,
+      source: 'website_analysis',
+    });
+  }
+
+  // Industry + Market
+  if (analysis.businessInfo?.industry) {
+    entries.push({
+      category: 'company_info',
+      title: 'Industry',
+      content: `Industry: ${analysis.businessInfo.industry}. Market: ${analysis.businessInfo.market || ''}`,
+      source: 'website_analysis',
+    });
+  }
+
+  // Competitors
+  if (analysis.competitors?.length) {
+    for (const comp of analysis.competitors) {
+      entries.push({
+        category: 'competitor',
+        title: comp.name,
+        content: `Competitor: ${comp.name} (${comp.domain}). Strengths: ${(comp.strengths || []).join(', ')}`,
+        source: 'website_analysis',
+      });
+    }
+  }
+
+  // Keywords
+  if (analysis.keywordOpportunities?.length) {
+    for (const kw of analysis.keywordOpportunities.slice(0, 10)) {
+      entries.push({
+        category: 'keyword',
+        title: kw.keyword,
+        content: `Keyword opportunity: "${kw.keyword}" — volume: ${kw.volume}, competition: ${kw.competition}, relevance: ${kw.relevance}`,
+        source: 'website_analysis',
+      });
+    }
+  }
+
+  // SEO Issues
+  if (analysis.seoIssues?.length) {
+    entries.push({
+      category: 'seo_issue',
+      title: 'SEO Issues Found',
+      content: analysis.seoIssues.join('; '),
+      source: 'website_analysis',
+    });
+  }
+
+  // Insert all entries
+  for (const entry of entries) {
+    await db.insert(knowledgeBase).values({
+      companyId,
+      ...entry,
+    }).onConflictDoNothing();
+  }
+
+  console.log(`[FTUX] Populated ${entries.length} knowledge entries for company ${companyId}`);
 }
 
 export class FTUXProcessor {
@@ -905,6 +1000,15 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
         console.log(`[FTUX] Bootstrap done: ${bootstrapResult.pagesCreated} pages, ${bootstrapResult.tasksCreated} tasks`);
       } catch (err) {
         console.warn('[FTUX] Bootstrap failed (non-critical):', err);
+      }
+
+      // Populate knowledge base from website analysis (FTUX → Knowledge Base Bridge)
+      if (websiteAnalysis) {
+        try {
+          await populateKnowledgeFromAnalysis(company.id, websiteAnalysis);
+        } catch (err) {
+          console.warn('[FTUX] Knowledge base population failed (non-critical):', err);
+        }
       }
 
       // Also fire orchestrator in background for deeper analysis

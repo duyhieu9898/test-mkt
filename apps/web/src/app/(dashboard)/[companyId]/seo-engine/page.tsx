@@ -2,12 +2,12 @@
 
 import { useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -19,6 +19,7 @@ import {
 import {
   Search, Rocket, Loader2, Plus, X, CheckCircle2, Clock, AlertCircle,
   Globe, FileText, PenTool, Share2, Key, ExternalLink, ArrowRight, Info,
+  Sparkles, BarChart3, Trash2, Eye, Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api/client';
@@ -27,10 +28,28 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 // ─── Types ───────────────────────────────────────────────────────
 
-interface Product {
-  name: string;
-  description: string;
-  url?: string;
+interface BlogTopic {
+  id: string;
+  title: string;
+  keyword: string;
+  impact: 'high' | 'medium' | 'low';
+  reason: string;
+  searchIntent: 'informational' | 'commercial' | 'transactional';
+}
+
+interface KeywordOpportunity {
+  keyword: string;
+  volume: 'high' | 'medium' | 'low';
+  difficulty: 'easy' | 'medium' | 'hard';
+  intent: string;
+}
+
+interface Suggestions {
+  needsSetup: boolean;
+  blogTopics: BlogTopic[];
+  keywordOpportunities: KeywordOpportunity[];
+  contentGaps: string[];
+  error?: string;
 }
 
 interface PipelineStep {
@@ -67,7 +86,7 @@ interface SEOResults {
 
 // ─── Main Page ───────────────────────────────────────────────────
 
-export default function SEOEnginePage() {
+export default function ContentHubPage() {
   const params = useParams();
   const companyId = params.companyId as string;
   const token = useAuthStore((state) => state.token);
@@ -76,12 +95,9 @@ export default function SEOEnginePage() {
   // Active job tracking
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
-  // Input state
-  const [inputTab, setInputTab] = useState<'website' | 'products'>('website');
-  const [websiteUrl, setWebsiteUrl] = useState('');
-  const [products, setProducts] = useState<Product[]>([{ name: '', description: '' }]);
-  const [language, setLanguage] = useState('en');
-  const [isStarting, setIsStarting] = useState(false);
+  // Suggestion selection
+  const [selectedTopics, setSelectedTopics] = useState<Set<string>>(new Set());
+  const [isGenerating, setIsGenerating] = useState(false);
 
   // WordPress dialog
   const [wpDialogOpen, setWpDialogOpen] = useState(false);
@@ -96,12 +112,36 @@ export default function SEOEnginePage() {
   const [publishStatus, setPublishStatus] = useState<'draft' | 'publish'>('draft');
   const [isPublishing, setIsPublishing] = useState(false);
 
-  // ─── Fetch existing results ──────────────────────────────────
+  // Pipeline state
+  const [isStartingPipeline, setIsStartingPipeline] = useState(false);
+
+  // ─── Fetch AI suggestions ────────────────────────────────────
+
+  const { data: suggestions, isLoading: suggestionsLoading } = useQuery<Suggestions>({
+    queryKey: ['seo-suggestions', companyId],
+    queryFn: () => api.get(`/seo-engine/company/${companyId}/suggestions`, { token: token! }),
+    enabled: !!token,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  // ─── Fetch content pipeline stats ─────────────────────────────
 
   const { data: results } = useQuery<SEOResults>({
     queryKey: ['seo-results', companyId],
     queryFn: () => api.get(`/seo-engine/company/${companyId}/results`, { token: token! }),
     enabled: !!token && !activeJobId,
+  });
+
+  const { data: bannersData } = useQuery<{ data: any[]; count: number }>({
+    queryKey: ['banners-count', companyId],
+    queryFn: () => api.get(`/marketing/company/${companyId}/banners`, { token: token! }),
+    enabled: !!token,
+  });
+
+  const { data: socialData } = useQuery<{ data: any[]; count: number }>({
+    queryKey: ['social-count', companyId],
+    queryFn: () => api.get(`/marketing/company/${companyId}/posts`, { token: token! }),
+    enabled: !!token,
   });
 
   // ─── Poll active job ────────────────────────────────────────
@@ -117,11 +157,12 @@ export default function SEOEnginePage() {
   if (jobStatus?.status === 'completed' && activeJobId) {
     setActiveJobId(null);
     qc.invalidateQueries({ queryKey: ['seo-results', companyId] });
+    qc.invalidateQueries({ queryKey: ['seo-suggestions', companyId] });
   }
 
   if (jobStatus?.status === 'failed' && activeJobId) {
     setActiveJobId(null);
-    toast.error('SEO Engine encountered an issue. Please try again.');
+    toast.error('Content generation encountered an issue. Please try again.');
   }
 
   // ─── WordPress status ────────────────────────────────────────
@@ -132,52 +173,79 @@ export default function SEOEnginePage() {
     enabled: !!token && !activeJobId,
   });
 
+  // ─── Derived data ───────────────────────────────────────────
+
+  const blogPosts = results?.blogPosts || [];
+  const landingPages = results?.landingPages || [];
+  const bannerCount = bannersData?.count || bannersData?.data?.length || 0;
+  const socialCount = socialData?.count || socialData?.data?.length || 0;
+  const keywordCount = suggestions?.keywordOpportunities?.length || results?.keywords?.length || 0;
+
   // ─── Handlers ────────────────────────────────────────────────
 
-  const handleStart = async () => {
-    if (inputTab === 'website' && !websiteUrl) {
-      toast.error('Please enter your website URL');
+  const toggleTopic = (id: string) => {
+    const next = new Set(selectedTopics);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedTopics(next);
+  };
+
+  const handleGenerateSelected = async () => {
+    if (selectedTopics.size === 0) {
+      toast.error('Select at least one topic to generate');
       return;
     }
-    if (inputTab === 'products') {
-      const validProducts = products.filter(p => p.name && p.description);
-      if (validProducts.length === 0) {
-        toast.error('Please add at least one product with a name and description');
-        return;
-      }
-    }
 
-    setIsStarting(true);
+    const topics = (suggestions?.blogTopics || []).filter(t => selectedTopics.has(t.id));
+    await generateFromTopics(topics);
+  };
+
+  const handleGenerateAll = async () => {
+    const topics = suggestions?.blogTopics || [];
+    if (topics.length === 0) return;
+    await generateFromTopics(topics);
+  };
+
+  const generateFromTopics = async (topics: BlogTopic[]) => {
+    setIsGenerating(true);
     try {
-      const body: any = { language };
-      if (inputTab === 'website') {
-        body.websiteUrl = websiteUrl;
-      } else {
-        body.products = products.filter(p => p.name && p.description);
-      }
-
-      const res = await api.post<{ jobId: string }>(`/seo-engine/company/${companyId}/start`, body, { token: token! });
-      setActiveJobId(res.jobId);
-      toast.success('SEO Engine started! Building your content system...');
+      const res = await api.post<{ message: string; blogPosts: any[] }>(
+        `/seo-engine/company/${companyId}/generate-from-suggestion`,
+        {
+          suggestions: topics.map(t => ({
+            title: t.title,
+            keyword: t.keyword,
+            searchIntent: t.searchIntent,
+          })),
+          language: 'en',
+        },
+        { token: token! }
+      );
+      toast.success(res.message || 'Blog posts generated!');
+      setSelectedTopics(new Set());
+      qc.invalidateQueries({ queryKey: ['seo-results', companyId] });
     } catch (err: any) {
-      toast.error(err.message || 'Could not start the SEO Engine');
+      toast.error(err.message || 'Could not generate blog posts');
     } finally {
-      setIsStarting(false);
+      setIsGenerating(false);
     }
   };
 
-  const addProduct = () => {
-    setProducts([...products, { name: '', description: '' }]);
-  };
-
-  const removeProduct = (index: number) => {
-    setProducts(products.filter((_, i) => i !== index));
-  };
-
-  const updateProduct = (index: number, field: keyof Product, value: string) => {
-    const updated = [...products];
-    updated[index] = { ...updated[index], [field]: value };
-    setProducts(updated);
+  const handleStartPipeline = async () => {
+    setIsStartingPipeline(true);
+    try {
+      const res = await api.post<{ jobId: string }>(
+        `/seo-engine/company/${companyId}/start`,
+        { language: 'en' },
+        { token: token! }
+      );
+      setActiveJobId(res.jobId);
+      toast.success('Content pipeline started! Building your content system...');
+    } catch (err: any) {
+      toast.error(err.message || 'Could not start the content pipeline');
+    } finally {
+      setIsStartingPipeline(false);
+    }
   };
 
   const handleWpConnect = async () => {
@@ -210,13 +278,15 @@ export default function SEOEnginePage() {
   const handleWpTest = async () => {
     setWpTesting(true);
     try {
-      const res = await api.post<{ connected: boolean; error?: string }>(`/seo-engine/company/${companyId}/wordpress/test`, {}, { token: token! });
+      const res = await api.post<{ connected: boolean; error?: string }>(
+        `/seo-engine/company/${companyId}/wordpress/test`, {}, { token: token! }
+      );
       if (res.connected) {
         toast.success('WordPress connection is working!');
       } else {
         toast.error(res.error || 'Connection failed');
       }
-    } catch (err: any) {
+    } catch {
       toast.error('Could not test connection');
     } finally {
       setWpTesting(false);
@@ -225,19 +295,16 @@ export default function SEOEnginePage() {
 
   const togglePost = (postId: string) => {
     const next = new Set(selectedPosts);
-    if (next.has(postId)) {
-      next.delete(postId);
-    } else {
-      next.add(postId);
-    }
+    if (next.has(postId)) next.delete(postId);
+    else next.add(postId);
     setSelectedPosts(next);
   };
 
-  const toggleAllPosts = (posts: any[]) => {
-    if (selectedPosts.size === posts.length) {
+  const toggleAllPosts = () => {
+    if (selectedPosts.size === blogPosts.length) {
       setSelectedPosts(new Set());
     } else {
-      setSelectedPosts(new Set(posts.map(p => p.id)));
+      setSelectedPosts(new Set(blogPosts.map((p: any) => p.id)));
     }
   };
 
@@ -249,11 +316,14 @@ export default function SEOEnginePage() {
 
     setIsPublishing(true);
     try {
-      const res = await api.post<{ message: string; results: any[] }>(`/seo-engine/company/${companyId}/publish-blogs`, {
-        blogPostIds: Array.from(selectedPosts),
-        status: publishStatus,
-      }, { token: token! });
-
+      const res = await api.post<{ message: string; results: any[] }>(
+        `/seo-engine/company/${companyId}/publish-blogs`,
+        {
+          blogPostIds: Array.from(selectedPosts),
+          status: publishStatus,
+        },
+        { token: token! }
+      );
       toast.success(res.message);
       setSelectedPosts(new Set());
     } catch (err: any) {
@@ -263,10 +333,15 @@ export default function SEOEnginePage() {
     }
   };
 
-  // ─── Determine which phase to show ────────────────────────────
+  const handleDeletePost = async (postId: string) => {
+    // Blog posts are stored in company settings, so we just remove from UI
+    // In a full implementation you'd have a DELETE endpoint
+    toast.info('Blog post removal is coming soon');
+  };
+
+  // ─── Pipeline progress (when active) ────────────────────────
 
   const hasActiveJob = !!activeJobId && jobStatus;
-  const hasResults = results && (results.blogPosts.length > 0 || results.landingPages.length > 0);
 
   // ─── Render ──────────────────────────────────────────────────
 
@@ -275,58 +350,242 @@ export default function SEOEnginePage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Search className="w-6 h-6 text-primary" />
-          SEO Engine
+          <Sparkles className="w-6 h-6 text-primary" />
+          Content Hub
         </h1>
         <p className="text-muted-foreground mt-1">
-          Generate a complete SEO content system with one click
+          Your AI-powered content system — ideas, creation, and publishing in one place
         </p>
       </div>
 
-      {/* Phase 2: Progress */}
+      {/* Pipeline Progress (when running) */}
       {hasActiveJob && jobStatus && (
         <ProgressPhase job={jobStatus} />
       )}
 
-      {/* Phase 3: Results */}
-      {!hasActiveJob && hasResults && (
-        <ResultsPhase
-          results={results!}
-          wpStatus={wpStatus}
-          selectedPosts={selectedPosts}
-          publishStatus={publishStatus}
-          isPublishing={isPublishing}
-          onTogglePost={togglePost}
-          onToggleAll={toggleAllPosts}
-          onPublishStatusChange={setPublishStatus}
-          onPublish={handlePublish}
-          onWpConnect={() => setWpDialogOpen(true)}
-          onWpTest={handleWpTest}
-          wpTesting={wpTesting}
-          onStartNew={() => {
-            setActiveJobId(null);
-            // Show input phase by clearing results temporarily
-            qc.setQueryData(['seo-results', companyId], null);
-          }}
+      {/* Section A: AI Content Suggestions */}
+      {!hasActiveJob && (
+        <SuggestionsSection
+          suggestions={suggestions}
+          isLoading={suggestionsLoading}
+          selectedTopics={selectedTopics}
+          isGenerating={isGenerating}
+          companyId={companyId}
+          onToggleTopic={toggleTopic}
+          onGenerateSelected={handleGenerateSelected}
+          onGenerateAll={handleGenerateAll}
         />
       )}
 
-      {/* Phase 1: Input (shown when no active job and no results, or when "Start New" is clicked) */}
-      {!hasActiveJob && !hasResults && (
-        <InputPhase
-          inputTab={inputTab}
-          setInputTab={setInputTab}
-          websiteUrl={websiteUrl}
-          setWebsiteUrl={setWebsiteUrl}
-          products={products}
-          language={language}
-          setLanguage={setLanguage}
-          isStarting={isStarting}
-          onStart={handleStart}
-          onAddProduct={addProduct}
-          onRemoveProduct={removeProduct}
-          onUpdateProduct={updateProduct}
-        />
+      {/* Section B: Content Pipeline Status */}
+      {!hasActiveJob && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard
+            icon={<FileText className="w-5 h-5 text-blue-500" />}
+            label="Landing Pages"
+            value={landingPages.length}
+            detail={`${landingPages.filter((p: any) => p.status === 'published').length} published`}
+          />
+          <StatCard
+            icon={<PenTool className="w-5 h-5 text-purple-500" />}
+            label="Blog Posts"
+            value={blogPosts.length}
+            detail={`${blogPosts.filter((p: any) => p.status === 'published' || p.status === 'pushed_to_cms').length} published`}
+          />
+          <StatCard
+            icon={<Share2 className="w-5 h-5 text-pink-500" />}
+            label="Social Posts"
+            value={socialCount}
+            detail="created"
+          />
+          <StatCard
+            icon={<Key className="w-5 h-5 text-amber-500" />}
+            label="Keywords"
+            value={keywordCount}
+            detail="tracked"
+          />
+        </div>
+      )}
+
+      {/* Section C: Blog Posts List */}
+      {!hasActiveJob && blogPosts.length > 0 && (
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold flex items-center gap-2">
+                <PenTool className="w-4 h-4" />
+                Blog Posts
+              </h3>
+              {blogPosts.length > 1 && (
+                <Button variant="ghost" size="sm" onClick={toggleAllPosts}>
+                  {selectedPosts.size === blogPosts.length ? 'Deselect All' : 'Select All'}
+                </Button>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              {blogPosts.map((post: any) => (
+                <div
+                  key={post.id}
+                  className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                >
+                  <Checkbox
+                    checked={selectedPosts.has(post.id)}
+                    onCheckedChange={() => togglePost(post.id)}
+                    className="mt-1"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{post.title}</p>
+                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                      {post.keyword && (
+                        <Badge variant="secondary" className="text-xs">
+                          {post.keyword}
+                        </Badge>
+                      )}
+                      {post.wordCount && (
+                        <span className="text-xs text-muted-foreground">
+                          {post.wordCount.toLocaleString()} words
+                        </span>
+                      )}
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          post.status === 'published' || post.status === 'pushed_to_cms'
+                            ? 'border-green-300 text-green-700'
+                            : ''
+                        }`}
+                      >
+                        {post.status === 'pushed_to_cms' ? 'On WordPress' : post.status === 'published' ? 'Published' : 'Draft'}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {post.url && (
+                      <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+                        <a href={post.url} target="_blank" rel="noopener noreferrer">
+                          <Eye className="w-4 h-4" />
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Section D: WordPress Connection */}
+      {!hasActiveJob && (
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Globe className="w-4 h-4" />
+              WordPress
+            </h3>
+
+            {wpStatus?.connected ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <CheckCircle2 className="w-4 h-4 text-green-500" />
+                  <span>Connected to <span className="font-medium">{wpStatus.siteUrl}</span></span>
+                  <Button variant="ghost" size="sm" onClick={handleWpTest} disabled={wpTesting}>
+                    {wpTesting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Test'}
+                  </Button>
+                </div>
+
+                {blogPosts.length > 0 && (
+                  <div className="flex items-center gap-3">
+                    <Select value={publishStatus} onValueChange={(v) => setPublishStatus(v as any)}>
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="draft">As Draft</SelectItem>
+                        <SelectItem value="publish">Publish Now</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      onClick={handlePublish}
+                      disabled={selectedPosts.size === 0 || isPublishing}
+                    >
+                      {isPublishing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Publishing...
+                        </>
+                      ) : (
+                        <>
+                          <ArrowRight className="w-4 h-4 mr-2" />
+                          Push {selectedPosts.size > 0 ? `${selectedPosts.size} Post${selectedPosts.size > 1 ? 's' : ''}` : 'Selected'} to WordPress
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Connect WordPress to publish blog posts directly to your website
+                </p>
+                <Button variant="outline" onClick={() => setWpDialogOpen(true)}>
+                  <Globe className="w-4 h-4 mr-2" />
+                  Connect WordPress
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Section E: Quick Actions */}
+      {!hasActiveJob && (
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Zap className="w-4 h-4" />
+              Quick Actions
+            </h3>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variant="outline"
+                className="gap-2"
+                disabled={isGenerating || !suggestions?.blogTopics?.length}
+                onClick={handleGenerateAll}
+              >
+                <Plus className="w-4 h-4" />
+                New Blog Post from AI
+                {isGenerating && <Loader2 className="w-4 h-4 animate-spin" />}
+              </Button>
+
+              <Button variant="outline" className="gap-2" asChild>
+                <Link href={`/${companyId}/landing-pages?action=generate`}>
+                  <FileText className="w-4 h-4" />
+                  Create Product Page
+                </Link>
+              </Button>
+
+              <Button
+                className="gap-2"
+                disabled={isStartingPipeline}
+                onClick={handleStartPipeline}
+              >
+                {isStartingPipeline ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Rocket className="w-4 h-4" />
+                    Run Full Content Pipeline
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* WordPress Connect Dialog */}
@@ -397,148 +656,248 @@ export default function SEOEnginePage() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Phase 1: Input
+// Section A: AI Content Suggestions
 // ═══════════════════════════════════════════════════════════════════
 
-function InputPhase({
-  inputTab, setInputTab, websiteUrl, setWebsiteUrl,
-  products, language, setLanguage, isStarting,
-  onStart, onAddProduct, onRemoveProduct, onUpdateProduct,
+function SuggestionsSection({
+  suggestions,
+  isLoading,
+  selectedTopics,
+  isGenerating,
+  companyId,
+  onToggleTopic,
+  onGenerateSelected,
+  onGenerateAll,
 }: {
-  inputTab: 'website' | 'products';
-  setInputTab: (tab: 'website' | 'products') => void;
-  websiteUrl: string;
-  setWebsiteUrl: (url: string) => void;
-  products: Product[];
-  language: string;
-  setLanguage: (lang: string) => void;
-  isStarting: boolean;
-  onStart: () => void;
-  onAddProduct: () => void;
-  onRemoveProduct: (index: number) => void;
-  onUpdateProduct: (index: number, field: keyof Product, value: string) => void;
+  suggestions: Suggestions | undefined;
+  isLoading: boolean;
+  selectedTopics: Set<string>;
+  isGenerating: boolean;
+  companyId: string;
+  onToggleTopic: (id: string) => void;
+  onGenerateSelected: () => void;
+  onGenerateAll: () => void;
 }) {
-  return (
-    <Card>
-      <CardContent className="p-6 space-y-6">
-        <div>
-          <h2 className="text-lg font-semibold">How do you want to start?</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            We will analyze your business and create keyword strategies, blog posts, landing pages, and social content.
-          </p>
-        </div>
-
-        <Tabs value={inputTab} onValueChange={(v) => setInputTab(v as any)}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="website" className="flex items-center gap-2">
-              <Globe className="w-4 h-4" />
-              Website URL
-            </TabsTrigger>
-            <TabsTrigger value="products" className="flex items-center gap-2">
-              <PenTool className="w-4 h-4" />
-              Product List
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="website" className="space-y-4 mt-4">
-            <div className="space-y-2">
-              <Label>Your website URL</Label>
-              <Input
-                placeholder="https://your-website.com"
-                value={websiteUrl}
-                onChange={(e) => setWebsiteUrl(e.target.value)}
-                type="url"
-              />
-              <p className="text-xs text-muted-foreground">
-                We will scan your website to understand your business, products, and target audience.
-              </p>
+  // Loading state
+  if (isLoading) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex items-center gap-3">
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+            <div>
+              <p className="font-medium">Analyzing your business...</p>
+              <p className="text-sm text-muted-foreground">AI is preparing content suggestions tailored to your company</p>
             </div>
-          </TabsContent>
+          </div>
+          <div className="space-y-3 mt-6">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="animate-pulse flex gap-3 p-3 rounded-lg border">
+                <div className="w-5 h-5 bg-muted rounded" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 bg-muted rounded w-3/4" />
+                  <div className="h-3 bg-muted rounded w-1/2" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
-          <TabsContent value="products" className="space-y-4 mt-4">
-            <div className="space-y-3">
-              {products.map((product, index) => (
-                <div key={index} className="flex gap-3 items-start">
-                  <div className="flex-1 space-y-2">
-                    <Input
-                      placeholder="Product name"
-                      value={product.name}
-                      onChange={(e) => onUpdateProduct(index, 'name', e.target.value)}
-                    />
-                    <Input
-                      placeholder="Brief description"
-                      value={product.description}
-                      onChange={(e) => onUpdateProduct(index, 'description', e.target.value)}
-                    />
-                  </div>
-                  {products.length > 1 && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="mt-1 shrink-0"
-                      onClick={() => onRemoveProduct(index)}
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
+  // Needs setup — no business context yet
+  if (suggestions?.needsSetup) {
+    return (
+      <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
+        <CardContent className="p-6">
+          <div className="flex items-start gap-3">
+            <Info className="w-6 h-6 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold">Set up your business first</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                To get personalized content suggestions, complete your business profile in the onboarding section.
+                This helps the AI understand your products, audience, and goals.
+              </p>
+              <Button variant="outline" className="mt-3" asChild>
+                <Link href={`/${companyId}/settings`}>
+                  Go to Settings
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const blogTopics = suggestions?.blogTopics || [];
+  const keywords = suggestions?.keywordOpportunities || [];
+  const gaps = suggestions?.contentGaps || [];
+
+  if (blogTopics.length === 0 && keywords.length === 0 && gaps.length === 0) {
+    return null;
+  }
+
+  const impactColor: Record<string, string> = {
+    high: 'bg-red-100 text-red-700 border-red-200',
+    medium: 'bg-amber-100 text-amber-700 border-amber-200',
+    low: 'bg-green-100 text-green-700 border-green-200',
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Blog Topic Suggestions */}
+      {blogTopics.length > 0 && (
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-primary" />
+                  Content Ideas
+                </h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  AI-recommended topics based on your business
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onGenerateSelected}
+                  disabled={selectedTopics.size === 0 || isGenerating}
+                >
+                  {isGenerating ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : null}
+                  Generate Selected ({selectedTopics.size})
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={onGenerateAll}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 mr-1" />
                   )}
+                  Generate All
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {blogTopics.map((topic) => (
+                <div
+                  key={topic.id}
+                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                    selectedTopics.has(topic.id) ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                  }`}
+                  onClick={() => onToggleTopic(topic.id)}
+                >
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      checked={selectedTopics.has(topic.id)}
+                      onCheckedChange={() => onToggleTopic(topic.id)}
+                      className="mt-0.5"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm leading-tight">{topic.title}</p>
+                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                        <Badge variant="secondary" className="text-xs">
+                          {topic.keyword}
+                        </Badge>
+                        <Badge variant="outline" className={`text-xs ${impactColor[topic.impact] || ''}`}>
+                          {topic.impact} impact
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1.5 line-clamp-1">
+                        {topic.reason}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
-            <Button variant="outline" size="sm" onClick={onAddProduct}>
-              <Plus className="w-4 h-4 mr-2" />
-              Add Product
-            </Button>
-          </TabsContent>
-        </Tabs>
+          </CardContent>
+        </Card>
+      )}
 
-        {/* Language selector */}
-        <div className="space-y-2">
-          <Label>Content Language</Label>
-          <Select value={language} onValueChange={setLanguage}>
-            <SelectTrigger className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="en">English</SelectItem>
-              <SelectItem value="vi">Vietnamese</SelectItem>
-              <SelectItem value="es">Spanish</SelectItem>
-              <SelectItem value="fr">French</SelectItem>
-              <SelectItem value="de">German</SelectItem>
-              <SelectItem value="ja">Japanese</SelectItem>
-              <SelectItem value="ko">Korean</SelectItem>
-              <SelectItem value="zh">Chinese</SelectItem>
-              <SelectItem value="th">Thai</SelectItem>
-              <SelectItem value="pt">Portuguese</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Start button */}
-        <Button
-          size="lg"
-          className="w-full text-base"
-          onClick={onStart}
-          disabled={isStarting}
-        >
-          {isStarting ? (
-            <>
-              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-              Starting...
-            </>
-          ) : (
-            <>
-              <Rocket className="w-5 h-5 mr-2" />
-              Start SEO Engine
-            </>
+      {/* Keyword Opportunities & Content Gaps (side by side on desktop) */}
+      {(keywords.length > 0 || gaps.length > 0) && (
+        <div className="grid gap-4 md:grid-cols-2">
+          {keywords.length > 0 && (
+            <Card>
+              <CardContent className="p-6 space-y-3">
+                <h3 className="font-semibold flex items-center gap-2 text-sm">
+                  <Key className="w-4 h-4 text-amber-500" />
+                  Keyword Opportunities
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-muted-foreground border-b">
+                        <th className="pb-2 font-medium">Keyword</th>
+                        <th className="pb-2 font-medium">Volume</th>
+                        <th className="pb-2 font-medium">Difficulty</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {keywords.map((kw, i) => (
+                        <tr key={i}>
+                          <td className="py-2 font-medium">{kw.keyword}</td>
+                          <td className="py-2">
+                            <Badge variant="outline" className="text-xs capitalize">{kw.volume}</Badge>
+                          </td>
+                          <td className="py-2">
+                            <Badge
+                              variant="outline"
+                              className={`text-xs capitalize ${
+                                kw.difficulty === 'easy' ? 'text-green-700 border-green-300' :
+                                kw.difficulty === 'hard' ? 'text-red-700 border-red-300' :
+                                'text-amber-700 border-amber-300'
+                              }`}
+                            >
+                              {kw.difficulty}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </Button>
-      </CardContent>
-    </Card>
+
+          {gaps.length > 0 && (
+            <Card>
+              <CardContent className="p-6 space-y-3">
+                <h3 className="font-semibold flex items-center gap-2 text-sm">
+                  <AlertCircle className="w-4 h-4 text-blue-500" />
+                  Content Gaps
+                </h3>
+                <ul className="space-y-2">
+                  {gaps.map((gap, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm">
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                      <span className="text-muted-foreground">{gap}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Phase 2: Progress
+// Pipeline Progress
 // ═══════════════════════════════════════════════════════════════════
 
 function ProgressPhase({ job }: { job: SEOJob }) {
@@ -546,7 +905,7 @@ function ProgressPhase({ job }: { job: SEOJob }) {
     <Card>
       <CardContent className="p-6 space-y-6">
         <div>
-          <h2 className="text-lg font-semibold">Building your SEO content system...</h2>
+          <h2 className="text-lg font-semibold">Building your content system...</h2>
           <p className="text-sm text-muted-foreground mt-1">
             This usually takes a few minutes. You can stay on this page or come back later.
           </p>
@@ -614,233 +973,10 @@ function StepRow({ step }: { step: PipelineStep }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Phase 3: Results
+// Stat Card
 // ═══════════════════════════════════════════════════════════════════
 
-function ResultsPhase({
-  results, wpStatus, selectedPosts, publishStatus, isPublishing,
-  onTogglePost, onToggleAll, onPublishStatusChange, onPublish,
-  onWpConnect, onWpTest, wpTesting, onStartNew,
-}: {
-  results: SEOResults;
-  wpStatus: { connected: boolean; siteUrl?: string } | undefined;
-  selectedPosts: Set<string>;
-  publishStatus: 'draft' | 'publish';
-  isPublishing: boolean;
-  onTogglePost: (id: string) => void;
-  onToggleAll: (posts: any[]) => void;
-  onPublishStatusChange: (status: 'draft' | 'publish') => void;
-  onPublish: () => void;
-  onWpConnect: () => void;
-  onWpTest: () => void;
-  wpTesting: boolean;
-  onStartNew: () => void;
-}) {
-  const blogPosts = results.blogPosts || [];
-  const landingPages = results.landingPages || [];
-  const socialPosts = results.socialPosts || [];
-  const keywords = results.keywords || [];
-
-  return (
-    <div className="space-y-6">
-      {/* Success header */}
-      <Card className="border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-950/20">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="w-8 h-8 text-green-500" />
-              <div>
-                <h2 className="text-lg font-semibold">SEO Content System Ready!</h2>
-                <p className="text-sm text-muted-foreground">
-                  Your content has been generated and is ready to use
-                </p>
-              </div>
-            </div>
-            <Button variant="outline" onClick={onStartNew}>
-              <Rocket className="w-4 h-4 mr-2" />
-              Run Again
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Stats overview */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard
-          icon={<FileText className="w-5 h-5 text-blue-500" />}
-          label="Landing Pages"
-          value={landingPages.length}
-        />
-        <StatCard
-          icon={<PenTool className="w-5 h-5 text-purple-500" />}
-          label="Blog Posts"
-          value={blogPosts.length}
-        />
-        <StatCard
-          icon={<Share2 className="w-5 h-5 text-pink-500" />}
-          label="Social Posts"
-          value={socialPosts.length}
-        />
-        <StatCard
-          icon={<Key className="w-5 h-5 text-amber-500" />}
-          label="Keywords"
-          value={keywords.length}
-        />
-      </div>
-
-      {/* Blog Posts List */}
-      {blogPosts.length > 0 && (
-        <Card>
-          <CardContent className="p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold flex items-center gap-2">
-                <PenTool className="w-4 h-4" />
-                Blog Posts
-              </h3>
-              {blogPosts.length > 1 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onToggleAll(blogPosts)}
-                >
-                  {selectedPosts.size === blogPosts.length ? 'Deselect All' : 'Select All'}
-                </Button>
-              )}
-            </div>
-
-            <div className="space-y-3">
-              {blogPosts.map((post: any) => (
-                <div
-                  key={post.id}
-                  className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                >
-                  <Checkbox
-                    checked={selectedPosts.has(post.id)}
-                    onCheckedChange={() => onTogglePost(post.id)}
-                    className="mt-1"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm">{post.title}</p>
-                    <div className="flex items-center gap-3 mt-1">
-                      {post.keyword && (
-                        <Badge variant="secondary" className="text-xs">
-                          {post.keyword}
-                        </Badge>
-                      )}
-                      {post.wordCount && (
-                        <span className="text-xs text-muted-foreground">
-                          {post.wordCount.toLocaleString()} words
-                        </span>
-                      )}
-                      <Badge variant="outline" className="text-xs">
-                        Ready
-                      </Badge>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* WordPress Integration */}
-      <Card>
-        <CardContent className="p-6 space-y-4">
-          <h3 className="font-semibold flex items-center gap-2">
-            <Globe className="w-4 h-4" />
-            WordPress
-          </h3>
-
-          {wpStatus?.connected ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sm">
-                <CheckCircle2 className="w-4 h-4 text-green-500" />
-                <span>Connected to <span className="font-medium">{wpStatus.siteUrl}</span></span>
-                <Button variant="ghost" size="sm" onClick={onWpTest} disabled={wpTesting}>
-                  {wpTesting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Test'}
-                </Button>
-              </div>
-
-              {blogPosts.length > 0 && (
-                <div className="flex items-center gap-3">
-                  <Select value={publishStatus} onValueChange={(v) => onPublishStatusChange(v as any)}>
-                    <SelectTrigger className="w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="draft">As Draft</SelectItem>
-                      <SelectItem value="publish">Publish Now</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    onClick={onPublish}
-                    disabled={selectedPosts.size === 0 || isPublishing}
-                  >
-                    {isPublishing ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Publishing...
-                      </>
-                    ) : (
-                      <>
-                        <ArrowRight className="w-4 h-4 mr-2" />
-                        Push {selectedPosts.size > 0 ? `${selectedPosts.size} Post${selectedPosts.size > 1 ? 's' : ''}` : 'Selected'} to WordPress
-                      </>
-                    )}
-                  </Button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Connect WordPress to publish blog posts directly to your website
-              </p>
-              <Button variant="outline" onClick={onWpConnect}>
-                <Globe className="w-4 h-4 mr-2" />
-                Connect WordPress
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Landing Pages */}
-      {landingPages.length > 0 && (
-        <Card>
-          <CardContent className="p-6 space-y-4">
-            <h3 className="font-semibold flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Landing Pages
-            </h3>
-            <div className="space-y-2">
-              {landingPages.map((page: any) => (
-                <div key={page.id} className="flex items-center justify-between p-3 rounded-lg border">
-                  <div>
-                    <p className="font-medium text-sm">{page.title}</p>
-                    {page.keyword && (
-                      <Badge variant="secondary" className="text-xs mt-1">{page.keyword}</Badge>
-                    )}
-                  </div>
-                  {page.url && (
-                    <Button variant="ghost" size="sm" asChild>
-                      <a href={page.url} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
+function StatCard({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: number; detail?: string }) {
   return (
     <Card>
       <CardContent className="p-4 flex items-center gap-3">
@@ -848,6 +984,7 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string
         <div>
           <p className="text-2xl font-bold">{value}</p>
           <p className="text-xs text-muted-foreground">{label}</p>
+          {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
         </div>
       </CardContent>
     </Card>

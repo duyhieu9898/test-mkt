@@ -395,4 +395,167 @@ seoEngineRouter.post(
   }
 );
 
+// ===============================================================
+// AI CONTENT SUGGESTIONS
+// ===============================================================
+
+seoEngineRouter.get('/company/:companyId/suggestions', async (c) => {
+  const companyId = c.req.param('companyId');
+
+  try {
+    const { buildBusinessContext } = await import('../services/business-context');
+    const ctx = await buildBusinessContext(companyId);
+
+    // If no business context is set up, return empty with a flag
+    if (!ctx.companyName || ctx.companyName === 'Unknown') {
+      return c.json({
+        needsSetup: true,
+        blogTopics: [],
+        keywordOpportunities: [],
+        contentGaps: [],
+      });
+    }
+
+    const { llmGenerate, extractJSON } = await import('../lib/llm');
+
+    const { text } = await llmGenerate([
+      {
+        role: 'system',
+        content: `You are an expert SEO content strategist. Given a business profile, suggest high-impact blog topics, keyword opportunities, and content gaps.
+Respond ONLY with a JSON object. No markdown, no code fences.`,
+      },
+      {
+        role: 'user',
+        content: `Analyze this business and suggest content ideas.
+
+BUSINESS:
+- Name: ${ctx.companyName}
+- Industry: ${ctx.industry}
+- Description: ${ctx.description}
+- Products: ${ctx.products.join(', ') || 'N/A'}
+- Target audience: ${ctx.targetAudience.join(', ') || 'General'}
+
+Return JSON:
+{
+  "blogTopics": [
+    {
+      "id": "unique-slug",
+      "title": "Blog post title",
+      "keyword": "target keyword",
+      "impact": "high" | "medium" | "low",
+      "reason": "Why this topic matters (1 sentence)",
+      "searchIntent": "informational" | "commercial" | "transactional"
+    }
+  ],
+  "keywordOpportunities": [
+    {
+      "keyword": "keyword phrase",
+      "volume": "high" | "medium" | "low",
+      "difficulty": "easy" | "medium" | "hard",
+      "intent": "informational" | "commercial" | "transactional"
+    }
+  ],
+  "contentGaps": [
+    "Description of a content gap or missing topic"
+  ]
+}
+
+Generate 5-8 blog topics, 6-10 keyword opportunities, and 3-5 content gaps.
+Focus on topics that would drive traffic and leads for this specific business.`,
+      },
+    ], { maxTokens: 2000 });
+
+    const parsed = extractJSON(text);
+
+    return c.json({
+      needsSetup: false,
+      blogTopics: parsed?.blogTopics || [],
+      keywordOpportunities: parsed?.keywordOpportunities || [],
+      contentGaps: parsed?.contentGaps || [],
+    });
+  } catch (err: any) {
+    console.error('[SEO Engine] Suggestions failed:', err);
+
+    if (err.code === 'MODULE_NOT_FOUND') {
+      return c.json({ error: 'Service is being set up.' }, 503);
+    }
+
+    return c.json({
+      needsSetup: false,
+      blogTopics: [],
+      keywordOpportunities: [],
+      contentGaps: [],
+      error: 'Could not generate suggestions right now.',
+    });
+  }
+});
+
+// ===============================================================
+// GENERATE BLOG FROM SUGGESTION
+// ===============================================================
+
+seoEngineRouter.post(
+  '/company/:companyId/generate-from-suggestion',
+  zValidator('json', z.object({
+    suggestions: z.array(z.object({
+      title: z.string(),
+      keyword: z.string(),
+      searchIntent: z.enum(['informational', 'commercial', 'transactional']).default('informational'),
+    })).min(1),
+    language: z.string().default('en'),
+  })),
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const { suggestions, language } = c.req.valid('json');
+
+    try {
+      const { BlogGenerator } = await import('../services/blog-generator');
+      const { blogPosts: blogPostsTable } = await import('@1person/core/db');
+      const generator = new BlogGenerator();
+
+      const created: any[] = [];
+
+      for (const suggestion of suggestions) {
+        try {
+          const post = await generator.generateBlogPost(companyId, {
+            keyword: suggestion.keyword,
+            searchIntent: suggestion.searchIntent,
+            language,
+            targetWordCount: 1500,
+          });
+
+          const [saved] = await db.insert(blogPostsTable).values({
+            companyId,
+            title: post.title,
+            slug: post.slug,
+            metaDescription: post.metaDescription,
+            content: post.content,
+            excerpt: post.excerpt,
+            keyword: suggestion.keyword,
+            searchIntent: suggestion.searchIntent,
+            tags: post.tags as any,
+            faq: post.faq as any,
+            schemaMarkup: post.schemaMarkup as any,
+            wordCount: post.wordCount,
+            language,
+            status: 'draft',
+          }).returning();
+
+          created.push(saved);
+        } catch (genErr) {
+          console.error(`[SEO Engine] Blog generation failed for "${suggestion.keyword}":`, genErr);
+        }
+      }
+
+      return c.json({
+        message: `${created.length} blog post(s) generated`,
+        blogPosts: created,
+      });
+    } catch (err: any) {
+      console.error('[SEO Engine] Generate from suggestion failed:', err);
+      return c.json({ error: 'Could not generate blog posts.' }, 500);
+    }
+  }
+);
+
 export default seoEngineRouter;
