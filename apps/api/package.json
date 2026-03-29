@@ -27,6 +27,7 @@
     "jsonwebtoken": "^9.0.0",
     "nanoid": "^5.0.0",
     "openai": "^4.28.0",
+    "pdf-parse": "^2.4.5",
     "ua-parser-js": "^2.0.9",
     "uuid": "^13.0.0",
     "ws": "^8.16.0",

@@ -42,7 +42,34 @@ export interface GeneratePageInput {
   includePricing?: boolean;
   includeTestimonials?: boolean;
   includeFAQ?: boolean;
+  language?: string;
+  attachmentText?: string;
+  images?: Array<{ url: string; role: string; alt?: string }>;
 }
+
+// Language display names for LLM instructions
+const LANG_NAMES: Record<string, string> = {
+  en: 'English',
+  vi: 'Vietnamese',
+  fr: 'French',
+  de: 'German',
+  es: 'Spanish',
+  pt: 'Portuguese',
+  ja: 'Japanese',
+  ko: 'Korean',
+  zh: 'Chinese',
+  th: 'Thai',
+  ar: 'Arabic',
+  hi: 'Hindi',
+  it: 'Italian',
+  nl: 'Dutch',
+  ru: 'Russian',
+  pl: 'Polish',
+  sv: 'Swedish',
+  tr: 'Turkish',
+  id: 'Indonesian',
+  ms: 'Malay',
+};
 
 export interface GeneratedPage {
   id: string;
@@ -105,8 +132,11 @@ export class LandingPageService {
         await this.updateTaskStatus(taskId, 'in_progress', 10);
       }
 
-      // Step 1: Understand the business
-      const businessContext = await this.understandBusiness(input.prompt);
+      // Step 1: Understand the business (include attachment text if provided)
+      const fullPrompt = input.attachmentText
+        ? `${input.prompt}\n\nADDITIONAL CONTENT FROM DOCUMENT:\n${input.attachmentText.substring(0, 5000)}`
+        : input.prompt;
+      const businessContext = await this.understandBusiness(fullPrompt, input.language);
       console.log(`[LandingPageService] Business understood: ${businessContext.businessName}`);
 
       if (taskId) {
@@ -143,6 +173,41 @@ export class LandingPageService {
         throw new Error('Failed to create landing page');
       }
       console.log(`[LandingPageService] Page created: ${page.id}`);
+
+      // Step 5b: Store uploaded images as landing page assets
+      if (input.images?.length) {
+        const heroSection = sections.find(s => s.type === 'hero');
+        // Find the hero section ID from DB
+        const heroSectionRow = heroSection
+          ? await db.query.landingPageSections.findFirst({
+              where: and(
+                eq(landingPageSections.pageId, page.id),
+                eq(landingPageSections.type, 'hero')
+              ),
+            })
+          : null;
+
+        for (const img of input.images) {
+          await db.insert(landingPageAssets).values({
+            pageId: page.id,
+            sectionId: img.role === 'hero' ? (heroSectionRow?.id || null) : null,
+            type: img.role === 'hero' ? 'hero_image' : 'image',
+            name: img.alt || `${img.role} image`,
+            url: img.url,
+            mimeType: 'image/jpeg',
+            altText: img.alt || '',
+          });
+        }
+
+        // Update page content with hero image URL if provided
+        const heroImage = input.images.find(i => i.role === 'hero');
+        if (heroImage) {
+          const currentContent = (page.content || {}) as Record<string, unknown>;
+          await db.update(landingPages).set({
+            content: { ...currentContent, heroImage: heroImage.url },
+          }).where(eq(landingPages.id, page.id));
+        }
+      }
 
       // Mark task as completed
       if (taskId) {
@@ -277,7 +342,11 @@ export class LandingPageService {
   // STEP 1: BUSINESS UNDERSTANDING
   // ===========================================================================
 
-  private async understandBusiness(prompt: string): Promise<BusinessContext> {
+  private async understandBusiness(prompt: string, language?: string): Promise<BusinessContext> {
+    const langInstruction = language && language !== 'en'
+      ? `\n\nCRITICAL: ALL content MUST be written in ${LANG_NAMES[language] || language}. Do NOT write in English.`
+      : '';
+
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
@@ -295,6 +364,7 @@ Return a JSON object with these fields:
 - valueProposition: The main benefit/value offered
 - competitors: List of potential competitors (if obvious)
 - tone: Suggested brand tone (professional, friendly, bold, etc.)
+${langInstruction}
 
 Return ONLY valid JSON, no other text.`,
         },
@@ -371,12 +441,16 @@ Return ONLY valid JSON, no other text.`,
     input: GeneratePageInput
   ): Promise<GeneratedSection[]> {
     const sections: GeneratedSection[] = [];
+    const langInstruction = input.language && input.language !== 'en'
+      ? `\n\nCRITICAL: ALL content MUST be written in ${LANG_NAMES[input.language] || input.language}. Do NOT write in English.`
+      : '';
 
     for (const section of structure.sections) {
       const content = await this.generateSectionContentByType(
         section.type,
         context,
-        input
+        input,
+        langInstruction
       );
       sections.push({
         type: section.type,
@@ -391,31 +465,41 @@ Return ONLY valid JSON, no other text.`,
   private async generateSectionContentByType(
     type: string,
     context: BusinessContext,
-    input: GeneratePageInput
+    input: GeneratePageInput,
+    langInstruction: string
   ): Promise<unknown> {
     switch (type) {
       case 'hero':
-        return this.generateHeroContent(context);
+        return this.generateHeroContent(context, langInstruction, input.images);
       case 'problem':
-        return this.generateProblemContent(context);
+        return this.generateProblemContent(context, langInstruction);
       case 'solution':
-        return this.generateSolutionContent(context);
+        return this.generateSolutionContent(context, langInstruction);
       case 'features':
-        return this.generateFeaturesContent(context);
+        return this.generateFeaturesContent(context, langInstruction, input.images);
       case 'pricing':
-        return this.generatePricingContent(context);
+        return this.generatePricingContent(context, langInstruction);
       case 'testimonials':
-        return this.generateTestimonialsContent(context);
+        return this.generateTestimonialsContent(context, langInstruction);
       case 'faq':
-        return this.generateFAQContent(context);
+        return this.generateFAQContent(context, langInstruction);
       case 'cta':
-        return this.generateCTAContent(context);
+        return this.generateCTAContent(context, langInstruction);
       default:
         return {};
     }
   }
 
-  private async generateHeroContent(context: BusinessContext): Promise<HeroSection> {
+  private async generateHeroContent(
+    context: BusinessContext,
+    langInstruction: string = '',
+    images?: Array<{ url: string; role: string; alt?: string }>
+  ): Promise<HeroSection> {
+    const heroImage = images?.find(i => i.role === 'hero');
+    const imageInstruction = heroImage
+      ? `\nA hero image has been provided. Include this in the section: imageUrl: "${heroImage.url}"`
+      : '';
+
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 512,
@@ -436,6 +520,8 @@ Return JSON with:
 - ctaText: Primary button text (max 4 words)
 - ctaSecondaryText: Secondary action text (optional)
 - alignment: "center" or "left"
+${heroImage ? '- imageUrl: "' + heroImage.url + '"' : ''}
+${langInstruction}
 
 Return ONLY valid JSON.`,
         },
@@ -452,19 +538,26 @@ Return ONLY valid JSON.`,
       if (jsonStr.startsWith('```')) {
         jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '');
       }
-      return JSON.parse(jsonStr);
+      const result = JSON.parse(jsonStr);
+      // Ensure hero image URL is included in content
+      if (heroImage && !result.imageUrl) {
+        result.imageUrl = heroImage.url;
+      }
+      return result;
     } catch {
       return {
         headline: `Transform Your ${context.industry} Business`,
         subheadline: context.valueProposition,
         ctaText: 'Get Started',
         alignment: 'center',
-      };
+        ...(heroImage ? { imageUrl: heroImage.url } : {}),
+      } as HeroSection;
     }
   }
 
   private async generateProblemContent(
-    context: BusinessContext
+    context: BusinessContext,
+    langInstruction: string = ''
   ): Promise<{ title: string; description: string; painPoints: string[] }> {
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -477,6 +570,7 @@ Return ONLY valid JSON.`,
 Business: ${context.businessName}
 Target Audience: ${context.targetAudience}
 Industry: ${context.industry}
+${langInstruction}
 
 Return JSON with:
 - title: Section title
@@ -513,7 +607,8 @@ Return ONLY valid JSON.`,
   }
 
   private async generateSolutionContent(
-    context: BusinessContext
+    context: BusinessContext,
+    langInstruction: string = ''
   ): Promise<{ title: string; description: string; benefits: string[] }> {
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -525,6 +620,7 @@ Return ONLY valid JSON.`,
 
 Business: ${context.businessName}
 Value Proposition: ${context.valueProposition}
+${langInstruction}
 
 Return JSON with:
 - title: Section title
@@ -561,8 +657,15 @@ Return ONLY valid JSON.`,
   }
 
   private async generateFeaturesContent(
-    context: BusinessContext
+    context: BusinessContext,
+    langInstruction: string = '',
+    images?: Array<{ url: string; role: string; alt?: string }>
   ): Promise<{ title: string; features: FeatureItem[] }> {
+    const featureImages = images?.filter(i => i.role === 'feature' || i.role === 'screenshot') || [];
+    const imageNote = featureImages.length > 0
+      ? `\nFeature images are available. You may reference them by including an imageUrl field for matching features.\nAvailable images: ${featureImages.map((img, i) => `${i + 1}. ${img.alt || img.role} (${img.url})`).join(', ')}`
+      : '';
+
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
@@ -574,6 +677,8 @@ Return ONLY valid JSON.`,
 Business: ${context.businessName}
 Industry: ${context.industry}
 Value Proposition: ${context.valueProposition}
+${imageNote}
+${langInstruction}
 
 Return JSON with:
 - title: Section title
@@ -581,6 +686,7 @@ Return JSON with:
   - title: Feature name
   - description: Feature benefit (1-2 sentences)
   - icon: Suggested icon name (from lucide icons)
+  ${featureImages.length > 0 ? '- imageUrl: (optional) URL of a matching feature image' : ''}
 
 Return ONLY valid JSON.`,
         },
@@ -612,7 +718,8 @@ Return ONLY valid JSON.`,
   }
 
   private async generatePricingContent(
-    context: BusinessContext
+    context: BusinessContext,
+    langInstruction: string = ''
   ): Promise<{ title: string; tiers: PricingTier[] }> {
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -625,6 +732,7 @@ Return ONLY valid JSON.`,
 Business: ${context.businessName}
 Industry: ${context.industry}
 Target Audience: ${context.targetAudience}
+${langInstruction}
 
 Return JSON with:
 - title: Section title
@@ -690,7 +798,8 @@ Return ONLY valid JSON.`,
   }
 
   private async generateTestimonialsContent(
-    context: BusinessContext
+    context: BusinessContext,
+    langInstruction: string = ''
   ): Promise<{ title: string; testimonials: Testimonial[] }> {
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -703,6 +812,7 @@ Return ONLY valid JSON.`,
 Business: ${context.businessName}
 Industry: ${context.industry}
 Target Audience: ${context.targetAudience}
+${langInstruction}
 
 Return JSON with:
 - title: Section title
@@ -746,7 +856,8 @@ Return ONLY valid JSON.`,
   }
 
   private async generateFAQContent(
-    context: BusinessContext
+    context: BusinessContext,
+    langInstruction: string = ''
   ): Promise<{ title: string; faqs: FAQItem[] }> {
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -758,6 +869,7 @@ Return ONLY valid JSON.`,
 
 Business: ${context.businessName}
 Industry: ${context.industry}
+${langInstruction}
 
 Return JSON with:
 - title: Section title
@@ -793,8 +905,48 @@ Return ONLY valid JSON.`,
   }
 
   private async generateCTAContent(
-    context: BusinessContext
+    context: BusinessContext,
+    langInstruction: string = ''
   ): Promise<{ title: string; description: string; ctaText: string }> {
+    // For non-English languages, generate via LLM
+    if (langInstruction) {
+      const response = await this.anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 256,
+        messages: [
+          {
+            role: 'user',
+            content: `Write a final call-to-action section for a landing page.
+
+Business: ${context.businessName}
+Industry: ${context.industry}
+Target Audience: ${context.targetAudience}
+${langInstruction}
+
+Return JSON with:
+- title: Compelling CTA headline
+- description: Urgency or social proof statement
+- ctaText: Strong action button text
+
+Return ONLY valid JSON.`,
+          },
+        ],
+      });
+
+      const content = response.content[0];
+      if (content?.type === 'text') {
+        try {
+          let jsonStr = content.text.trim();
+          if (jsonStr.startsWith('```')) {
+            jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '');
+          }
+          return JSON.parse(jsonStr);
+        } catch {
+          // Fall through to default
+        }
+      }
+    }
+
     return {
       title: `Ready to Transform Your ${context.industry} Business?`,
       description: `Join thousands of ${context.targetAudience} who have already made the switch.`,

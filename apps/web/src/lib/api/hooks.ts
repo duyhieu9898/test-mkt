@@ -2531,6 +2531,9 @@ export interface GeneratePageInput {
   includePricing?: boolean;
   includeTestimonials?: boolean;
   includeFAQ?: boolean;
+  language?: string;
+  attachmentText?: string;
+  images?: Array<{ url: string; role: string; alt: string }>;
 }
 
 export const useLandingPages = (companyId: string) => {

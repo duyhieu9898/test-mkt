@@ -55,11 +55,19 @@ function renderHeroSection(content: Record<string, unknown>, primaryColor: strin
   const justifyClass = alignment === 'center' ? 'justify-center' :
                        alignment === 'right' ? 'justify-end' : 'justify-start';
 
+  // Support hero background image with overlay
+  const imageUrl = content.imageUrl || content.heroImage;
+  const bgStyle = imageUrl
+    ? `background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.6)), url('${escapeHtml(String(imageUrl))}'); background-size: cover; background-position: center;`
+    : `background: linear-gradient(135deg, ${primaryColor}15, ${primaryColor}05);`;
+  const textColorClass = imageUrl ? 'text-white' : 'text-gray-900';
+  const subTextColorClass = imageUrl ? 'text-white/80' : 'text-gray-600';
+
   return `
-    <section class="hero-section py-20 px-4" style="background: linear-gradient(135deg, ${primaryColor}15, ${primaryColor}05);">
+    <section class="hero-section py-20 px-4" style="${bgStyle}">
       <div class="container mx-auto max-w-4xl flex flex-col ${alignClass}">
-        <h1 class="text-4xl md:text-5xl font-bold mb-6 text-gray-900">${escapeHtml(String(headline))}</h1>
-        ${subheadline ? `<p class="text-xl text-gray-600 mb-8 max-w-2xl ${alignment === 'center' ? 'mx-auto' : ''}">${escapeHtml(String(subheadline))}</p>` : ''}
+        <h1 class="text-4xl md:text-5xl font-bold mb-6 ${textColorClass}">${escapeHtml(String(headline))}</h1>
+        ${subheadline ? `<p class="text-xl ${subTextColorClass} mb-8 max-w-2xl ${alignment === 'center' ? 'mx-auto' : ''}">${escapeHtml(String(subheadline))}</p>` : ''}
         <div class="flex flex-col sm:flex-row gap-4 ${justifyClass}">
           <a href="#signup" class="btn-primary px-8 py-3 rounded-lg text-white font-medium" style="background-color: ${primaryColor};">${escapeHtml(String(ctaText))}</a>
           ${ctaSecondaryText ? `<a href="#features" class="btn-secondary px-8 py-3 rounded-lg border border-gray-300 font-medium">${escapeHtml(String(ctaSecondaryText))}</a>` : ''}
@@ -132,7 +140,7 @@ function renderSolutionSection(content: Record<string, unknown>, primaryColor: s
 
 function renderFeaturesSection(content: Record<string, unknown>, primaryColor: string): string {
   const title = content.title || 'Features';
-  const features = (content.features || []) as Array<{ title: string; description: string; icon?: string }>;
+  const features = (content.features || []) as Array<{ title: string; description: string; icon?: string; imageUrl?: string }>;
 
   return `
     <section class="features-section py-16 px-4 bg-gray-50">
@@ -141,11 +149,13 @@ function renderFeaturesSection(content: Record<string, unknown>, primaryColor: s
         <div class="grid md:grid-cols-3 gap-8">
           ${features.map(feature => `
             <div class="text-center">
-              <div class="w-14 h-14 rounded-xl mx-auto mb-4 flex items-center justify-center" style="background-color: ${primaryColor}15; color: ${primaryColor};">
+              ${feature.imageUrl
+                ? `<img src="${escapeHtml(feature.imageUrl)}" alt="${escapeHtml(feature.title)}" class="w-14 h-14 rounded-xl mx-auto mb-4 object-cover" />`
+                : `<div class="w-14 h-14 rounded-xl mx-auto mb-4 flex items-center justify-center" style="background-color: ${primaryColor}15; color: ${primaryColor};">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                 </svg>
-              </div>
+              </div>`}
               <h3 class="font-semibold text-lg mb-2 text-gray-900">${escapeHtml(feature.title)}</h3>
               <p class="text-gray-600 text-sm">${escapeHtml(feature.description)}</p>
             </div>

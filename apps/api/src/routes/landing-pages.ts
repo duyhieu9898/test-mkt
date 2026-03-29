@@ -37,6 +37,13 @@ const generatePageSchema = z.object({
   includePricing: z.boolean().optional(),
   includeTestimonials: z.boolean().optional(),
   includeFAQ: z.boolean().optional(),
+  language: z.string().default('en'),
+  attachmentText: z.string().max(10000).optional(),
+  images: z.array(z.object({
+    url: z.string(),
+    role: z.enum(['hero', 'feature', 'screenshot', 'logo', 'general']),
+    alt: z.string().optional(),
+  })).max(10).optional(),
 });
 
 const updateStatusSchema = z.object({
@@ -252,6 +259,70 @@ landingPagesRouter.delete('/:id', async (c) => {
     success: true,
     message: 'Landing page deleted successfully',
   });
+});
+
+// =============================================================================
+// DOCUMENT EXTRACTION
+// =============================================================================
+
+/**
+ * POST /landing-pages/company/:companyId/extract-document
+ * Upload a file (PDF, text, markdown) and extract its text content
+ * for use as additional context when generating a landing page.
+ */
+landingPagesRouter.post('/company/:companyId/extract-document', async (c) => {
+  const { userId } = c.get('user');
+  const companyId = c.req.param('companyId');
+
+  await checkCompanyOwnership(companyId, userId);
+
+  const formData = await c.req.formData();
+  const file = formData.get('file') as File;
+
+  if (!file) {
+    return c.json({ success: false, error: 'No file provided' }, 400);
+  }
+
+  const maxSize = 10 * 1024 * 1024; // 10 MB
+  if (file.size > maxSize) {
+    return c.json({ success: false, error: 'File too large. Maximum size is 10 MB.' }, 400);
+  }
+
+  const allowedTypes = [
+    'application/pdf',
+    'text/plain',
+    'text/markdown',
+    'text/csv',
+    'text/html',
+  ];
+
+  if (!allowedTypes.includes(file.type) && !file.type.startsWith('text/')) {
+    return c.json({
+      success: false,
+      error: 'Unsupported file type. Please upload a PDF or text file.',
+    }, 400);
+  }
+
+  try {
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const { extractTextFromFile } = await import('../services/pdf-extractor');
+    const text = await extractTextFromFile(buffer, file.type);
+
+    return c.json({
+      success: true,
+      data: {
+        text,
+        fileName: file.name,
+        charCount: text.length,
+      },
+    });
+  } catch (error) {
+    console.error('[API] Document extraction failed:', error);
+    return c.json({
+      success: false,
+      error: 'Could not extract text from the uploaded file. Please try a different format.',
+    }, 500);
+  }
 });
 
 // =============================================================================

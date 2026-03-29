@@ -273,6 +273,9 @@ export default function LandingPagesPage() {
                     includePricing: config.sections.includes('pricing'),
                     includeTestimonials: config.sections.includes('testimonials'),
                     includeFAQ: config.sections.includes('faq'),
+                    language: config.language,
+                    attachmentText: config.attachmentText,
+                    images: config.images,
                   });
                   toast.success(`Page "${result.data.name}" created!`, { id: 'generate' });
                   setIsCreateDialogOpen(false);
@@ -421,16 +424,20 @@ export default function LandingPagesPage() {
                   {/* Preview Area */}
                   <div
                     className="h-36 relative overflow-hidden"
-                    style={{
+                    style={!(page.content as any)?.heroImage ? {
                       background: `linear-gradient(135deg, ${page.primaryColor}15, ${page.primaryColor}30)`,
-                    }}
+                    } : undefined}
                   >
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div
-                        className="w-20 h-20 rounded-full opacity-20"
-                        style={{ backgroundColor: page.primaryColor }}
-                      />
-                    </div>
+                    {(page.content as any)?.heroImage ? (
+                      <img src={(page.content as any).heroImage} className="w-full h-36 object-cover" alt={page.name} />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div
+                          className="w-20 h-20 rounded-full opacity-20"
+                          style={{ backgroundColor: page.primaryColor }}
+                        />
+                      </div>
+                    )}
                     <div className="absolute bottom-3 left-3">
                       <Badge
                         variant="outline"

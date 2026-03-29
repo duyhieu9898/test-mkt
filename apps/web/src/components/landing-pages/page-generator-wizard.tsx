@@ -1,25 +1,38 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
+import { useParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Sparkles,
   ArrowRight,
   ArrowLeft,
   Loader2,
   Check,
-  Users,
   Target,
   Palette,
   LayoutGrid,
   FileText,
   Zap,
+  Upload,
+  X,
+  ImageIcon,
+  Plus,
 } from 'lucide-react';
+import { useAuthStore } from '@/stores/auth-store';
 
 interface PageGeneratorWizardProps {
   companyName?: string;
@@ -34,24 +47,31 @@ export interface PageConfig {
   productDescription: string;
   targetAudience: string;
   valueProposition: string;
-  // Step 2: Goal
+  // Step 2: Media (new)
+  // (images passed separately via extra fields)
+  // Step 3: Goal
   conversionGoal: string;
-  // Step 3: Style
+  // Step 4: Style
   tone: string;
   visualStyle: string;
   primaryColor: string;
-  // Step 4: Sections
+  // Step 5: Sections
   sections: string[];
-  // Step 5: Content
+  // Step 6: Content
   contentLength: string;
+  // New fields
+  language: string;
+  attachmentText?: string;
+  images?: Array<{ url: string; role: string; alt: string }>;
 }
 
 const STEPS = [
   { id: 1, label: 'Business', icon: Target },
-  { id: 2, label: 'Goal', icon: Zap },
-  { id: 3, label: 'Style', icon: Palette },
-  { id: 4, label: 'Sections', icon: LayoutGrid },
-  { id: 5, label: 'Content', icon: FileText },
+  { id: 2, label: 'Media', icon: ImageIcon },
+  { id: 3, label: 'Goal', icon: Zap },
+  { id: 4, label: 'Style', icon: Palette },
+  { id: 5, label: 'Sections', icon: LayoutGrid },
+  { id: 6, label: 'Content', icon: FileText },
 ];
 
 const GOALS = [
@@ -95,6 +115,8 @@ const CONTENT_LENGTHS = [
   { value: 'long', label: 'Long', desc: 'Detailed — best for high-ticket or complex products', lines: '~7 sections' },
 ];
 
+const TOTAL_STEPS = STEPS.length;
+
 export function PageGeneratorWizard({
   companyName,
   companyIndustry,
@@ -102,6 +124,10 @@ export function PageGeneratorWizard({
   onCancel,
   isGenerating,
 }: PageGeneratorWizardProps) {
+  const params = useParams();
+  const companyId = params.companyId as string;
+  const token = useAuthStore((state) => state.token);
+
   const [step, setStep] = useState(1);
   const [config, setConfig] = useState<PageConfig>({
     productDescription: '',
@@ -113,7 +139,23 @@ export function PageGeneratorWizard({
     primaryColor: '#3b82f6',
     sections: ['hero', 'problem', 'solution', 'features', 'cta'],
     contentLength: 'medium',
+    language: 'en',
   });
+
+  // Document attachment state
+  const [attachedDoc, setAttachedDoc] = useState<File | null>(null);
+  const [extractedText, setExtractedText] = useState('');
+  const [isExtracting, setIsExtracting] = useState(false);
+  const docInputRef = useRef<HTMLInputElement>(null);
+
+  // Language state
+  const [language, setLanguage] = useState('en');
+
+  // Image upload state
+  const [heroImage, setHeroImage] = useState<{ url: string; role: string; alt: string } | null>(null);
+  const [featureImages, setFeatureImages] = useState<Array<{ url: string; role: string; alt: string } | null>>([null, null, null]);
+  const heroInputRef = useRef<HTMLInputElement>(null);
+  const featureInputRefs = useRef<Array<HTMLInputElement | null>>([null, null, null]);
 
   const updateConfig = (key: keyof PageConfig, value: any) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
@@ -121,7 +163,7 @@ export function PageGeneratorWizard({
 
   const toggleSection = (section: string) => {
     const required = SECTIONS.find((s) => s.value === section)?.required;
-    if (required) return; // Can't remove required sections
+    if (required) return;
     setConfig((prev) => ({
       ...prev,
       sections: prev.sections.includes(section)
@@ -136,8 +178,99 @@ export function PageGeneratorWizard({
   };
 
   const handleNext = () => {
-    if (step < 5) setStep(step + 1);
-    else onGenerate(config);
+    if (step < TOTAL_STEPS) {
+      setStep(step + 1);
+    } else {
+      // Build images array
+      const images = [
+        heroImage && { url: heroImage.url, role: 'hero', alt: heroImage.alt },
+        ...featureImages.filter(Boolean).map(img => ({ url: img!.url, role: 'feature', alt: img!.alt })),
+      ].filter(Boolean) as Array<{ url: string; role: string; alt: string }>;
+
+      onGenerate({
+        ...config,
+        language,
+        attachmentText: extractedText || undefined,
+        images: images.length > 0 ? images : undefined,
+      });
+    }
+  };
+
+  const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !token) return;
+
+    setAttachedDoc(file);
+    setIsExtracting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'}/landing-pages/company/${companyId}/extract-document`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        }
+      );
+
+      const data = await res.json();
+      if (data.text) {
+        setExtractedText(data.text);
+        toast.success(`Document read: ${data.charCount} characters extracted`);
+      }
+    } catch {
+      toast.error('Could not read document');
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, role: string, idx?: number) => {
+    const file = e.target.files?.[0];
+    if (!file || !token) return;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('name', file.name.replace(/\.[^/.]+$/, ''));
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'}/assets-library/company/${companyId}/upload`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        }
+      );
+
+      const data = await res.json();
+      if (data.url) {
+        const imageData = { url: data.url, role, alt: file.name };
+        if (role === 'hero') {
+          setHeroImage(imageData);
+        } else if (role === 'feature' && idx !== undefined) {
+          setFeatureImages(prev => {
+            const next = [...prev];
+            next[idx] = imageData;
+            return next;
+          });
+        }
+        toast.success('Image uploaded');
+      }
+    } catch {
+      toast.error('Upload failed');
+    }
+  };
+
+  const removeFeatureImage = (idx: number) => {
+    setFeatureImages(prev => {
+      const next = [...prev];
+      next[idx] = null;
+      return next;
+    });
   };
 
   return (
@@ -216,11 +349,132 @@ export function PageGeneratorWizard({
                   />
                 </div>
               </div>
+
+              {/* Document Attachment */}
+              <div className="space-y-2 pt-3 border-t">
+                <Label>Attach product document (optional)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Upload a PDF, DOC, or text file — AI will use its content to create a better page
+                </p>
+                <div
+                  className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:border-primary/30 transition-colors"
+                  onClick={() => docInputRef.current?.click()}
+                >
+                  {attachedDoc ? (
+                    <div className="flex items-center gap-2 justify-center">
+                      <FileText className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium">{attachedDoc.name}</span>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setAttachedDoc(null); setExtractedText(''); }}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div>
+                      <Upload className="w-6 h-6 text-muted-foreground mx-auto mb-1" />
+                      <p className="text-xs text-muted-foreground">Drop file here or click to browse</p>
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={docInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt,.md"
+                  className="hidden"
+                  onChange={handleDocUpload}
+                />
+                {isExtracting && (
+                  <p className="text-xs text-primary flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Reading document...
+                  </p>
+                )}
+              </div>
+
+              {/* Language Selector */}
+              <div className="space-y-2">
+                <Label>Page Language</Label>
+                <Select value={language} onValueChange={setLanguage}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en">English</SelectItem>
+                    <SelectItem value="vi">Tiếng Việt</SelectItem>
+                    <SelectItem value="ja">日本語</SelectItem>
+                    <SelectItem value="zh">中文</SelectItem>
+                    <SelectItem value="ko">한국어</SelectItem>
+                    <SelectItem value="fr">Français</SelectItem>
+                    <SelectItem value="es">Español</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           )}
 
-          {/* STEP 2: Conversion Goal */}
+          {/* STEP 2: Media Upload */}
           {step === 2 && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-lg mb-1">Add product images</h3>
+                <p className="text-sm text-muted-foreground">
+                  These will be placed in your page layout. You can skip this step.
+                </p>
+              </div>
+
+              {/* Hero Image */}
+              <div className="space-y-2">
+                <Label>Main hero image</Label>
+                <div
+                  className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:border-primary/30 transition-colors aspect-video flex items-center justify-center"
+                  onClick={() => heroInputRef.current?.click()}
+                >
+                  {heroImage ? (
+                    <div className="relative w-full h-full">
+                      <img src={heroImage.url} alt="Hero" className="w-full h-full object-cover rounded" />
+                      <Button size="sm" variant="destructive" className="absolute top-1 right-1 h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setHeroImage(null); }}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div>
+                      <ImageIcon className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">Click to upload hero image</p>
+                    </div>
+                  )}
+                </div>
+                <input ref={heroInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, 'hero')} />
+              </div>
+
+              {/* Feature Images */}
+              <div className="space-y-2">
+                <Label>Feature images (optional)</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[0, 1, 2].map((idx) => (
+                    <div
+                      key={idx}
+                      className="border-2 border-dashed rounded-lg p-3 text-center cursor-pointer hover:border-primary/30 transition-colors aspect-square flex items-center justify-center"
+                      onClick={() => featureInputRefs.current[idx]?.click()}
+                    >
+                      {featureImages[idx] ? (
+                        <div className="relative w-full h-full">
+                          <img src={featureImages[idx]!.url} alt="" className="w-full h-full object-cover rounded" />
+                          <Button size="sm" variant="destructive" className="absolute top-0 right-0 h-5 w-5 p-0" onClick={(e) => { e.stopPropagation(); removeFeatureImage(idx); }}>
+                            <X className="w-2.5 h-2.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div>
+                          <Plus className="w-5 h-5 text-muted-foreground mx-auto" />
+                          <p className="text-[10px] text-muted-foreground mt-1">Feature {idx + 1}</p>
+                        </div>
+                      )}
+                      <input ref={(el) => { featureInputRefs.current[idx] = el; }} type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, 'feature', idx)} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 3: Conversion Goal */}
+          {step === 3 && (
             <div className="space-y-4">
               <div>
                 <h3 className="font-semibold text-lg mb-1">What's the page goal?</h3>
@@ -252,8 +506,8 @@ export function PageGeneratorWizard({
             </div>
           )}
 
-          {/* STEP 3: Brand Style */}
-          {step === 3 && (
+          {/* STEP 4: Brand Style */}
+          {step === 4 && (
             <div className="space-y-4">
               <div>
                 <h3 className="font-semibold text-lg mb-1">How should it look & feel?</h3>
@@ -321,8 +575,8 @@ export function PageGeneratorWizard({
             </div>
           )}
 
-          {/* STEP 4: Section Selection */}
-          {step === 4 && (
+          {/* STEP 5: Section Selection */}
+          {step === 5 && (
             <div className="space-y-4">
               <div>
                 <h3 className="font-semibold text-lg mb-1">Choose page sections</h3>
@@ -355,8 +609,8 @@ export function PageGeneratorWizard({
             </div>
           )}
 
-          {/* STEP 5: Content Length */}
-          {step === 5 && (
+          {/* STEP 6: Content Length */}
+          {step === 6 && (
             <div className="space-y-4">
               <div>
                 <h3 className="font-semibold text-lg mb-1">Content depth</h3>
@@ -391,6 +645,10 @@ export function PageGeneratorWizard({
                 <p className="font-medium mb-1">Summary:</p>
                 <p className="text-muted-foreground">
                   {config.tone} · {config.visualStyle} · {config.sections.length} sections · {config.contentLength} copy · Goal: {config.conversionGoal}
+                  {heroImage ? ' · Hero image added' : ''}
+                  {featureImages.filter(Boolean).length > 0 ? ` · ${featureImages.filter(Boolean).length} feature image(s)` : ''}
+                  {extractedText ? ' · Document attached' : ''}
+                  {language !== 'en' ? ` · Language: ${language}` : ''}
                 </p>
               </div>
             </div>
@@ -412,7 +670,7 @@ export function PageGeneratorWizard({
         <Button onClick={handleNext} disabled={!canProceed() || isGenerating} className="gap-2">
           {isGenerating ? (
             <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
-          ) : step < 5 ? (
+          ) : step < TOTAL_STEPS ? (
             <>Next <ArrowRight className="w-4 h-4" /></>
           ) : (
             <><Sparkles className="w-4 h-4" /> Generate Page</>
