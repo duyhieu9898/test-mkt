@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,9 +17,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Search, Rocket, Loader2, Plus, X, CheckCircle2, Clock, AlertCircle,
+  Rocket, Loader2, Plus, X, CheckCircle2, Clock, AlertCircle,
   Globe, FileText, PenTool, Share2, Key, ExternalLink, ArrowRight, Info,
-  Sparkles, BarChart3, Trash2, Eye, Zap, RefreshCw, ChevronDown,
+  Sparkles, Trash2, RefreshCw, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api/client';
@@ -85,6 +85,14 @@ interface SEOResults {
   jobId: string | null;
 }
 
+interface PlanItem {
+  title: string;
+  keyword: string;
+  searchIntent: string;
+  source: 'idea' | 'keyword' | 'gap';
+  addedAt: number;
+}
+
 // ─── Main Page ───────────────────────────────────────────────────
 
 export default function ContentHubPage() {
@@ -97,9 +105,13 @@ export default function ContentHubPage() {
   // Active job tracking
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
-  // Suggestion selection
-  const [selectedTopics, setSelectedTopics] = useState<Set<string>>(new Set());
+  // Content Plan
+  const [contentPlan, setContentPlan] = useState<PlanItem[]>([]);
+  const [newPostIds, setNewPostIds] = useState<Set<string>>(new Set());
+
+  // Generation state
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generatingTopicCount, setGeneratingTopicCount] = useState(0);
 
   // WordPress dialog
   const [wpDialogOpen, setWpDialogOpen] = useState(false);
@@ -114,30 +126,33 @@ export default function ContentHubPage() {
   const [publishStatus, setPublishStatus] = useState<'draft' | 'publish'>('draft');
   const [isPublishing, setIsPublishing] = useState(false);
 
-  // Keyword generation
-  const [isGeneratingKeyword, setIsGeneratingKeyword] = useState<string | null>(null);
-
   // WordPress categories
   const [wpCategories, setWpCategories] = useState<Array<{ id: number; name: string }>>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
-
-  // Generation results panel
-  const [generationResult, setGenerationResult] = useState<{
-    blogs: number;
-    landingPages: number;
-    banners: number;
-    socialPosts: number;
-  } | null>(null);
 
   // Blog expand/preview
   const [expandedBlog, setExpandedBlog] = useState<string | null>(null);
   const [blogContent, setBlogContent] = useState<Record<string, string>>({});
 
-  // Generating progress
-  const [generatingTopicCount, setGeneratingTopicCount] = useState(0);
 
-  // Pipeline state
-  const [isStartingPipeline, setIsStartingPipeline] = useState(false);
+  // ─── Content Plan helpers ─────────────────────────────────────
+
+  const addToPlan = (item: PlanItem) => {
+    if (contentPlan.some(p => p.keyword === item.keyword)) {
+      toast.info(`"${item.keyword}" is already in your plan`);
+      return;
+    }
+    setContentPlan(prev => [...prev, item]);
+    toast.success('Added to Content Plan');
+  };
+
+  const removeFromPlan = (keyword: string) => {
+    setContentPlan(prev => prev.filter(p => p.keyword !== keyword));
+  };
+
+  const clearPlan = () => setContentPlan([]);
+
+  const isInPlan = (keyword: string) => contentPlan.some(p => p.keyword === keyword);
 
   // ─── Fetch AI suggestions ────────────────────────────────────
 
@@ -222,75 +237,56 @@ export default function ContentHubPage() {
 
   // ─── Handlers ────────────────────────────────────────────────
 
-  const toggleTopic = (id: string) => {
-    const next = new Set(selectedTopics);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelectedTopics(next);
-  };
-
-  const handleGenerateSelected = async () => {
-    if (selectedTopics.size === 0) {
-      toast.error('Select at least one topic to generate');
-      return;
-    }
-
-    const topics = (suggestions?.blogTopics || []).filter(t => selectedTopics.has(t.id));
-    await generateFromTopics(topics);
-  };
-
-  const handleGenerateAll = async () => {
-    const topics = suggestions?.blogTopics || [];
-    if (topics.length === 0) return;
-    await generateFromTopics(topics);
-  };
-
-  const generateFromTopics = async (topics: BlogTopic[]) => {
+  const handleGenerateFromPlan = async () => {
+    if (!token || contentPlan.length === 0) return;
     setIsGenerating(true);
-    setGeneratingTopicCount(topics.length);
+    setGeneratingTopicCount(contentPlan.length);
+
     try {
-      const res = await api.post<any>(
-        `/seo-engine/company/${companyId}/generate-from-suggestion`,
-        {
-          suggestions: topics.map(t => ({
-            title: t.title,
-            keyword: t.keyword,
-            searchIntent: t.searchIntent,
-          })),
-          language: 'en',
-        },
-        { token: token! }
-      );
-      setGenerationResult(res.counts);
-      setTimeout(() => setGenerationResult(null), 30000);
-      toast.success(res.message || `Created ${res.counts?.blogs || 0} blog posts, ${res.counts?.landingPages || 0} pages, ${res.counts?.banners || 0} banners, ${res.counts?.socialPosts || 0} social posts`);
-      setSelectedTopics(new Set());
+      const planSuggestions = contentPlan.filter(p => p.title).map(p => ({
+        title: p.title,
+        keyword: p.keyword,
+        searchIntent: p.searchIntent,
+      }));
+      const keywords = contentPlan.filter(p => !p.title).map(p => ({
+        keyword: p.keyword,
+        volume: 'medium',
+        competition: 'medium',
+      }));
+
+      const body: any = {};
+      if (planSuggestions.length > 0) body.suggestions = planSuggestions;
+      if (keywords.length > 0) body.keywords = keywords;
+
+      const res = await api.post<any>(`/seo-engine/company/${companyId}/generate-from-suggestion`, body, { token });
+
+      // Track new post IDs for "New" badge
+      if (res.posts?.length) {
+        const ids = new Set<string>(res.posts.map((p: any) => p.id));
+        setNewPostIds(ids);
+        setTimeout(() => setNewPostIds(new Set()), 5 * 60 * 1000);
+      }
+
+      toast.success(res.message || `Created content for ${contentPlan.length} topics`);
+      clearPlan();
+
       qc.invalidateQueries({ queryKey: ['seo-results'] });
       qc.invalidateQueries({ queryKey: ['seo-blogs'] });
       qc.invalidateQueries({ queryKey: ['banners'] });
       qc.invalidateQueries({ queryKey: ['campaigns'] });
       qc.invalidateQueries({ queryKey: ['landing-pages'] });
-    } catch (err: any) {
-      toast.error(err.message || 'Could not generate blog posts');
+      qc.invalidateQueries({ queryKey: ['banners-count'] });
+      qc.invalidateQueries({ queryKey: ['social-count'] });
+
+      setTimeout(() => {
+        document.getElementById('blog-section')?.scrollIntoView({ behavior: 'smooth' });
+      }, 1000);
+
+    } catch {
+      toast.error('Could not generate content. Please try again.');
     } finally {
       setIsGenerating(false);
-    }
-  };
-
-  const handleStartPipeline = async () => {
-    setIsStartingPipeline(true);
-    try {
-      const res = await api.post<{ jobId: string }>(
-        `/seo-engine/company/${companyId}/start`,
-        { language: 'en' },
-        { token: token! }
-      );
-      setActiveJobId(res.jobId);
-      toast.success('Content pipeline started! Building your content system...');
-    } catch (err: any) {
-      toast.error(err.message || 'Could not start the content pipeline');
-    } finally {
-      setIsStartingPipeline(false);
+      setGeneratingTopicCount(0);
     }
   };
 
@@ -315,7 +311,6 @@ export default function ContentHubPage() {
       setWpAppPassword('');
       qc.invalidateQueries({ queryKey: ['wp-status', companyId] });
 
-      // Load categories after successful connect
       try {
         const catRes = await api.get<{ categories: any[] }>(`/seo-engine/company/${companyId}/wordpress/categories`, { token: token! });
         setWpCategories(catRes.categories || []);
@@ -414,40 +409,6 @@ export default function ContentHubPage() {
     }
   };
 
-  const handleGenerateFromKeyword = async (kw: any, type: 'blog' | 'all') => {
-    if (!token) return;
-    setIsGeneratingKeyword(kw.keyword);
-    try {
-      const res = await api.post<any>(`/seo-engine/company/${companyId}/generate-from-suggestion`, {
-        keywords: [{ keyword: kw.keyword, volume: kw.volume, competition: kw.competition || kw.difficulty }],
-      }, { token });
-      toast.success(res.message || `Content created for "${kw.keyword}"`);
-      qc.invalidateQueries({ queryKey: ['seo-results'] });
-      qc.invalidateQueries({ queryKey: ['seo-blogs'] });
-      qc.invalidateQueries({ queryKey: ['banners'] });
-      qc.invalidateQueries({ queryKey: ['landing-pages'] });
-    } catch {
-      toast.error('Could not generate content');
-    } finally {
-      setIsGeneratingKeyword(null);
-    }
-  };
-
-  const handleGenerateFromGap = async (gap: string) => {
-    if (!token) return;
-    try {
-      toast.info(`Creating content for: "${gap.substring(0, 50)}..."`);
-      const res = await api.post<any>(`/seo-engine/company/${companyId}/generate-from-suggestion`, {
-        keywords: [{ keyword: gap, volume: 'medium', competition: 'medium' }],
-      }, { token });
-      toast.success(res.message || 'Content created!');
-      qc.invalidateQueries({ queryKey: ['seo-results'] });
-      qc.invalidateQueries({ queryKey: ['seo-blogs'] });
-    } catch {
-      toast.error('Could not create content');
-    }
-  };
-
   // ─── Pipeline progress (when active) ────────────────────────
 
   const hasActiveJob = !!activeJobId && jobStatus;
@@ -521,56 +482,56 @@ export default function ContentHubPage() {
         <SuggestionsSection
           suggestions={suggestions}
           isLoading={suggestionsLoading}
-          selectedTopics={selectedTopics}
-          isGenerating={isGenerating}
           companyId={companyId}
-          isGeneratingKeyword={isGeneratingKeyword}
-          onToggleTopic={toggleTopic}
-          onGenerateSelected={handleGenerateSelected}
-          onGenerateAll={handleGenerateAll}
-          onGenerateFromKeyword={handleGenerateFromKeyword}
-          onGenerateFromGap={handleGenerateFromGap}
+          isInPlan={isInPlan}
+          addToPlan={addToPlan}
+          removeFromPlan={removeFromPlan}
         />
       )}
 
-      {/* Generation Results Panel */}
-      {generationResult && (
-        <Card className="border-green-200 bg-green-50/50">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="font-semibold text-green-900 flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5" /> Content Generated Successfully
-                </p>
-                <div className="mt-2 space-y-1 text-sm text-green-800">
-                  {generationResult.blogs > 0 && (
-                    <p className="flex items-center gap-2">
-                      <FileText className="w-3.5 h-3.5" /> {generationResult.blogs} Blog Posts
-                      <button className="text-xs text-green-600 hover:underline" onClick={() => document.getElementById('blog-section')?.scrollIntoView({ behavior: 'smooth' })}>View below ↓</button>
+      {/* Content Plan */}
+      {contentPlan.length > 0 && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="pt-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold flex items-center gap-2">
+                <FileText className="w-5 h-5 text-primary" />
+                Content Plan ({contentPlan.length} topics)
+              </h3>
+              <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" onClick={clearPlan}>Clear All</Button>
+            </div>
+
+            <div className="space-y-2 mb-4">
+              {contentPlan.map((item, i) => (
+                <div key={i} className="flex items-center justify-between py-1.5 px-3 bg-background rounded-lg border">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{item.title || item.keyword}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {item.source === 'idea' ? 'From Content Ideas' : item.source === 'keyword' ? 'From Keywords' : 'From Content Gaps'}
+                      {' \u2192 '}Will create: blog post + landing page + banners + social posts
                     </p>
-                  )}
-                  {generationResult.landingPages > 0 && (
-                    <p className="flex items-center gap-2">
-                      <Globe className="w-3.5 h-3.5" /> {generationResult.landingPages} Landing Pages
-                      <Link href={`/${companyId}/landing-pages`} className="text-xs text-green-600 hover:underline">Go to Pages →</Link>
-                    </p>
-                  )}
-                  {generationResult.banners > 0 && (
-                    <p className="flex items-center gap-2">
-                      <PenTool className="w-3.5 h-3.5" /> {generationResult.banners} Banners
-                      <Link href={`/${companyId}/marketing`} className="text-xs text-green-600 hover:underline">Go to Marketing →</Link>
-                    </p>
-                  )}
-                  {generationResult.socialPosts > 0 && (
-                    <p className="flex items-center gap-2">
-                      <Share2 className="w-3.5 h-3.5" /> {generationResult.socialPosts} Social Posts
-                      <Link href={`/${companyId}/marketing`} className="text-xs text-green-600 hover:underline">Go to Marketing →</Link>
-                    </p>
-                  )}
+                  </div>
+                  <Button size="sm" variant="ghost" className="h-6 w-6 p-0 shrink-0" onClick={() => removeFromPlan(item.keyword)}>
+                    <X className="w-3 h-3" />
+                  </Button>
                 </div>
-              </div>
-              <Button size="sm" variant="ghost" onClick={() => setGenerationResult(null)}>
-                <X className="w-4 h-4" />
+              ))}
+            </div>
+
+            <div className="pt-3 border-t">
+              <p className="text-xs text-muted-foreground mb-3">
+                Will create: <strong>{contentPlan.length} blog posts</strong>, <strong>{contentPlan.length} landing pages</strong>, <strong>{contentPlan.length * 3} banners</strong>, <strong>{contentPlan.length * 2} social posts</strong>
+              </p>
+              <Button
+                className="w-full gap-2"
+                disabled={isGenerating}
+                onClick={handleGenerateFromPlan}
+              >
+                {isGenerating ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Generating {contentPlan.length} topics...</>
+                ) : (
+                  <><Rocket className="w-4 h-4" /> Generate All Content ({contentPlan.length} topics)</>
+                )}
               </Button>
             </div>
           </CardContent>
@@ -639,11 +600,27 @@ export default function ContentHubPage() {
                   >
                     <Checkbox checked={selectedPosts.has(post.id)} onClick={(e) => { e.stopPropagation(); togglePost(post.id); }} />
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm truncate">{post.title}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-sm truncate">{post.title}</p>
+                        {newPostIds.has(post.id) && (
+                          <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[9px] animate-pulse">NEW</Badge>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 mt-0.5">
                         {post.keyword && <Badge variant="outline" className="text-[10px]">{post.keyword}</Badge>}
                         <span className="text-[10px] text-muted-foreground">{post.word_count || post.wordCount} words</span>
-                        <Badge className={`text-[10px] ${post.status === 'draft' ? 'bg-gray-100 text-gray-600' : 'bg-green-100 text-green-700'}`}>{post.status}</Badge>
+                        {post.status === 'pushed_to_cms' || post.cmsPostUrl ? (
+                          <div className="flex items-center gap-1">
+                            <Badge className="bg-green-100 text-green-700 text-[10px]">On WordPress</Badge>
+                            {post.cmsPostUrl && (
+                              <a href={post.cmsPostUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                                <ExternalLink className="w-2.5 h-2.5" /> View
+                              </a>
+                            )}
+                          </div>
+                        ) : (
+                          <Badge className={`text-[10px] ${post.status === 'draft' ? 'bg-gray-100 text-gray-600' : 'bg-green-100 text-green-700'}`}>{post.status}</Badge>
+                        )}
                       </div>
                     </div>
                     <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${expandedBlog === post.id ? 'rotate-180' : ''}`} />
@@ -763,55 +740,6 @@ export default function ContentHubPage() {
         </Card>
       )}
 
-      {/* Section E: Quick Actions */}
-      {!hasActiveJob && (
-        <Card>
-          <CardContent className="p-6 space-y-4">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Zap className="w-4 h-4" />
-              Quick Actions
-            </h3>
-            <div className="flex flex-wrap gap-3">
-              <Button
-                variant="outline"
-                className="gap-2"
-                disabled={isGenerating || !suggestions?.blogTopics?.length}
-                onClick={handleGenerateAll}
-              >
-                <Plus className="w-4 h-4" />
-                New Blog Post from AI
-                {isGenerating && <Loader2 className="w-4 h-4 animate-spin" />}
-              </Button>
-
-              <Button variant="outline" className="gap-2" asChild>
-                <Link href={`/${companyId}/landing-pages?action=generate`}>
-                  <FileText className="w-4 h-4" />
-                  Create Product Page
-                </Link>
-              </Button>
-
-              <Button
-                className="gap-2"
-                disabled={isStartingPipeline}
-                onClick={handleStartPipeline}
-              >
-                {isStartingPipeline ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Starting...
-                  </>
-                ) : (
-                  <>
-                    <Rocket className="w-4 h-4" />
-                    Run Full Content Pipeline
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* WordPress Connect Dialog */}
       <Dialog open={wpDialogOpen} onOpenChange={setWpDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -886,27 +814,17 @@ export default function ContentHubPage() {
 function SuggestionsSection({
   suggestions,
   isLoading,
-  selectedTopics,
-  isGenerating,
   companyId,
-  isGeneratingKeyword,
-  onToggleTopic,
-  onGenerateSelected,
-  onGenerateAll,
-  onGenerateFromKeyword,
-  onGenerateFromGap,
+  isInPlan,
+  addToPlan,
+  removeFromPlan,
 }: {
   suggestions: Suggestions | undefined;
   isLoading: boolean;
-  selectedTopics: Set<string>;
-  isGenerating: boolean;
   companyId: string;
-  isGeneratingKeyword: string | null;
-  onToggleTopic: (id: string) => void;
-  onGenerateSelected: () => void;
-  onGenerateAll: () => void;
-  onGenerateFromKeyword: (kw: any, type: 'blog' | 'all') => void;
-  onGenerateFromGap: (gap: string) => void;
+  isInPlan: (keyword: string) => boolean;
+  addToPlan: (item: PlanItem) => void;
+  removeFromPlan: (keyword: string) => void;
 }) {
   // Loading state
   if (isLoading) {
@@ -969,7 +887,7 @@ function SuggestionsSection({
     return null;
   }
 
-  const impactColor: Record<string, string> = {
+  const impactColors: Record<string, string> = {
     high: 'bg-red-100 text-red-700 border-red-200',
     medium: 'bg-amber-100 text-amber-700 border-amber-200',
     low: 'bg-green-100 text-green-700 border-green-200',
@@ -991,62 +909,48 @@ function SuggestionsSection({
                   AI-recommended topics based on your business
                 </p>
               </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onGenerateSelected}
-                  disabled={selectedTopics.size === 0 || isGenerating}
-                >
-                  {isGenerating ? (
-                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                  ) : null}
-                  Generate Selected ({selectedTopics.size})
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={onGenerateAll}
-                  disabled={isGenerating}
-                >
-                  {isGenerating ? (
-                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4 mr-1" />
-                  )}
-                  Generate All
-                </Button>
-              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs gap-1"
+                onClick={() => {
+                  blogTopics.forEach(topic => {
+                    if (!isInPlan(topic.keyword)) {
+                      addToPlan({ title: topic.title, keyword: topic.keyword, searchIntent: topic.searchIntent, source: 'idea', addedAt: Date.now() });
+                    }
+                  });
+                }}
+              >
+                <Plus className="w-3 h-3" /> Add All to Plan
+              </Button>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               {blogTopics.map((topic) => (
                 <div
                   key={topic.id}
-                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                    selectedTopics.has(topic.id) ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                  }`}
-                  onClick={() => onToggleTopic(topic.id)}
+                  className="p-3 rounded-lg border hover:border-primary/30 transition-all"
                 >
-                  <div className="flex items-start gap-3">
-                    <Checkbox
-                      checked={selectedTopics.has(topic.id)}
-                      onCheckedChange={() => onToggleTopic(topic.id)}
-                      className="mt-0.5"
-                    />
+                  <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm leading-tight">{topic.title}</p>
-                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                        <Badge variant="secondary" className="text-xs">
-                          {topic.keyword}
-                        </Badge>
-                        <Badge variant="outline" className={`text-xs ${impactColor[topic.impact] || ''}`}>
-                          {topic.impact} impact
-                        </Badge>
+                      <p className="font-medium text-sm">{topic.title}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Badge variant="outline" className="text-[10px]">{topic.keyword}</Badge>
+                        <Badge className={`text-[10px] ${impactColors[topic.impact]}`}>{topic.impact} impact</Badge>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-1.5 line-clamp-1">
-                        {topic.reason}
-                      </p>
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{topic.reason}</p>
                     </div>
+                    <Button
+                      size="sm"
+                      variant={isInPlan(topic.keyword) ? 'default' : 'outline'}
+                      className="shrink-0 text-xs h-7 gap-1"
+                      onClick={() => isInPlan(topic.keyword)
+                        ? removeFromPlan(topic.keyword)
+                        : addToPlan({ title: topic.title, keyword: topic.keyword, searchIntent: topic.searchIntent, source: 'idea', addedAt: Date.now() })
+                      }
+                    >
+                      {isInPlan(topic.keyword) ? <><CheckCircle2 className="w-3 h-3" /> In Plan</> : <><Plus className="w-3 h-3" /> Add to Plan</>}
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -1055,73 +959,43 @@ function SuggestionsSection({
         </Card>
       )}
 
-      {/* Keyword Opportunities & Content Gaps (side by side on desktop) */}
+      {/* Keyword Ideas & Content Gaps (side by side on desktop) */}
       {(keywords.length > 0 || gaps.length > 0) && (
         <div className="grid gap-4 md:grid-cols-2">
           {keywords.length > 0 && (
             <Card>
-              <CardContent className="p-6 space-y-3">
-                <h3 className="font-semibold flex items-center gap-2 text-sm">
-                  <Key className="w-4 h-4 text-amber-500" />
-                  Keyword Opportunities
-                </h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-muted-foreground border-b">
-                        <th className="pb-2 font-medium">Keyword</th>
-                        <th className="pb-2 font-medium">Volume</th>
-                        <th className="pb-2 font-medium">Difficulty</th>
-                        <th className="text-right text-xs font-medium text-muted-foreground p-2">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {keywords.map((kw, i) => (
-                        <tr key={i}>
-                          <td className="py-2 font-medium">{kw.keyword}</td>
-                          <td className="py-2">
-                            <Badge variant="outline" className="text-xs capitalize">{kw.volume}</Badge>
-                          </td>
-                          <td className="py-2">
-                            <Badge
-                              variant="outline"
-                              className={`text-xs capitalize ${
-                                kw.difficulty === 'easy' ? 'text-green-700 border-green-300' :
-                                kw.difficulty === 'hard' ? 'text-red-700 border-red-300' :
-                                'text-amber-700 border-amber-300'
-                              }`}
-                            >
-                              {kw.difficulty}
-                            </Badge>
-                          </td>
-                          <td className="p-2 text-right">
-                            <div className="flex gap-1 justify-end">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-6 text-[10px] px-2"
-                                disabled={isGeneratingKeyword === kw.keyword}
-                                onClick={() => onGenerateFromKeyword(kw, 'blog')}
-                              >
-                                {isGeneratingKeyword === kw.keyword ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
-                                Blog
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-6 text-[10px] px-2"
-                                disabled={isGeneratingKeyword === kw.keyword}
-                                onClick={() => onGenerateFromKeyword(kw, 'all')}
-                              >
-                                {isGeneratingKeyword === kw.keyword ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                                All
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <CardContent className="pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <Key className="w-4 h-4 text-purple-500" /> Keyword Ideas
+                  </h3>
+                  <Button size="sm" variant="ghost" className="text-xs" onClick={() => {
+                    suggestions?.keywordOpportunities?.forEach((kw: any) => {
+                      if (!isInPlan(kw.keyword)) {
+                        addToPlan({ title: '', keyword: kw.keyword, searchIntent: kw.intent || 'informational', source: 'keyword', addedAt: Date.now() });
+                      }
+                    });
+                  }}>
+                    Add All
+                  </Button>
+                </div>
+                <div className="space-y-1">
+                  {keywords.map((kw, i) => (
+                    <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/30 transition-colors">
+                      <span className="text-sm">{kw.keyword}</span>
+                      <Button
+                        size="sm"
+                        variant={isInPlan(kw.keyword) ? 'default' : 'ghost'}
+                        className="h-6 text-[10px] px-2"
+                        onClick={() => isInPlan(kw.keyword)
+                          ? removeFromPlan(kw.keyword)
+                          : addToPlan({ title: '', keyword: kw.keyword, searchIntent: kw.intent || 'informational', source: 'keyword', addedAt: Date.now() })
+                        }
+                      >
+                        {isInPlan(kw.keyword) ? '\u2713 Added' : '+ Add'}
+                      </Button>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -1129,22 +1003,24 @@ function SuggestionsSection({
 
           {gaps.length > 0 && (
             <Card>
-              <CardContent className="p-6 space-y-3">
-                <h3 className="font-semibold flex items-center gap-2 text-sm">
-                  <AlertCircle className="w-4 h-4 text-blue-500" />
-                  Content Gaps
+              <CardContent className="pt-4">
+                <h3 className="font-semibold text-sm flex items-center gap-2 mb-3">
+                  <AlertCircle className="w-4 h-4 text-amber-500" /> Content Gaps
                 </h3>
-                <div className="space-y-0">
+                <div className="space-y-1">
                   {gaps.map((gap, i) => (
-                    <div key={i} className="flex items-center justify-between py-1.5 border-b last:border-0">
-                      <p className="text-sm text-muted-foreground flex-1">{gap}</p>
+                    <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/30 transition-colors">
+                      <p className="text-sm text-muted-foreground flex-1 mr-2">{gap}</p>
                       <Button
                         size="sm"
-                        variant="outline"
-                        className="h-6 text-[10px] px-2 shrink-0 ml-2 gap-1"
-                        onClick={() => onGenerateFromGap(gap)}
+                        variant={isInPlan(gap) ? 'default' : 'ghost'}
+                        className="h-6 text-[10px] px-2 shrink-0"
+                        onClick={() => isInPlan(gap)
+                          ? removeFromPlan(gap)
+                          : addToPlan({ title: '', keyword: gap, searchIntent: 'informational', source: 'gap', addedAt: Date.now() })
+                        }
                       >
-                        <Sparkles className="w-3 h-3" /> Create
+                        {isInPlan(gap) ? '\u2713 Added' : '+ Add'}
                       </Button>
                     </div>
                   ))}
