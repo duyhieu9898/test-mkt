@@ -49,6 +49,7 @@ interface Suggestions {
   blogTopics: BlogTopic[];
   keywordOpportunities: KeywordOpportunity[];
   contentGaps: string[];
+  generatedAt?: string;
   error?: string;
 }
 
@@ -144,8 +145,8 @@ export default function ContentHubPage() {
     queryKey: ['seo-suggestions', companyId],
     queryFn: () => api.get(`/seo-engine/company/${companyId}/suggestions`, { token: token! }),
     enabled: !!token,
-    staleTime: 30 * 60 * 1000, // 30 min — only refresh on manual "Refresh" click
-    gcTime: 60 * 60 * 1000,
+    staleTime: Infinity, // never auto-refresh — only when user clicks Refresh
+    gcTime: Infinity,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
@@ -487,6 +488,13 @@ export default function ContentHubPage() {
           Refresh
         </Button>
       </div>
+
+      {/* Last analyzed timestamp */}
+      {suggestions?.generatedAt && (
+        <p className="text-xs text-muted-foreground -mt-4">
+          Last analyzed: {new Date(suggestions.generatedAt).toLocaleDateString()} at {new Date(suggestions.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </p>
+      )}
 
       {/* Pipeline Progress (when running) */}
       {hasActiveJob && jobStatus && (

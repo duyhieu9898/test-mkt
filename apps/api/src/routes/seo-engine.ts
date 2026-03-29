@@ -423,17 +423,16 @@ seoEngineRouter.post(
 // AI CONTENT SUGGESTIONS
 // ===============================================================
 
-// Cache suggestions per company — avoid calling LLM on every page load
-const suggestionsCache = new Map<string, { data: any; timestamp: number }>();
-const SUGGESTIONS_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+// Cache suggestions per company — LLM runs once, user clicks Refresh to update
+const suggestionsCache = new Map<string, { data: any; generatedAt: string }>();
 
 seoEngineRouter.get('/company/:companyId/suggestions', async (c) => {
   const companyId = c.req.param('companyId');
   const forceRefresh = c.req.query('refresh') === 'true';
 
-  // Return cached if fresh
+  // Return cached — never expires, only cleared on manual refresh
   const cached = suggestionsCache.get(companyId);
-  if (cached && !forceRefresh && Date.now() - cached.timestamp < SUGGESTIONS_CACHE_TTL) {
+  if (cached && !forceRefresh) {
     return c.json(cached.data);
   }
 
@@ -507,10 +506,10 @@ Focus on topics that would drive traffic and leads for this specific business.`,
       blogTopics: parsed?.blogTopics || [],
       keywordOpportunities: parsed?.keywordOpportunities || [],
       contentGaps: parsed?.contentGaps || [],
+      generatedAt: new Date().toISOString(),
     };
 
-    // Cache for 30 minutes
-    suggestionsCache.set(companyId, { data: result, timestamp: Date.now() });
+    suggestionsCache.set(companyId, { data: result, generatedAt: result.generatedAt });
 
     return c.json(result);
   } catch (err: any) {
