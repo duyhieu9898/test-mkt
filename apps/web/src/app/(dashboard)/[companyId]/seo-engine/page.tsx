@@ -19,7 +19,7 @@ import {
 import {
   Search, Rocket, Loader2, Plus, X, CheckCircle2, Clock, AlertCircle,
   Globe, FileText, PenTool, Share2, Key, ExternalLink, ArrowRight, Info,
-  Sparkles, BarChart3, Trash2, Eye, Zap,
+  Sparkles, BarChart3, Trash2, Eye, Zap, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api/client';
@@ -412,14 +412,31 @@ export default function ContentHubPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Sparkles className="w-6 h-6 text-primary" />
-          Content Hub
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Your AI-powered content system — ideas, creation, and publishing in one place
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Sparkles className="w-6 h-6 text-primary" />
+            Content Hub
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Your AI-powered content system — ideas, creation, and publishing in one place
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2 shrink-0"
+          disabled={suggestionsLoading}
+          onClick={() => {
+            qc.invalidateQueries({ queryKey: ['seo-suggestions'] });
+            qc.invalidateQueries({ queryKey: ['seo-results'] });
+            qc.invalidateQueries({ queryKey: ['seo-blogs'] });
+            toast.success('Refreshing content suggestions...');
+          }}
+        >
+          <RefreshCw className={`w-4 h-4 ${suggestionsLoading ? 'animate-spin' : ''}`} />
+          Refresh
+        </Button>
       </div>
 
       {/* Pipeline Progress (when running) */}
