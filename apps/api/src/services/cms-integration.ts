@@ -164,6 +164,118 @@ export class CMSIntegration {
   }
 
   // ---------------------------------------------------------------------------
+  // WordPress Pages (not posts)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Publish a WordPress PAGE (not post).
+   */
+  async publishPage(
+    siteUrl: string,
+    username: string,
+    appPassword: string,
+    page: {
+      title: string;
+      content: string;
+      status: 'draft' | 'publish';
+      parent?: number;
+      slug?: string;
+    }
+  ): Promise<{ id: number; url: string }> {
+    const baseUrl = this.normalizeUrl(siteUrl);
+    const res = await fetch(`${baseUrl}/wp-json/wp/v2/pages`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(username, appPassword),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: page.title,
+        content: page.content,
+        status: page.status,
+        parent: page.parent || 0,
+        slug: page.slug,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as any).message || 'Could not create WordPress page');
+    }
+
+    const data = await res.json();
+    return { id: data.id, url: data.link };
+  }
+
+  /**
+   * Find a parent page by walking a slash-separated path (e.g. '/en/products-land').
+   */
+  async resolveParentPage(
+    siteUrl: string,
+    username: string,
+    appPassword: string,
+    path: string
+  ): Promise<number | undefined> {
+    const baseUrl = this.normalizeUrl(siteUrl);
+    const slugs = path.split('/').filter(Boolean);
+    let parentId: number | undefined;
+
+    for (const slug of slugs) {
+      const url = `${baseUrl}/wp-json/wp/v2/pages?slug=${slug}${parentId ? `&parent=${parentId}` : ''}`;
+      const res = await fetch(url, {
+        headers: this.authHeaders(username, appPassword),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) continue;
+      const pages = await res.json();
+      if (Array.isArray(pages) && pages.length > 0) {
+        parentId = pages[0].id;
+      }
+    }
+    return parentId;
+  }
+
+  /**
+   * Update an existing WordPress page (e.g. set to draft for unpublish).
+   */
+  async updatePage(
+    siteUrl: string,
+    username: string,
+    appPassword: string,
+    pageId: number,
+    updates: { status?: string; content?: string }
+  ): Promise<void> {
+    const baseUrl = this.normalizeUrl(siteUrl);
+    await fetch(`${baseUrl}/wp-json/wp/v2/pages/${pageId}`, {
+      method: 'PUT',
+      headers: {
+        ...this.authHeaders(username, appPassword),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(updates),
+      signal: AbortSignal.timeout(15000),
+    });
+  }
+
+  /**
+   * Permanently delete a WordPress page.
+   */
+  async deletePage(
+    siteUrl: string,
+    username: string,
+    appPassword: string,
+    pageId: number
+  ): Promise<void> {
+    const baseUrl = this.normalizeUrl(siteUrl);
+    await fetch(`${baseUrl}/wp-json/wp/v2/pages/${pageId}?force=true`, {
+      method: 'DELETE',
+      headers: this.authHeaders(username, appPassword),
+      signal: AbortSignal.timeout(15000),
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
 

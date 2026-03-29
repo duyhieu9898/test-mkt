@@ -102,6 +102,22 @@ app.get('/uploads/*', async (c) => {
   });
 });
 
+// Serve published landing pages (built-in hosting)
+app.get('/pages/:companyId/:slug', async (c) => {
+  const companyId = c.req.param('companyId');
+  const slug = c.req.param('slug');
+  const fs = await import('fs');
+  const path = await import('path');
+  const fullPath = path.join(process.cwd(), '..', '..', 'deploy', 'pages', companyId, `${slug}.html`);
+
+  if (!fs.existsSync(fullPath)) {
+    return c.html('<html><body><h1>Page not found</h1></body></html>', 404);
+  }
+
+  const html = fs.readFileSync(fullPath, 'utf-8');
+  return c.html(html);
+});
+
 // API routes
 const api = new Hono();
 api.route('/auth', authRouter);

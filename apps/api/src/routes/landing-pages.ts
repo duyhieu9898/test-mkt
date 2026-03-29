@@ -16,6 +16,8 @@ import { companies, landingPages, landingPageLeads } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { landingPageService } from '../services/landing-page-service';
+import { writeFile, mkdir, unlink } from 'fs/promises';
+import { join } from 'path';
 
 const landingPagesRouter = new Hono();
 
@@ -893,5 +895,199 @@ Return JSON:
     });
   }
 );
+
+// =============================================================================
+// PUBLISH / UNPUBLISH
+// =============================================================================
+
+/**
+ * POST /landing-pages/:id/publish
+ * Publish a landing page to one of three targets: builtin, wordpress, aws
+ */
+landingPagesRouter.post('/:id/publish', zValidator('json', z.object({
+  target: z.enum(['builtin', 'wordpress', 'aws']),
+  wordpress: z.object({
+    parentPath: z.string().optional(),
+    pageStatus: z.enum(['draft', 'publish']).default('publish'),
+  }).optional(),
+  aws: z.object({
+    bucket: z.string(),
+    region: z.string(),
+    accessKeyId: z.string(),
+    secretAccessKey: z.string(),
+    cloudFrontDistId: z.string().optional(),
+  }).optional(),
+})), async (c) => {
+  const pageId = c.req.param('id');
+  const body = c.req.valid('json');
+  const { userId } = c.get('user');
+
+  // Verify ownership
+  await checkPageOwnership(pageId, userId);
+
+  // Get page
+  const page = await db.query.landingPages.findFirst({ where: eq(landingPages.id, pageId) });
+  if (!page) return c.json({ error: 'Page not found' }, 404);
+
+  // Render HTML via the renderer (fetches sections internally)
+  const { PageRendererService } = await import('../services/page-renderer-service');
+  const renderer = new PageRendererService();
+  const rendered = await renderer.renderToHtml(pageId);
+  const html = rendered.html;
+
+  let publishedUrl = '';
+  const deploymentProvider = body.target;
+
+  try {
+    if (body.target === 'builtin') {
+      // Save to local deploy directory
+      const deployDir = join(process.cwd(), '..', '..', 'deploy', 'pages', page.companyId);
+      await mkdir(deployDir, { recursive: true });
+      const filePath = join(deployDir, `${page.slug || pageId}.html`);
+      await writeFile(filePath, html);
+
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') || 'http://localhost:8004';
+      publishedUrl = `${apiUrl}/pages/${page.companyId}/${page.slug || pageId}`;
+
+    } else if (body.target === 'wordpress') {
+      // Get WordPress credentials from company settings
+      const company = await db.query.companies.findFirst({ where: eq(companies.id, page.companyId) });
+      const wpSettings = (company?.settings as any)?.wordpress;
+      if (!wpSettings?.siteUrl) {
+        return c.json({ error: 'WordPress not connected. Go to Settings to connect.' }, 400);
+      }
+
+      const { CMSIntegration } = await import('../services/cms-integration');
+      const cms = new CMSIntegration();
+
+      // Resolve parent page if path provided
+      let parentId: number | undefined;
+      if (body.wordpress?.parentPath) {
+        parentId = await cms.resolveParentPage(
+          wpSettings.siteUrl, wpSettings.username, wpSettings.appPassword,
+          body.wordpress.parentPath
+        );
+      }
+
+      const result = await cms.publishPage(
+        wpSettings.siteUrl, wpSettings.username, wpSettings.appPassword,
+        {
+          title: page.name,
+          content: html,
+          status: body.wordpress?.pageStatus || 'publish',
+          parent: parentId,
+          slug: page.slug || undefined,
+        }
+      );
+
+      publishedUrl = result.url;
+      // Store WordPress page ID for future updates/unpublish
+      await db.update(landingPages).set({
+        deploymentId: String(result.id),
+      }).where(eq(landingPages.id, pageId));
+
+    } else if (body.target === 'aws') {
+      if (!body.aws) return c.json({ error: 'AWS settings required' }, 400);
+
+      const { S3DeployService } = await import('../services/s3-deploy');
+      const s3 = new S3DeployService();
+
+      const key = `pages/${page.slug || pageId}.html`;
+      const result = await s3.deployPage({
+        ...body.aws,
+        key,
+        html,
+      });
+
+      publishedUrl = result.url;
+
+      // Save AWS key for unpublish
+      await db.update(landingPages).set({
+        deploymentId: key,
+      }).where(eq(landingPages.id, pageId));
+    }
+
+    // Update page record
+    await db.update(landingPages).set({
+      status: 'published',
+      publishedUrl,
+      deploymentProvider,
+      publishedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(landingPages.id, pageId));
+
+    return c.json({
+      success: true,
+      publishedUrl,
+      target: body.target,
+      message: `Page published to ${body.target === 'builtin' ? 'built-in hosting' : body.target === 'wordpress' ? 'WordPress' : 'AWS S3'}`,
+    });
+
+  } catch (err) {
+    return c.json({
+      success: false,
+      error: err instanceof Error ? err.message : 'Publishing failed. Please try again.',
+    }, 500);
+  }
+});
+
+/**
+ * POST /landing-pages/:id/unpublish
+ * Take down a published landing page from its current target
+ */
+landingPagesRouter.post('/:id/unpublish', async (c) => {
+  const pageId = c.req.param('id');
+  const { userId } = c.get('user');
+
+  // Verify ownership
+  await checkPageOwnership(pageId, userId);
+
+  const page = await db.query.landingPages.findFirst({ where: eq(landingPages.id, pageId) });
+  if (!page) return c.json({ error: 'Page not found' }, 404);
+
+  try {
+    const provider = page.deploymentProvider;
+
+    if (provider === 'builtin' || !provider) {
+      // Delete local file
+      const filePath = join(process.cwd(), '..', '..', 'deploy', 'pages', page.companyId, `${page.slug || pageId}.html`);
+      try { await unlink(filePath); } catch { /* file may already be gone */ }
+
+    } else if (provider === 'wordpress' && page.deploymentId) {
+      const company = await db.query.companies.findFirst({ where: eq(companies.id, page.companyId) });
+      const wpSettings = (company?.settings as any)?.wordpress;
+      if (wpSettings?.siteUrl) {
+        const { CMSIntegration } = await import('../services/cms-integration');
+        const cms = new CMSIntegration();
+        await cms.updatePage(
+          wpSettings.siteUrl, wpSettings.username, wpSettings.appPassword,
+          parseInt(page.deploymentId), { status: 'draft' }
+        );
+      }
+
+    } else if (provider === 'aws' && page.deploymentId) {
+      const company = await db.query.companies.findFirst({ where: eq(companies.id, page.companyId) });
+      const awsSettings = (company?.settings as any)?.aws;
+      if (awsSettings) {
+        const { S3DeployService } = await import('../services/s3-deploy');
+        const s3 = new S3DeployService();
+        await s3.undeployPage({ ...awsSettings, key: page.deploymentId });
+      }
+    }
+
+    await db.update(landingPages).set({
+      status: 'ready',
+      publishedUrl: null,
+      publishedAt: null,
+      deploymentProvider: null,
+      deploymentId: null,
+      updatedAt: new Date(),
+    }).where(eq(landingPages.id, pageId));
+
+    return c.json({ success: true, message: 'Page unpublished' });
+  } catch (err) {
+    return c.json({ success: false, error: 'Could not unpublish. Please try again.' }, 500);
+  }
+});
 
 export { landingPagesRouter };
