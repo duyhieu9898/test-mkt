@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
@@ -223,9 +223,11 @@ export default function ContentHubPage() {
   });
 
   // Sync fetched categories to state
-  if (wpCategoriesData?.categories && wpCategories.length === 0 && wpCategoriesData.categories.length > 0) {
-    setWpCategories(wpCategoriesData.categories);
-  }
+  useEffect(() => {
+    if (wpCategoriesData?.categories?.length && wpCategories.length === 0) {
+      setWpCategories(wpCategoriesData.categories);
+    }
+  }, [wpCategoriesData?.categories]);
 
   // ─── Derived data ───────────────────────────────────────────
 

@@ -169,7 +169,8 @@ marketingEngineRouter.post('/company/:companyId/campaigns/:id/launch', async (c)
               });
               adResults.push({ bannerId: banner.id, success: true });
             } catch (err) {
-              adResults.push({ bannerId: banner.id, success: false, error: err instanceof Error ? err.message : 'Ad creation failed' });
+              console.error('[Campaign Launch] Ad creation failed:', err);
+              adResults.push({ bannerId: banner.id, success: false, error: 'Ad creation failed' });
             }
           }
 
@@ -229,7 +230,8 @@ marketingEngineRouter.post('/company/:companyId/campaigns/:id/launch', async (c)
               .where(eq(socialPosts.id, post.id));
           }
         } catch (err) {
-          publishResults.push({ postId: post.id, platform, success: false, error: err instanceof Error ? err.message : 'Publish failed' });
+          console.error(`[Campaign Launch] Post publish failed for ${platform}:`, err);
+          publishResults.push({ postId: post.id, platform, success: false, error: 'Publish failed' });
         }
       }
     }
@@ -259,12 +261,13 @@ marketingEngineRouter.post('/company/:companyId/campaigns/:id/launch', async (c)
     });
   } catch (err) {
     // 6. On any error: set status = 'failed'
-    const errorMessage = err instanceof Error ? err.message : 'Campaign launch failed';
+    console.error('[Campaign Launch] Failed:', err);
+    const internalMessage = err instanceof Error ? err.message : 'Campaign launch failed';
     await db.update(campaigns)
-      .set({ status: 'failed', launchError: errorMessage, updatedAt: new Date() })
+      .set({ status: 'failed', launchError: internalMessage, updatedAt: new Date() })
       .where(eq(campaigns.id, id));
 
-    return c.json({ error: errorMessage, status: 'failed' }, 500);
+    return c.json({ error: 'Campaign launch failed. Please try again.', status: 'failed' }, 500);
   }
 });
 
@@ -363,7 +366,8 @@ marketingEngineRouter.post('/company/:companyId/campaigns/ai-suggestions/run', z
     const campaignId = await marketingAutonomous.createAutonomousCampaign(companyId, opportunity);
     return c.json({ campaignId, status: 'created' });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : 'Failed to create campaign' }, 500);
+    console.error('[Campaign] AI suggestion run failed:', err);
+    return c.json({ error: 'Could not create campaign. Please try again.' }, 500);
   }
 });
 
@@ -1189,9 +1193,9 @@ marketingEngineRouter.post(
 
       return c.json(updated);
     } catch (err) {
+      console.error('[Video] Script generation failed:', err);
       return c.json({
-        error: 'Failed to generate video script',
-        details: err instanceof Error ? err.message : 'Unknown error',
+        error: 'Failed to generate video script. Please try again.',
       }, 500);
     }
   }

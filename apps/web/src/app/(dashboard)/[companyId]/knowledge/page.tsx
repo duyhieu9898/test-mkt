@@ -50,7 +50,7 @@ export default function KnowledgePage() {
 
   const { data: knowledgeData } = useQuery({
     queryKey: ['knowledge-entries', companyId, searchQuery],
-    queryFn: () => api.get<{ data: any[] }>(`/knowledge/company/${companyId}/search?q=${searchQuery}`, { token: token! }),
+    queryFn: () => api.get<{ data: any[] }>(`/knowledge/company/${companyId}/search?q=${encodeURIComponent(searchQuery)}`, { token: token! }),
     enabled: !!token,
   });
 

@@ -294,7 +294,8 @@ tenantAIRouter.post('/company/:companyId/documents/upload', async (c) => {
   // Save file
   const safeFileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
   const filePath = path.join(tenantDir, safeFileName);
-  fs.writeFileSync(filePath, fileBuffer);
+  const { writeFile } = await import('fs/promises');
+  await writeFile(filePath, fileBuffer);
 
   // Extract text content for simple RAG
   let rawContent = '';
@@ -475,21 +476,28 @@ tenantAIRouter.patch(
     await checkCompanyOwnership(companyId, userId);
     await ensureReady();
 
-    // Build dynamic SET clause
-    const setClauses: string[] = ['updated_at = NOW()'];
-    const values: any[] = [];
+    // Build parameterized update — avoid sql.raw to prevent SQL injection
+    const updates: Record<string, any> = { updated_at: sql`NOW()` };
+    if (data.name !== undefined) updates.name = data.name;
+    if (data.systemPrompt !== undefined) updates.system_prompt = data.systemPrompt;
+    if (data.tone !== undefined) updates.tone = data.tone;
+    if (data.topK !== undefined) updates.top_k = data.topK;
 
-    if (data.name !== undefined) setClauses.push(`name = '${data.name.replace(/'/g, "''")}'`);
-    if (data.systemPrompt !== undefined) setClauses.push(`system_prompt = '${data.systemPrompt.replace(/'/g, "''")}'`);
-    if (data.tone !== undefined) setClauses.push(`tone = '${data.tone}'`);
-    if (data.topK !== undefined) setClauses.push(`top_k = ${data.topK}`);
+    // Build individual parameterized SET clauses
+    const setParts = [sql`updated_at = NOW()`];
+    if (data.name !== undefined) setParts.push(sql`name = ${data.name}`);
+    if (data.systemPrompt !== undefined) setParts.push(sql`system_prompt = ${data.systemPrompt}`);
+    if (data.tone !== undefined) setParts.push(sql`tone = ${data.tone}`);
+    if (data.topK !== undefined) setParts.push(sql`top_k = ${data.topK}`);
 
-    const result = await db.execute(sql.raw(`
+    const setClause = sql.join(setParts, sql`, `);
+
+    const result = await db.execute(sql`
       UPDATE ai_tenant_agents
-      SET ${setClauses.join(', ')}
-      WHERE id = '${agentId}' AND company_id = '${companyId}'
+      SET ${setClause}
+      WHERE id = ${agentId}::uuid AND company_id = ${companyId}
       RETURNING *
-    `));
+    `);
 
     const agent = (result.rows || result as any[])[0];
     if (!agent) {

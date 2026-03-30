@@ -188,10 +188,7 @@ landingPagesRouter.post(
     } catch (error) {
       console.error('[API] Landing page generation failed:', error);
       throw new HTTPException(500, {
-        message:
-          error instanceof Error
-            ? error.message
-            : 'Failed to generate landing page',
+        message: 'Something went wrong while generating the landing page. Please try again.',
       });
     }
   }
@@ -465,6 +462,7 @@ landingPagesRouter.get('/:id/analytics', async (c) => {
 // =============================================================================
 
 landingPagesRouter.post('/:pageId/generate-content', async (c) => {
+  const { userId } = c.get('user');
   const pageId = c.req.param('pageId');
 
   const page = await db.query.landingPages.findFirst({
@@ -473,6 +471,14 @@ landingPagesRouter.post('/:pageId/generate-content', async (c) => {
 
   if (!page) {
     throw new HTTPException(404, { message: 'Page not found' });
+  }
+
+  // Verify user owns the company that owns this page
+  const company = await db.query.companies.findFirst({
+    where: and(eq(companies.id, page.companyId), eq(companies.ownerId, userId)),
+  });
+  if (!company) {
+    throw new HTTPException(403, { message: 'Access denied' });
   }
 
   const { landingPageSections } = await import('@1person/core/db');
@@ -1024,9 +1030,10 @@ landingPagesRouter.post('/:id/publish', zValidator('json', z.object({
     });
 
   } catch (err) {
+    console.error('[LandingPages] Publishing failed:', err);
     return c.json({
       success: false,
-      error: err instanceof Error ? err.message : 'Publishing failed. Please try again.',
+      error: 'Publishing failed. Please try again.',
     }, 500);
   }
 });

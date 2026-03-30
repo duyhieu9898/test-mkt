@@ -125,7 +125,10 @@ export default function ChatbotPage() {
       setNewBotName('');
       setCreateDialog(false);
       qc.invalidateQueries({ queryKey: ['chatbots'] });
-    } catch { toast.error('Failed to create chatbot'); }
+    } catch (err: any) {
+      console.error('Create chatbot error:', err);
+      toast.error('Could not create chatbot. Please try again.');
+    }
   };
 
   const handleDeleteBot = async (botId: string) => {
@@ -135,7 +138,10 @@ export default function ChatbotPage() {
       toast.success('Deleted');
       if (selectedBotId === botId) setSelectedBotId(null);
       qc.invalidateQueries({ queryKey: ['chatbots'] });
-    } catch { toast.error('Failed to delete'); }
+    } catch (err: any) {
+      console.error('Delete chatbot error:', err);
+      toast.error('Could not delete chatbot. Please try again.');
+    }
   };
 
   const handleSaveConfig = async () => {
@@ -145,7 +151,10 @@ export default function ChatbotPage() {
       await api.post(`/chatbot/company/${companyId}/config`, { name, greeting, tone, mode, primaryColor }, { token });
       toast.success('Saved!');
       qc.invalidateQueries({ queryKey: ['chatbots'] });
-    } catch { toast.error('Failed to save'); }
+    } catch (err: any) {
+      console.error('Save chatbot config error:', err);
+      toast.error('Could not save settings. Please try again.');
+    }
     finally { setIsSaving(false); }
   };
 

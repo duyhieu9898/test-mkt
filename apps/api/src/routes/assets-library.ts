@@ -120,9 +120,15 @@ assetsLibrary.post('/company/:companyId/upload', async (c) => {
     throw new HTTPException(400, { message: 'This file type is not supported. Please use JPG, PNG, GIF, WebP, SVG, or MP4.' });
   }
 
+  // Validate file extension (defense in depth — don't rely on mime type alone)
+  const allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'mp4', 'webm', 'mov', 'ico'];
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  if (!allowedExts.includes(ext)) {
+    throw new HTTPException(400, { message: 'This file type is not supported.' });
+  }
+
   // Save file to disk
   const fileId = randomUUID();
-  const ext = file.name.split('.').pop() || 'bin';
   const filename = `${fileId}.${ext}`;
   const uploadDir = join(process.cwd(), '..', '..', 'deploy', 'assets', companyId);
 

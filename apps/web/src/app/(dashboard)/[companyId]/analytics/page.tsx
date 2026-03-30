@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -78,6 +78,7 @@ export default function AnalyticsPage() {
   const params = useParams();
   const companyId = params.companyId as string;
   const token = useAuthStore((state) => state.token);
+  const router = useRouter();
   const { data: pages, isLoading } = useLandingPages(companyId);
   const [sortField, setSortField] = useState<'revenue' | 'roas' | 'conversions' | 'spend'>('revenue');
 
@@ -134,7 +135,7 @@ export default function AnalyticsPage() {
               <p className="font-medium text-sm text-amber-900">Publish your pages to start tracking</p>
               <p className="text-xs text-amber-700">You have {allPages.length} pages -- publish them to see real traffic data</p>
             </div>
-            <Button size="sm" variant="outline" className="shrink-0 border-amber-300 text-amber-700" onClick={() => window.location.href = `/${companyId}/landing-pages`}>
+            <Button size="sm" variant="outline" className="shrink-0 border-amber-300 text-amber-700" onClick={() => router.push(`/${companyId}/landing-pages`)}>
               Go to My Pages
             </Button>
           </CardContent>
@@ -148,7 +149,7 @@ export default function AnalyticsPage() {
               <p className="font-medium text-sm text-blue-900">Your pages are live -- get traffic!</p>
               <p className="text-xs text-blue-700">Create a campaign to bring visitors to your pages</p>
             </div>
-            <Button size="sm" variant="outline" className="shrink-0 border-blue-300 text-blue-700" onClick={() => window.location.href = `/${companyId}/marketing`}>
+            <Button size="sm" variant="outline" className="shrink-0 border-blue-300 text-blue-700" onClick={() => router.push(`/${companyId}/marketing`)}>
               Create Campaign
             </Button>
           </CardContent>
@@ -362,7 +363,7 @@ export default function AnalyticsPage() {
                     <div>
                       <h3 className="font-semibold text-blue-900">Start tracking revenue</h3>
                       <p className="text-sm text-blue-700 mb-2">Launch campaigns with UTM tracking links to see which ads generate revenue.</p>
-                      <Button size="sm" variant="outline" className="gap-2 border-blue-300 text-blue-700 hover:bg-blue-100" onClick={() => window.location.href = `/${companyId}/marketing`}>
+                      <Button size="sm" variant="outline" className="gap-2 border-blue-300 text-blue-700 hover:bg-blue-100" onClick={() => router.push(`/${companyId}/marketing`)}>
                         <TrendingUp className="w-4 h-4" />Go to Marketing
                       </Button>
                     </div>

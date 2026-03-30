@@ -8,6 +8,31 @@ import { attributionService } from '../services/attribution';
 
 const trackingRouter = new Hono();
 
+// Simple in-memory rate limiter
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function rateLimit(ip: string, maxRequests: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+
+  if (entry.count >= maxRequests) return false;
+  entry.count++;
+  return true;
+}
+
+// Clean up old entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of rateLimitMap) {
+    if (now > val.resetAt) rateLimitMap.delete(key);
+  }
+}, 300000);
+
 // Helper to verify company access
 async function verifyCompanyAccess(userId: string, companyId: string): Promise<boolean> {
   const userCompanies = await getUserCompanies(userId);
@@ -34,6 +59,11 @@ const sessionSchema = z.object({
 });
 
 trackingRouter.post('/public/session', zValidator('json', sessionSchema), async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+  if (!rateLimit(ip, 100, 60000)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   const body = c.req.valid('json');
   const userAgent = c.req.header('user-agent');
   const ipAddress = c.req.header('x-forwarded-for') || c.req.header('x-real-ip');
@@ -73,6 +103,11 @@ const pageViewSchema = z.object({
 });
 
 trackingRouter.post('/public/pageview', zValidator('json', pageViewSchema), async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+  if (!rateLimit(ip, 100, 60000)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   const body = c.req.valid('json');
 
   try {
@@ -127,6 +162,11 @@ const eventSchema = z.object({
 });
 
 trackingRouter.post('/public/event', zValidator('json', eventSchema), async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+  if (!rateLimit(ip, 100, 60000)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   const body = c.req.valid('json');
 
   try {
@@ -180,6 +220,11 @@ const batchEventsSchema = z.object({
 });
 
 trackingRouter.post('/public/events/batch', zValidator('json', batchEventsSchema), async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+  if (!rateLimit(ip, 100, 60000)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   const body = c.req.valid('json');
   const results: { eventId?: string; error?: string }[] = [];
 
@@ -231,6 +276,11 @@ const conversionPublicSchema = z.object({
 });
 
 trackingRouter.post('/public/conversion', zValidator('json', conversionPublicSchema), async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+  if (!rateLimit(ip, 100, 60000)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   const body = c.req.valid('json');
 
   const conversionId = await trackingEngine.trackConversion({
@@ -280,6 +330,11 @@ trackingRouter.post(
   '/public/conversion/attributed',
   zValidator('json', attributedConversionSchema),
   async (c) => {
+    const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+    if (!rateLimit(ip, 100, 60000)) {
+      return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+    }
+
     const body = c.req.valid('json');
 
     try {
@@ -402,6 +457,11 @@ const endSessionSchema = z.object({
 });
 
 trackingRouter.post('/public/session/end', zValidator('json', endSessionSchema), async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+  if (!rateLimit(ip, 100, 60000)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   const body = c.req.valid('json');
 
   await trackingEngine.endSession(body.sessionInternalId);
@@ -418,6 +478,11 @@ const updatePageViewSchema = z.object({
 });
 
 trackingRouter.post('/public/pageview/update', zValidator('json', updatePageViewSchema), async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+  if (!rateLimit(ip, 100, 60000)) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   const body = c.req.valid('json');
 
   await trackingEngine.updatePageView(body.pageViewId, {

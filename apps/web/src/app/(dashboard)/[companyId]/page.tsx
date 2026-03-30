@@ -354,7 +354,7 @@ export default function DashboardPage() {
           </Card>
           <Card
             className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => router.push(`/${companyId}/ads`)}
+            onClick={() => router.push(`/${companyId}/marketing`)}
           >
             <CardContent className="pt-5 pb-5 text-center">
               <Megaphone className="w-6 h-6 text-orange-500 mx-auto mb-2" />

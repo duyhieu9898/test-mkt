@@ -7,6 +7,31 @@ import { leadCaptureEngine, type LeadSource } from '../services/lead-capture-eng
 
 const leadCaptureRouter = new Hono();
 
+// Simple in-memory rate limiter (stricter for lead capture — 20 per hour)
+const leadRateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function rateLimit(ip: string, maxRequests: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = leadRateLimitMap.get(ip);
+
+  if (!entry || now > entry.resetAt) {
+    leadRateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+
+  if (entry.count >= maxRequests) return false;
+  entry.count++;
+  return true;
+}
+
+// Clean up old entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of leadRateLimitMap) {
+    if (now > val.resetAt) leadRateLimitMap.delete(key);
+  }
+}, 300000);
+
 // Helper to verify company access
 async function verifyCompanyAccess(userId: string, companyId: string): Promise<boolean> {
   const userCompanies = await getUserCompanies(userId);
@@ -33,6 +58,11 @@ leadCaptureRouter.post(
   '/public/page/:pageId/company/:companyId/capture',
   zValidator('json', captureFromPageSchema),
   async (c) => {
+    const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+    if (!rateLimit(ip, 20, 3600000)) { // 20 per hour
+      return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+    }
+
     const pageId = c.req.param('pageId');
     const companyId = c.req.param('companyId');
     const body = c.req.valid('json');
@@ -85,6 +115,11 @@ const captureLeadPublicSchema = z.object({
 });
 
 leadCaptureRouter.post('/public/capture', zValidator('json', captureLeadPublicSchema), async (c) => {
+  const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+  if (!rateLimit(ip, 20, 3600000)) { // 20 per hour
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+
   const body = c.req.valid('json');
   const ipAddress = c.req.header('x-forwarded-for') || c.req.header('x-real-ip');
   const userAgent = c.req.header('user-agent');

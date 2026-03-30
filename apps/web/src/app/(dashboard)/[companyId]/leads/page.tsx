@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -62,6 +62,7 @@ export default function LeadsPage() {
   const params = useParams();
   const companyId = params.companyId as string;
   const token = useAuthStore((state) => state.token);
+  const router = useRouter();
   const queryClient = useQueryClient();
 
   const [addDialog, setAddDialog] = useState(false);
@@ -224,10 +225,10 @@ export default function LeadsPage() {
                 <p>3. Or run marketing campaigns to drive traffic</p>
               </div>
               <div className="flex gap-3 justify-center mt-4">
-                <Button size="sm" variant="outline" onClick={() => window.location.href = `/${companyId}/chatbot`}>
+                <Button size="sm" variant="outline" onClick={() => router.push(`/${companyId}/chatbot`)}>
                   Set up Chatbot
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => window.location.href = `/${companyId}/marketing`}>
+                <Button size="sm" variant="outline" onClick={() => router.push(`/${companyId}/marketing`)}>
                   Create Campaign
                 </Button>
               </div>

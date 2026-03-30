@@ -192,12 +192,22 @@ seoEngineRouter.post(
     const { siteUrl, username, appPassword } = c.req.valid('json');
 
     try {
+      // SSRF protection: block local/private network addresses
+      const parsedUrl = new URL(siteUrl);
+      const blockedHosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1'];
+      const blockedPrefixes = ['10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.', '192.168.'];
+
+      if (blockedHosts.includes(parsedUrl.hostname) || blockedPrefixes.some(p => parsedUrl.hostname.startsWith(p))) {
+        return c.json({ error: 'Cannot connect to local or private network addresses' }, 400);
+      }
+
       // Test the WordPress connection first
       const wpApiUrl = `${siteUrl.replace(/\/$/, '')}/wp-json/wp/v2/posts?per_page=1`;
       const authHeader = 'Basic ' + Buffer.from(`${username}:${appPassword}`).toString('base64');
 
       const testResponse = await fetch(wpApiUrl, {
         headers: { 'Authorization': authHeader },
+        signal: AbortSignal.timeout(15000),
       });
 
       if (!testResponse.ok) {
@@ -275,6 +285,7 @@ seoEngineRouter.post('/company/:companyId/wordpress/test', async (c) => {
 
     const testResponse = await fetch(wpApiUrl, {
       headers: { 'Authorization': authHeader },
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!testResponse.ok) {

@@ -22,6 +22,31 @@ import { buildBusinessContext } from '../services/business-context';
 
 const chatbotRouter = new Hono();
 
+// Simple in-memory rate limiter for public widget
+const chatRateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function rateLimit(ip: string, maxRequests: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = chatRateLimitMap.get(ip);
+
+  if (!entry || now > entry.resetAt) {
+    chatRateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+
+  if (entry.count >= maxRequests) return false;
+  entry.count++;
+  return true;
+}
+
+// Clean up old entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of chatRateLimitMap) {
+    if (now > val.resetAt) chatRateLimitMap.delete(key);
+  }
+}, 300000);
+
 // ============================================
 // AUTHENTICATED ROUTES
 // ============================================
@@ -234,6 +259,11 @@ chatbotRouter.post(
     })
   ),
   async (c) => {
+    const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
+    if (!rateLimit(ip, 30, 60000)) { // 30 messages per minute
+      return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+    }
+
     const companyId = c.req.param('companyId');
     const { conversationId, message, visitorId, visitorName, visitorEmail } =
       c.req.valid('json');

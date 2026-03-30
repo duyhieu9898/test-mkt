@@ -180,6 +180,9 @@ export default function LandingPagesPage() {
       await api.post(`/landing-pages/${pageId}/unpublish`, {}, { token });
       toast.success('Page unpublished');
       queryClient.invalidateQueries({ queryKey: ['landingPages', companyId] });
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+      queryClient.invalidateQueries({ queryKey: ['seo-results'] });
+      queryClient.invalidateQueries({ queryKey: ['banners'] });
     } catch {
       toast.error('Could not unpublish');
     }

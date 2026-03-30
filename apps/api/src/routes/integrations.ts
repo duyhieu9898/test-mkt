@@ -296,14 +296,16 @@ integrationsRouter.get('/:platform/callback', async (c) => {
       </body></html>
     `);
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'OAuth exchange failed';
+    console.error(`[Integrations] OAuth callback failed for ${platform}:`, err);
+    const safeErrorMsg = 'Connection failed. Please try again.';
+    const webUrl = process.env.WEB_URL || 'http://localhost:3004';
     return c.html(`
       <html><body>
         <h2>Connection Failed</h2>
-        <p>${errorMsg}</p>
+        <p>${safeErrorMsg}</p>
         <script>
           if (window.opener) {
-            window.opener.postMessage({ type: 'oauth_error', platform: '${platform}', error: '${errorMsg}' }, '*');
+            window.opener.postMessage({ type: 'oauth_error', platform: '${platform}', error: '${safeErrorMsg}' }, '${webUrl}');
           }
           setTimeout(() => window.close(), 3000);
         </script>
