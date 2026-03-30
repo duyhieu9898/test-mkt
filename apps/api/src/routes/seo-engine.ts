@@ -520,6 +520,54 @@ Focus on topics that would drive traffic and leads for this specific business.`,
       generatedAt: new Date().toISOString(),
     };
 
+    // Enrich with GSC data if available
+    try {
+      const { knowledgeBase } = await import('@1person/core/db');
+      const gscIntegration = await db.query.knowledgeBase.findFirst({
+        where: and(
+          eq(knowledgeBase.companyId, companyId),
+          eq(knowledgeBase.category, 'integration_google')
+        ),
+      });
+
+      if (gscIntegration) {
+        const gscData = JSON.parse(gscIntegration.content);
+
+        // Get company's website URL
+        const company = await db.query.companies.findFirst({ where: eq(companies.id, companyId) });
+        const websiteUrl = (company as any)?.website || (company as any)?.url;
+
+        if (websiteUrl && gscData.refreshToken) {
+          try {
+            const { GSCClient } = await import('../services/gsc-client');
+            const gsc = new GSCClient(gscData.refreshToken);
+            const queryData = await gsc.fetchQueryPerformance(websiteUrl, 28);
+
+            // Enrich each keyword with real ranking data
+            for (const kw of result.keywordOpportunities) {
+              const match = (queryData || []).find((q: any) =>
+                q.query?.toLowerCase().includes(kw.keyword.toLowerCase()) ||
+                kw.keyword.toLowerCase().includes(q.query?.toLowerCase())
+              );
+              if (match) {
+                (kw as any).currentPosition = Math.round(match.position || 0);
+                (kw as any).clicks = match.clicks || 0;
+                (kw as any).impressions = match.impressions || 0;
+                (kw as any).status = 'ranking';
+              } else {
+                (kw as any).status = 'not_ranking';
+              }
+            }
+          } catch (gscErr) {
+            console.warn('[SEO] GSC enrichment failed:', gscErr);
+            // Non-fatal — keywords still work without GSC data
+          }
+        }
+      }
+    } catch {
+      // GSC enrichment is optional
+    }
+
     suggestionsCache.set(companyId, { data: result, generatedAt: result.generatedAt });
 
     return c.json(result);
@@ -763,6 +811,10 @@ seoEngineRouter.patch(
     title: z.string().min(1).optional(),
     keyword: z.string().optional(),
     metaDescription: z.string().optional(),
+    content: z.string().optional(),
+    excerpt: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    faq: z.array(z.object({ question: z.string(), answer: z.string() })).optional(),
   })),
   async (c) => {
     const companyId = c.req.param('companyId');

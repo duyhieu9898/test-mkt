@@ -42,6 +42,10 @@ interface KeywordOpportunity {
   volume: 'high' | 'medium' | 'low';
   difficulty: 'easy' | 'medium' | 'hard';
   intent: string;
+  currentPosition?: number;
+  clicks?: number;
+  impressions?: number;
+  status?: 'ranking' | 'not_ranking';
 }
 
 interface Suggestions {
@@ -133,6 +137,11 @@ export default function ContentHubPage() {
   // Blog expand/preview
   const [expandedBlog, setExpandedBlog] = useState<string | null>(null);
   const [blogContent, setBlogContent] = useState<Record<string, string>>({});
+
+  // Publish preview dialog
+  const [publishPreviewOpen, setPublishPreviewOpen] = useState(false);
+  const [previewBlog, setPreviewBlog] = useState<any>(null);
+  const [previewContent, setPreviewContent] = useState('');
 
 
   // ─── Content Plan helpers ─────────────────────────────────────
@@ -383,6 +392,63 @@ export default function ContentHubPage() {
     }
   };
 
+  const handlePublishClick = async () => {
+    if (selectedPosts.size === 0) {
+      toast.error('Select at least one blog post to publish');
+      return;
+    }
+
+    const selectedPostsList = blogPosts.filter((p: any) => selectedPosts.has(p.id));
+
+    if (selectedPostsList.length === 1) {
+      // Single post — show preview
+      const post = selectedPostsList[0];
+      setPreviewBlog(post);
+      if (!blogContent[post.id] && token) {
+        try {
+          const res = await api.get<any>(`/seo-engine/company/${companyId}/blogs/${post.id}`, { token });
+          setPreviewContent(res.content || '');
+          setBlogContent(prev => ({ ...prev, [post.id]: res.content || '' }));
+        } catch {
+          setPreviewContent('<p>Could not load preview</p>');
+        }
+      } else {
+        setPreviewContent(blogContent[post.id] || '');
+      }
+      setPublishPreviewOpen(true);
+    } else {
+      // Multiple posts — publish directly with confirmation
+      if (confirm(`Publish ${selectedPostsList.length} posts to WordPress?`)) {
+        handlePublish();
+      }
+    }
+  };
+
+  const handlePublishWithPreview = async () => {
+    if (!previewBlog) return;
+    setIsPublishing(true);
+    try {
+      const res = await api.post<{ message: string; results: any[] }>(
+        `/seo-engine/company/${companyId}/publish-blogs`,
+        {
+          blogPostIds: [previewBlog.id],
+          status: publishStatus,
+          categoryId: selectedCategory ? parseInt(selectedCategory) : undefined,
+        },
+        { token: token! }
+      );
+      toast.success(res.message || 'Published to WordPress');
+      setPublishPreviewOpen(false);
+      setSelectedPosts(new Set());
+      qc.invalidateQueries({ queryKey: ['seo-results'] });
+      qc.invalidateQueries({ queryKey: ['seo-blogs'] });
+    } catch {
+      toast.error('Could not publish. Please try again.');
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
   const handleDeleteBlog = async (blogId: string) => {
     if (!token || !confirm('Delete this blog post? This cannot be undone.')) return;
     try {
@@ -603,7 +669,9 @@ export default function ContentHubPage() {
                     <Checkbox checked={selectedPosts.has(post.id)} onClick={(e) => { e.stopPropagation(); togglePost(post.id); }} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="font-medium text-sm truncate">{post.title}</p>
+                        <Link href={`/${companyId}/blog/${post.id}`} className="font-medium text-sm hover:text-primary hover:underline truncate" onClick={(e) => e.stopPropagation()}>
+                          {post.title}
+                        </Link>
                         {newPostIds.has(post.id) && (
                           <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[9px] animate-pulse">NEW</Badge>
                         )}
@@ -635,6 +703,9 @@ export default function ContentHubPage() {
                         dangerouslySetInnerHTML={{ __html: blogContent[post.id] || '<p class="text-muted-foreground">Loading preview...</p>' }}
                       />
                       <div className="p-3 bg-muted/20 border-t flex gap-2">
+                        <Button size="sm" variant="outline" className="text-xs gap-1" onClick={() => router.push(`/${companyId}/blog/${post.id}`)}>
+                          <PenTool className="w-3 h-3" /> Edit
+                        </Button>
                         <Button size="sm" variant="outline" className="text-xs gap-1" onClick={() => handleDeleteBlog(post.id)}>
                           <Trash2 className="w-3 h-3" /> Delete
                         </Button>
@@ -709,7 +780,7 @@ export default function ContentHubPage() {
                     {/* Push button */}
                     <Button
                       className="w-full gap-2"
-                      onClick={handlePublish}
+                      onClick={handlePublishClick}
                       disabled={selectedPosts.size === 0 || isPublishing}
                     >
                       {isPublishing ? (
@@ -741,6 +812,67 @@ export default function ContentHubPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Publish Preview Dialog */}
+      <Dialog open={publishPreviewOpen} onOpenChange={setPublishPreviewOpen}>
+        <DialogContent className="sm:max-w-[700px] max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>Preview Before Publishing</DialogTitle>
+            <DialogDescription>
+              This is how your blog post will appear on WordPress
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Preview */}
+            <div className="border rounded-lg overflow-hidden">
+              <div className="bg-muted/30 px-4 py-2 border-b">
+                <p className="text-xs text-muted-foreground">Preview on WordPress</p>
+              </div>
+              <div className="p-4 max-h-[350px] overflow-y-auto">
+                <h1 className="text-xl font-bold mb-2">{previewBlog?.title}</h1>
+                {previewBlog?.keyword && (
+                  <p className="text-xs text-muted-foreground mb-3">Target keyword: {previewBlog.keyword}</p>
+                )}
+                <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: previewContent }} />
+              </div>
+            </div>
+
+            {/* Publish settings */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Category</Label>
+                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                  <SelectTrigger className="h-8 text-xs mt-1"><SelectValue placeholder="Select category..." /></SelectTrigger>
+                  <SelectContent>
+                    {wpCategories.map(cat => (
+                      <SelectItem key={cat.id} value={String(cat.id)}>{cat.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Publish as</Label>
+                <Select value={publishStatus} onValueChange={(v) => setPublishStatus(v as any)}>
+                  <SelectTrigger className="h-8 text-xs mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="draft">Draft (review first)</SelectItem>
+                    <SelectItem value="publish">Publish immediately</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPublishPreviewOpen(false)}>Cancel</Button>
+            <Button onClick={handlePublishWithPreview} disabled={isPublishing} className="gap-2">
+              {isPublishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
+              Publish to WordPress
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* WordPress Connect Dialog */}
       <Dialog open={wpDialogOpen} onOpenChange={setWpDialogOpen}>
@@ -984,7 +1116,20 @@ function SuggestionsSection({
                 <div className="space-y-1">
                   {keywords.map((kw, i) => (
                     <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/30 transition-colors">
-                      <span className="text-sm">{kw.keyword}</span>
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <span className="text-sm">{kw.keyword}</span>
+                        {kw.status === 'ranking' && (
+                          <div className="flex items-center gap-1.5">
+                            <Badge className="bg-green-100 text-green-700 text-[9px]">#{kw.currentPosition}</Badge>
+                            {(kw.clicks ?? 0) > 0 && (
+                              <span className="text-[10px] text-muted-foreground">{kw.clicks} clicks</span>
+                            )}
+                          </div>
+                        )}
+                        {kw.status === 'not_ranking' && (
+                          <Badge variant="outline" className="text-[9px] text-muted-foreground">New opportunity</Badge>
+                        )}
+                      </div>
                       <Button
                         size="sm"
                         variant={isInPlan(kw.keyword) ? 'default' : 'ghost'}

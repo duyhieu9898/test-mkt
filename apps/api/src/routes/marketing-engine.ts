@@ -841,6 +841,29 @@ marketingEngineRouter.post('/company/:companyId/posts/:id/publish', async (c) =>
   return c.json(updated);
 });
 
+// Update social post (edit content, hashtags, media)
+marketingEngineRouter.patch('/company/:companyId/posts/:postId', async (c) => {
+  const postId = c.req.param('postId');
+  const body = await c.req.json();
+
+  const updates: Record<string, any> = {};
+  if (body.content) updates.content = body.content;
+  if (body.hashtags) updates.hashtags = body.hashtags;
+  if (body.mediaUrls) updates.mediaUrls = body.mediaUrls;
+
+  if (Object.keys(updates).length === 0) {
+    return c.json({ error: 'No fields to update' }, 400);
+  }
+
+  const [updated] = await db.update(socialPosts)
+    .set(updates)
+    .where(eq(socialPosts.id, postId))
+    .returning();
+
+  if (!updated) return c.json({ error: 'Post not found' }, 404);
+  return c.json(updated);
+});
+
 // ===============================================================
 // EMAIL SEQUENCES — Generate 7-email drip sequence
 // ===============================================================

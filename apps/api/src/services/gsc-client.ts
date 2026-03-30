@@ -30,10 +30,10 @@ export class GSCClient {
   private accessToken: string | null = null;
   private tokenExpiry: number = 0;
 
-  constructor() {
+  constructor(refreshToken?: string) {
     this.clientId = process.env.GOOGLE_CLIENT_ID;
     this.clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    this.refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+    this.refreshToken = refreshToken || process.env.GOOGLE_REFRESH_TOKEN;
   }
 
   isConfigured(): boolean {

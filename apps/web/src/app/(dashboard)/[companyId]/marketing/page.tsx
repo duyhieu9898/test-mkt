@@ -211,6 +211,34 @@ export default function MarketingPage() {
     invalidateAll();
   };
 
+  const handleAddImageToPost = (postId: string) => {
+    setImagePickerCallback(() => (imageUrl: string) => {
+      updatePostImage(postId, imageUrl);
+    });
+    setImagePickerUrl('');
+    setImagePickerTab('library');
+    setStockResults([]);
+    if (token) {
+      api.get<{ data: any[] }>(`/assets-library/company/${companyId}?type=image`, { token })
+        .then((res) => setLibraryAssets(res.data || []))
+        .catch(() => setLibraryAssets([]));
+    }
+    setImagePickerOpen(true);
+  };
+
+  const updatePostImage = async (postId: string, imageUrl: string) => {
+    if (!token) return;
+    try {
+      await api.patch(`/marketing/company/${companyId}/posts/${postId}`, {
+        mediaUrls: [imageUrl],
+      }, { token });
+      toast.success('Image added');
+      invalidateAll();
+    } catch {
+      toast.error('Could not add image');
+    }
+  };
+
   const handleExportSizes = async (bannerId: string) => {
     if (!token) return;
     try {
@@ -669,22 +697,52 @@ export default function MarketingPage() {
                         <div className="space-y-2">
                           {posts.map((p: any) => (
                             <Card key={p.id}>
-                              <CardContent className="p-3 flex items-start gap-3">
-                                <Badge variant="outline" className="text-[10px] capitalize shrink-0 mt-0.5">{p.platform}</Badge>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm line-clamp-2">{p.content}</p>
-                                  {p.hashtags?.length > 0 && (
-                                    <p className="text-xs text-primary mt-1">{(p.hashtags as string[]).slice(0, 5).join(' ')}</p>
+                              <CardContent className="p-3">
+                                <div className="flex items-start gap-3">
+                                  <Badge variant="outline" className="text-[10px] capitalize shrink-0 mt-0.5">{p.platform}</Badge>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm line-clamp-2">{p.content}</p>
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <Badge className={`text-[9px] ${p.status === 'published' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{p.status}</Badge>
+                                    {p.status === 'draft' && (
+                                      <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1" onClick={() => handlePublishPost(p.id)}>
+                                        <Globe className="w-2.5 h-2.5" /> Publish
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                                {/* Image attachment */}
+                                <div className="mt-2 pl-[72px]">
+                                  {p.mediaUrls?.length > 0 ? (
+                                    <div className="flex gap-1">
+                                      {(p.mediaUrls as string[]).map((url: string, idx: number) => (
+                                        <img key={idx} src={url} className="w-16 h-16 rounded object-cover" alt="" />
+                                      ))}
+                                      <button
+                                        className="w-16 h-16 rounded border-2 border-dashed flex items-center justify-center text-muted-foreground hover:border-primary/30"
+                                        onClick={() => handleAddImageToPost(p.id)}
+                                      >
+                                        <Plus className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
+                                      onClick={() => handleAddImageToPost(p.id)}
+                                    >
+                                      <Image className="w-3.5 h-3.5" /> Add image from library
+                                    </button>
                                   )}
                                 </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <Badge className={`text-[9px] ${p.status === 'published' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{p.status}</Badge>
-                                  {p.status === 'draft' && (
-                                    <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1" onClick={() => handlePublishPost(p.id)}>
-                                      <Globe className="w-2.5 h-2.5" /> Publish
-                                    </Button>
-                                  )}
-                                </div>
+                                {/* Hashtags */}
+                                {p.hashtags?.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1.5 pl-[72px]">
+                                    {(p.hashtags as string[]).slice(0, 5).map((h: string, idx: number) => (
+                                      <span key={idx} className="text-xs text-primary">#{h.replace(/^#/, '')}</span>
+                                    ))}
+                                  </div>
+                                )}
                               </CardContent>
                             </Card>
                           ))}
