@@ -188,8 +188,8 @@ integrationsRouter.get('/:platform/auth-url', async (c) => {
 integrationsRouter.get('/:platform/callback', async (c) => {
   const platform = c.req.param('platform');
 
-  // Special case: Google Search Console (legacy)
-  if (platform === 'google_search_console') {
+  // Special case: Google Search Console (legacy + new redirect)
+  if (platform === 'google_search_console' || platform === 'google') {
     return handleGSCCallback(c);
   }
 
@@ -382,7 +382,10 @@ async function handleGSCAuthUrl(c: any) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) return c.json({ error: 'Google services are not available at this time' }, 400);
 
-  const redirectUri = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'}/integrations/google_search_console/callback`;
+  // Ensure redirect URI includes /api/v1 and matches Google Cloud Console config
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
+  const apiBase = baseUrl.includes('/api/v1') ? baseUrl : `${baseUrl}/api/v1`;
+  const redirectUri = `${apiBase}/integrations/google/callback`;
   const scope = 'https://www.googleapis.com/auth/webmasters.readonly';
   const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent&state=${c.get('user').userId}`;
   return c.json({ url });
@@ -393,7 +396,9 @@ async function handleGSCCallback(c: any) {
   const userId = c.req.query('state');
   if (!code) return c.html('<html><body><h1>Error</h1><p>No code received.</p></body></html>');
 
-  const redirectUri = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'}/integrations/google_search_console/callback`;
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
+  const apiBase = baseUrl.includes('/api/v1') ? baseUrl : `${baseUrl}/api/v1`;
+  const redirectUri = `${apiBase}/integrations/google/callback`;
 
   try {
     const response = await fetch('https://oauth2.googleapis.com/token', {
