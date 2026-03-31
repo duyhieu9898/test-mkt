@@ -192,17 +192,22 @@ seoEngineRouter.post(
     const { siteUrl, username, appPassword } = c.req.valid('json');
 
     try {
-      // SSRF protection: block local/private network addresses
+      // SSRF protection: block private network addresses in production
       const parsedUrl = new URL(siteUrl);
-      const blockedHosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1'];
-      const blockedPrefixes = ['10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.', '192.168.'];
-
-      if (blockedHosts.includes(parsedUrl.hostname) || blockedPrefixes.some(p => parsedUrl.hostname.startsWith(p))) {
-        return c.json({ error: 'Cannot connect to local or private network addresses' }, 400);
+      const isDev = process.env.NODE_ENV !== 'production';
+      if (!isDev) {
+        const blockedHosts = ['0.0.0.0', '::1'];
+        const blockedPrefixes = ['10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.', '192.168.'];
+        if (blockedHosts.includes(parsedUrl.hostname) || blockedPrefixes.some(p => parsedUrl.hostname.startsWith(p))) {
+          return c.json({ error: 'Cannot connect to private network addresses' }, 400);
+        }
       }
 
+      // Clean up URL — user might paste login URL or URL with trailing path
+      const cleanSiteUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
+
       // Test the WordPress connection first
-      const wpApiUrl = `${siteUrl.replace(/\/$/, '')}/wp-json/wp/v2/posts?per_page=1`;
+      const wpApiUrl = `${cleanSiteUrl}/wp-json/wp/v2/posts?per_page=1`;
       const authHeader = 'Basic ' + Buffer.from(`${username}:${appPassword}`).toString('base64');
 
       const testResponse = await fetch(wpApiUrl, {
@@ -232,7 +237,7 @@ seoEngineRouter.post(
       const updatedSettings = {
         ...currentSettings,
         wordpress: {
-          siteUrl: siteUrl.replace(/\/$/, ''),
+          siteUrl: cleanSiteUrl,
           username,
           appPassword,
           connectedAt: new Date().toISOString(),
