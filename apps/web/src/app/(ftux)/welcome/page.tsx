@@ -12,6 +12,8 @@ import { OrgChartView } from '@/components/ftux/org-chart-view';
 import { MasterPlanView } from '@/components/ftux/master-plan-view';
 import { ExecutionTriggerView } from '@/components/ftux/execution-trigger-view';
 import { CelebrationView } from '@/components/ftux/celebration-view';
+import { SetupChecklist } from '@/components/setup-checklist';
+import { Button } from '@/components/ui/button';
 import { STEP_LABELS } from '@/lib/ftux/processing-simulation';
 import { api } from '@/lib/api/client';
 import type { ProcessingStep, FTUXAgent, FTUXStrategy, MasterPlan, WebsiteAnalysis } from '@/lib/ftux/types';
@@ -440,7 +442,24 @@ export default function FTUXWelcomePage() {
             agentCount={agents.length}
             taskCount={strategy?.days.reduce((sum, d) => sum + d.activities.length, 0) || 0}
             budget={500}
+            onComplete={() => setStep('setup')}
           />
+        </motion.div>
+      )}
+
+      {step === 'setup' && company && (
+        <motion.div
+          key="setup"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        >
+          <SetupChecklist variant="full" companyId={company.id} />
+          <div className="text-center mt-6">
+            <Button onClick={() => router.push(`/${company.id}`)}>
+              Go to Dashboard →
+            </Button>
+            <p className="text-xs text-muted-foreground mt-2">You can complete these steps anytime</p>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

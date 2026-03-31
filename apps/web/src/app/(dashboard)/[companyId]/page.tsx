@@ -32,6 +32,7 @@ import { api } from '@/lib/api/client';
 import { useAuthStore } from '@/stores/auth-store';
 import { toast } from 'sonner';
 import { TrustBanner } from '@/components/trust-banner';
+import { SetupChecklist } from '@/components/setup-checklist';
 
 export default function DashboardPage() {
   const params = useParams();
@@ -240,6 +241,9 @@ export default function DashboardPage() {
 
       {/* Data Trust Banner */}
       <TrustBanner variant="full" />
+
+      {/* Setup Progress Banner */}
+      <SetupChecklist variant="banner" />
 
       {/* Next Action — THE most important card */}
       <motion.div

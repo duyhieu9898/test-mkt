@@ -15,6 +15,7 @@ interface CelebrationViewProps {
   agentCount: number;
   taskCount: number;
   budget: number;
+  onComplete?: () => void;
 }
 
 export function CelebrationView({
@@ -23,6 +24,7 @@ export function CelebrationView({
   agentCount,
   taskCount,
   budget,
+  onComplete,
 }: CelebrationViewProps) {
   const router = useRouter();
   const { width, height } = useWindowSize();
@@ -35,7 +37,11 @@ export function CelebrationView({
       setCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          router.push(`/${companyId}`);
+          if (onComplete) {
+            onComplete();
+          } else {
+            router.push(`/${companyId}`);
+          }
           return 0;
         }
         return prev - 1;
@@ -51,10 +57,14 @@ export function CelebrationView({
       clearInterval(timer);
       clearTimeout(confettiTimer);
     };
-  }, [companyId, router]);
+  }, [companyId, router, onComplete]);
 
   const handleGoToDashboard = () => {
-    router.push(`/${companyId}`);
+    if (onComplete) {
+      onComplete();
+    } else {
+      router.push(`/${companyId}`);
+    }
   };
 
   const stats = [

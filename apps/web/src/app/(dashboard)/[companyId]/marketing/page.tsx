@@ -81,6 +81,12 @@ export default function MarketingPage() {
     enabled: !!token,
   });
 
+  const { data: connectionStatuses } = useQuery({
+    queryKey: ['platform-connections', companyId],
+    queryFn: () => api.get<{ connections: Record<string, { connected: boolean }> }>('/integrations/all-status', { token: token! }),
+    enabled: !!token,
+  });
+
   const { data: aiSuggestionsData, isLoading: isLoadingSuggestions } = useQuery({
     queryKey: ['ai-suggestions', companyId],
     queryFn: () => api.get<{ data: any[] }>(`/marketing/company/${companyId}/campaigns/ai-suggestions`, { token: token! }),
@@ -206,8 +212,19 @@ export default function MarketingPage() {
 
   const handlePublishPost = async (id: string) => {
     if (!token) return;
-    await api.post(`/marketing/company/${companyId}/posts/${id}/publish`, {}, { token });
-    toast.success('Published');
+    try {
+      const res = await api.post<any>(`/marketing/company/${companyId}/posts/${id}/publish`, {}, { token });
+      if (res.published) {
+        toast.success(res.message || 'Published!');
+        if (res.platformPostUrl) {
+          toast.info(`View: ${res.platformPostUrl}`, { duration: 5000 });
+        }
+      } else {
+        toast.error(res.error || 'Could not publish');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Publishing failed. Check if the platform is connected in Settings.');
+    }
     invalidateAll();
   };
 
@@ -985,9 +1002,15 @@ export default function MarketingPage() {
                     <Select value={campaignForm.platform} onValueChange={(v) => setCampaignForm({ ...campaignForm, platform: v })}>
                       <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="meta">Facebook & Instagram</SelectItem>
-                        <SelectItem value="google">Google Ads</SelectItem>
-                        <SelectItem value="linkedin">LinkedIn</SelectItem>
+                        <SelectItem value="meta">
+                          Facebook & Instagram{connectionStatuses?.connections?.facebook?.connected ? '' : ' (not connected)'}
+                        </SelectItem>
+                        <SelectItem value="google">
+                          Google Ads{connectionStatuses?.connections?.google?.connected ? '' : ' (not connected)'}
+                        </SelectItem>
+                        <SelectItem value="linkedin">
+                          LinkedIn{connectionStatuses?.connections?.linkedin?.connected ? '' : ' (not connected)'}
+                        </SelectItem>
                         <SelectItem value="manual">Manual / Other</SelectItem>
                       </SelectContent>
                     </Select>

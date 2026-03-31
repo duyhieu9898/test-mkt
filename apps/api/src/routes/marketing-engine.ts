@@ -833,12 +833,88 @@ marketingEngineRouter.post(
   }
 );
 
-// Publish post
+// Publish post — actually send to connected platform
 marketingEngineRouter.post('/company/:companyId/posts/:id/publish', async (c) => {
-  const [updated] = await db.update(socialPosts)
-    .set({ status: 'published', publishedAt: new Date() })
-    .where(eq(socialPosts.id, c.req.param('id'))).returning();
-  return c.json(updated);
+  const companyId = c.req.param('companyId');
+  const postId = c.req.param('id');
+
+  // 1. Get the post
+  const post = await db.query.socialPosts.findFirst({
+    where: and(eq(socialPosts.id, postId), eq(socialPosts.companyId, companyId)),
+  });
+
+  if (!post) return c.json({ error: 'Post not found' }, 404);
+
+  // 2. Map platform name (our schema uses 'facebook', 'linkedin', etc.)
+  const platform = post.platform;
+
+  const platformNames: Record<string, string> = {
+    facebook: 'Facebook', instagram: 'Instagram', linkedin: 'LinkedIn',
+    twitter: 'Twitter/X', tiktok: 'TikTok', youtube: 'YouTube',
+  };
+
+  // 3. Check if platform is connected
+  const { socialConnections } = await import('@1person/core/db');
+  const connection = await db.query.socialConnections.findFirst({
+    where: and(
+      eq(socialConnections.companyId, companyId),
+      eq(socialConnections.platform, platform),
+      eq(socialConnections.status, 'connected')
+    ),
+  });
+
+  if (!connection) {
+    // Platform not connected — tell user where to connect
+    return c.json({
+      published: false,
+      error: `${platformNames[platform] || platform} is not connected. Go to Settings → Integrations to connect it first.`,
+    }, 400);
+  }
+
+  // 4. Actually publish via distribution engine
+  try {
+    const { DistributionEngine } = await import('../services/distribution-engine');
+    const distributionEngine = new DistributionEngine();
+
+    const scheduledPostId = await distributionEngine.createPost({
+      companyId,
+      connectionId: connection.id,
+      platform: platform as any,
+      contentText: post.content || '',
+      hashtags: (post.hashtags as string[]) || [],
+      mediaUrls: (post.mediaUrls as string[]) || [],
+      scheduledFor: new Date(),
+    });
+
+    const result = await distributionEngine.publishPost(scheduledPostId);
+
+    if (result.success) {
+      // Update social post status
+      await db.update(socialPosts).set({
+        status: 'published',
+        publishedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(eq(socialPosts.id, postId));
+
+      return c.json({
+        published: true,
+        platformPostId: result.platformPostId,
+        platformPostUrl: result.platformPostUrl,
+        message: `Published to ${platformNames[platform] || platform}!`,
+      });
+    } else {
+      return c.json({
+        published: false,
+        error: result.error || 'Could not publish. Please try again.',
+      }, 500);
+    }
+  } catch (err) {
+    console.error('[Marketing] Social post publish failed:', err);
+    return c.json({
+      published: false,
+      error: 'Publishing failed. Please try again.',
+    }, 500);
+  }
 });
 
 // Update social post (edit content, hashtags, media)

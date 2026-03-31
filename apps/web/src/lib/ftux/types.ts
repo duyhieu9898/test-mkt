@@ -13,7 +13,8 @@ export type FTUXStep =
   | 'org-chart'
   | 'master-plan'
   | 'execution-trigger'
-  | 'celebration';
+  | 'celebration'
+  | 'setup';
 
 export type InputType = 'text' | 'url';
 

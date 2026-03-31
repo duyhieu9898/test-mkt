@@ -388,6 +388,74 @@ dashboardRouter.get('/company/:companyId/revenue-attribution', async (c) => {
   }
 });
 
+// ============================================
+// SETUP STATUS — onboarding progress tracker
+// ============================================
+
+dashboardRouter.get('/company/:companyId/setup-status', async (c) => {
+  const companyId = c.req.param('companyId');
+  const { userId } = c.get('user');
+
+  if (!(await verifyCompanyAccess(userId, companyId))) {
+    throw new HTTPException(403, { message: 'Access denied' });
+  }
+
+  const { db } = await import('../lib/db');
+  const { companies } = await import('@1person/core/db');
+  const { eq, sql } = await import('drizzle-orm');
+
+  // Check each setup step dynamically
+  const steps = [];
+
+  // 1. Business analyzed — has knowledge_base entries
+  const kbCount = await db.execute(sql`SELECT COUNT(*)::int as count FROM knowledge_base WHERE company_id = ${companyId}`);
+  const hasKnowledge = ((kbCount as any)[0]?.count || 0) > 0;
+  steps.push({ id: 'business', label: 'Business analyzed', completed: hasKnowledge, action: `/${companyId}/knowledge` });
+
+  // 2. Landing pages created
+  const pageCount = await db.execute(sql`SELECT COUNT(*)::int as count FROM landing_pages WHERE company_id = ${companyId}`);
+  const hasPages = ((pageCount as any)[0]?.count || 0) > 0;
+  steps.push({ id: 'pages', label: 'Landing pages created', completed: hasPages, action: `/${companyId}/landing-pages` });
+
+  // 3. WordPress connected
+  const company = await db.query.companies.findFirst({ where: eq(companies.id, companyId) });
+  const wpConnected = !!(company?.settings as any)?.wordpress?.siteUrl;
+  steps.push({ id: 'wordpress', label: 'WordPress connected', completed: wpConnected, action: `/${companyId}/seo-engine` });
+
+  // 4. Google Search Console
+  const gscEntry = await db.execute(sql`SELECT COUNT(*)::int as count FROM knowledge_base WHERE company_id = ${companyId} AND category = 'integration_google'`);
+  const hasGSC = ((gscEntry as any)[0]?.count || 0) > 0;
+  steps.push({ id: 'gsc', label: 'Google Search Console connected', completed: hasGSC, action: `/${companyId}/settings` });
+
+  // 5. Assets uploaded
+  let hasAssets = false;
+  try {
+    const assetCount = await db.execute(sql`SELECT COUNT(*)::int as count FROM asset_library WHERE company_id = ${companyId}`);
+    hasAssets = ((assetCount as any)[0]?.count || 0) > 0;
+  } catch {} // table might not exist
+  steps.push({ id: 'assets', label: 'Brand assets uploaded', completed: hasAssets, action: `/${companyId}/assets` });
+
+  // 6. First blog published
+  let hasBlog = false;
+  try {
+    const blogCount = await db.execute(sql`SELECT COUNT(*)::int as count FROM blog_posts WHERE company_id = ${companyId} AND (status = 'pushed_to_cms' OR cms_post_url IS NOT NULL)`);
+    hasBlog = ((blogCount as any)[0]?.count || 0) > 0;
+  } catch {} // table might not exist
+  steps.push({ id: 'blog', label: 'First blog published', completed: hasBlog, action: `/${companyId}/seo-engine` });
+
+  const completedCount = steps.filter(s => s.completed).length;
+  const nextStep = steps.find(s => !s.completed);
+
+  return c.json({
+    steps,
+    completedCount,
+    totalCount: steps.length,
+    percentage: Math.round((completedCount / steps.length) * 100),
+    nextStep: nextStep || null,
+    allComplete: completedCount === steps.length,
+  });
+});
+
 // Revenue Brain — profit-driven analysis
 dashboardRouter.get('/company/:companyId/revenue', async (c) => {
   const companyId = c.req.param('companyId');
