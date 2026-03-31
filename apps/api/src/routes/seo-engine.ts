@@ -867,4 +867,219 @@ seoEngineRouter.delete('/company/:companyId/blogs/:blogId', async (c) => {
   }
 });
 
+// ===============================================================
+// KEYWORD DASHBOARD — Unified GSC + Content + AI Suggestions
+// ===============================================================
+
+const keywordDashboardCache = new Map<string, { data: any; generatedAt: string }>();
+
+seoEngineRouter.get('/company/:companyId/keyword-dashboard', async (c) => {
+  const companyId = c.req.param('companyId');
+  const forceRefresh = c.req.query('refresh') === 'true';
+
+  const cached = keywordDashboardCache.get(companyId);
+  if (cached && !forceRefresh) return c.json(cached.data);
+
+  try {
+    const { knowledgeBase } = await import('@1person/core/db');
+    const { sql } = await import('drizzle-orm');
+    const { buildBusinessContext } = await import('../services/business-context');
+
+    await buildBusinessContext(companyId);
+    const company = await db.query.companies.findFirst({ where: eq(companies.id, companyId) });
+    const websiteUrl = (company as any)?.website || (company as any)?.url || '';
+
+    // 1. Fetch GSC data if connected
+    let gscKeywords: Array<{ query: string; clicks: number; impressions: number; ctr: number; position: number }> = [];
+    let gscConnected = false;
+
+    try {
+      const gscEntry = await db.query.knowledgeBase.findFirst({
+        where: and(eq(knowledgeBase.companyId, companyId), eq(knowledgeBase.category, 'integration_google')),
+      });
+
+      if (gscEntry) {
+        const gscData = JSON.parse(gscEntry.content);
+        if (gscData.refreshToken && websiteUrl) {
+          const { GSCClient } = await import('../services/gsc-client');
+          const gsc = new GSCClient(gscData.refreshToken);
+          gscKeywords = (await gsc.fetchQueryPerformance(websiteUrl, 28)) || [];
+          gscConnected = true;
+        }
+      }
+    } catch (err) {
+      console.warn('[SEO Dashboard] GSC fetch failed:', err);
+    }
+
+    // 2. Fetch existing content (blogs + pages)
+    let blogs: Array<{ id: string; title: string; keyword: string; status: string }> = [];
+    let pages: Array<{ id: string; name: string; seo: any; status: string }> = [];
+
+    try {
+      const blogRows = await db.execute(sql`
+        SELECT id, title, keyword, status FROM blog_posts WHERE company_id = ${companyId}
+      `);
+      blogs = (blogRows as any[]) || [];
+    } catch {}
+
+    try {
+      const pageRows = await db.execute(sql`
+        SELECT id, name, seo, status FROM landing_pages WHERE company_id = ${companyId}
+      `);
+      pages = (pageRows as any[]) || [];
+    } catch {}
+
+    // 3. Get AI suggestions for new opportunities
+    let aiKeywords: string[] = [];
+    const cachedSuggestions = suggestionsCache.get(companyId);
+    if (cachedSuggestions?.data?.keywordOpportunities) {
+      aiKeywords = cachedSuggestions.data.keywordOpportunities.map((k: any) => k.keyword);
+    }
+
+    // 4. Merge all sources into unified keyword list
+    const keywordMap = new Map<string, any>();
+
+    // Add GSC keywords
+    for (const gsc of gscKeywords) {
+      const kw = gsc.query.toLowerCase();
+      keywordMap.set(kw, {
+        keyword: gsc.query,
+        position: Math.round(gsc.position),
+        clicks: gsc.clicks,
+        impressions: gsc.impressions,
+        ctr: +(gsc.ctr).toFixed(1),
+        trend: 'stable',
+        source: 'gsc',
+        content: { hasBlog: false, hasPage: false },
+      });
+    }
+
+    // Add AI suggestion keywords not in GSC
+    for (const aiKw of aiKeywords) {
+      const kw = aiKw.toLowerCase();
+      if (!keywordMap.has(kw)) {
+        keywordMap.set(kw, {
+          keyword: aiKw,
+          position: null,
+          clicks: 0,
+          impressions: 0,
+          ctr: 0,
+          trend: 'new',
+          source: 'ai_suggestion',
+          content: { hasBlog: false, hasPage: false },
+        });
+      }
+    }
+
+    // Add keywords from existing content that aren't in GSC or AI
+    for (const blog of blogs) {
+      if (blog.keyword) {
+        const kw = blog.keyword.toLowerCase();
+        if (!keywordMap.has(kw)) {
+          keywordMap.set(kw, {
+            keyword: blog.keyword,
+            position: null,
+            clicks: 0,
+            impressions: 0,
+            ctr: 0,
+            trend: 'new',
+            source: 'content',
+            content: { hasBlog: false, hasPage: false },
+          });
+        }
+      }
+    }
+
+    // 5. Map content to keywords
+    for (const [kw, data] of keywordMap) {
+      // Check blogs
+      const matchingBlog = blogs.find(b => b.keyword?.toLowerCase() === kw);
+      if (matchingBlog) {
+        data.content.hasBlog = true;
+        data.content.blogId = matchingBlog.id;
+        data.content.blogTitle = matchingBlog.title;
+      }
+
+      // Check pages (seo.keywords array)
+      const matchingPage = pages.find(p => {
+        const pageKws = (p.seo as any)?.keywords || [];
+        return pageKws.some((pk: string) => pk.toLowerCase().includes(kw) || kw.includes(pk.toLowerCase()));
+      });
+      if (matchingPage) {
+        data.content.hasPage = true;
+        data.content.pageId = matchingPage.id;
+        data.content.pageName = matchingPage.name;
+      }
+
+      // 6. Calculate recommended action
+      const hasContent = data.content.hasBlog || data.content.hasPage;
+      const pos = data.position;
+
+      if (!hasContent) {
+        data.recommendedAction = 'create';
+        data.actionReason = 'No content yet — create a blog post or landing page';
+        data.opportunity = 'high';
+      } else if (pos && pos <= 10) {
+        data.recommendedAction = 'scale';
+        data.actionReason = 'Ranking well — create more related content to dominate';
+        data.opportunity = 'medium';
+      } else if (pos && pos <= 30) {
+        data.recommendedAction = 'optimize';
+        data.actionReason = data.ctr < 2 ? 'Low CTR — optimize title and meta description' : 'Close to top 10 — strengthen content';
+        data.opportunity = 'high';
+      } else if (pos && pos <= 50) {
+        data.recommendedAction = 'improve';
+        data.actionReason = 'Needs improvement — expand content, add more detail';
+        data.opportunity = 'high';
+      } else if (pos && pos > 50) {
+        data.recommendedAction = 'improve';
+        data.actionReason = 'Low ranking — consider rewriting or targeting a more specific keyword';
+        data.opportunity = 'medium';
+      } else {
+        // Has content but no GSC data (not indexed yet?)
+        data.recommendedAction = 'monitor';
+        data.actionReason = 'Content created — waiting for Google to index';
+        data.opportunity = 'low';
+      }
+    }
+
+    // 7. Sort: high opportunity first, then by clicks
+    const keywords = Array.from(keywordMap.values()).sort((a, b) => {
+      const oppOrder = { high: 0, medium: 1, low: 2 };
+      const oppDiff = (oppOrder[a.opportunity as keyof typeof oppOrder] || 2) - (oppOrder[b.opportunity as keyof typeof oppOrder] || 2);
+      if (oppDiff !== 0) return oppDiff;
+      return (b.clicks || 0) - (a.clicks || 0);
+    });
+
+    // 8. Summary
+    const summary = {
+      totalKeywords: keywords.length,
+      rankingTop10: keywords.filter(k => k.position && k.position <= 10).length,
+      rankingTop50: keywords.filter(k => k.position && k.position <= 50).length,
+      noContent: keywords.filter(k => !k.content.hasBlog && !k.content.hasPage).length,
+      needsOptimization: keywords.filter(k => k.recommendedAction === 'optimize' || k.recommendedAction === 'improve').length,
+    };
+
+    const result = {
+      keywords,
+      summary,
+      gscConnected,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    keywordDashboardCache.set(companyId, { data: result, generatedAt: result.lastUpdated });
+    return c.json(result);
+
+  } catch (err) {
+    console.error('[SEO Dashboard] Failed:', err);
+    return c.json({
+      keywords: [],
+      summary: { totalKeywords: 0, rankingTop10: 0, rankingTop50: 0, noContent: 0, needsOptimization: 0 },
+      gscConnected: false,
+      lastUpdated: new Date().toISOString(),
+      error: 'Could not load keyword data',
+    });
+  }
+});
+
 export default seoEngineRouter;

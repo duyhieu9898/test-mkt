@@ -97,6 +97,39 @@ interface PlanItem {
   addedAt: number;
 }
 
+interface KeywordDashboardData {
+  keywords: Array<{
+    keyword: string;
+    position?: number;
+    previousPosition?: number;
+    trend: 'improving' | 'declining' | 'stable' | 'new';
+    clicks: number;
+    impressions: number;
+    ctr: number;
+    content: {
+      hasBlog: boolean;
+      blogId?: string;
+      blogTitle?: string;
+      hasPage: boolean;
+      pageId?: string;
+      pageName?: string;
+    };
+    source: string;
+    opportunity: string;
+    recommendedAction: string;
+    actionReason: string;
+  }>;
+  summary: {
+    totalKeywords: number;
+    rankingTop10: number;
+    rankingTop50: number;
+    noContent: number;
+    needsOptimization: number;
+  };
+  gscConnected: boolean;
+  lastUpdated: string;
+}
+
 // ─── Main Page ───────────────────────────────────────────────────
 
 export default function ContentHubPage() {
@@ -193,6 +226,15 @@ export default function ContentHubPage() {
     queryKey: ['social-count', companyId],
     queryFn: () => api.get(`/marketing/company/${companyId}/posts`, { token: token! }),
     enabled: !!token,
+  });
+
+  const { data: keywordDashboard, isLoading: kwLoading } = useQuery<KeywordDashboardData>({
+    queryKey: ['keyword-dashboard', companyId],
+    queryFn: () => api.get(`/seo-engine/company/${companyId}/keyword-dashboard`, { token: token! }),
+    enabled: !!token,
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
 
   // ─── Poll active job ────────────────────────────────────────
@@ -555,6 +597,188 @@ export default function ContentHubPage() {
           addToPlan={addToPlan}
           removeFromPlan={removeFromPlan}
         />
+      )}
+
+      {/* SEO Dashboard */}
+      {!hasActiveJob && (
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold flex items-center gap-2">
+                <Key className="w-4 h-4 text-purple-500" />
+                Your Keywords
+              </h3>
+              <Button size="sm" variant="ghost" className="text-xs gap-1" onClick={() => {
+                qc.invalidateQueries({ queryKey: ['keyword-dashboard'] });
+                qc.fetchQuery({
+                  queryKey: ['keyword-dashboard', companyId],
+                  queryFn: () => api.get(`/seo-engine/company/${companyId}/keyword-dashboard?refresh=true`, { token: token! }),
+                });
+              }}>
+                <RefreshCw className="w-3 h-3" /> Refresh
+              </Button>
+            </div>
+
+            {/* GSC Connection Prompt */}
+            {keywordDashboard && !keywordDashboard.gscConnected && (
+              <div className="mb-4 p-3 rounded-lg bg-blue-50 border border-blue-200">
+                <p className="text-sm font-medium text-blue-900">Connect Google Search Console for real ranking data</p>
+                <p className="text-xs text-blue-700 mt-0.5">Without it, keywords are AI suggestions only. With it, see real positions and clicks.</p>
+                <Link href={`/${companyId}/settings`} className="text-xs text-blue-600 hover:underline mt-1 inline-block">
+                  Connect in Settings →
+                </Link>
+              </div>
+            )}
+
+            {/* Summary Cards */}
+            {keywordDashboard?.summary && (
+              <div className="grid grid-cols-5 gap-2 mb-4">
+                <div className="text-center p-2 rounded-lg bg-green-50">
+                  <p className="text-lg font-bold text-green-700">{keywordDashboard.summary.rankingTop10}</p>
+                  <p className="text-[9px] text-green-600">Top 10</p>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-blue-50">
+                  <p className="text-lg font-bold text-blue-700">{keywordDashboard.summary.rankingTop50}</p>
+                  <p className="text-[9px] text-blue-600">Top 50</p>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-amber-50">
+                  <p className="text-lg font-bold text-amber-700">{keywordDashboard.summary.needsOptimization}</p>
+                  <p className="text-[9px] text-amber-600">Need Fix</p>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-gray-50">
+                  <p className="text-lg font-bold text-gray-700">{keywordDashboard.summary.noContent}</p>
+                  <p className="text-[9px] text-gray-600">No Content</p>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-purple-50">
+                  <p className="text-lg font-bold text-purple-700">{keywordDashboard.summary.totalKeywords}</p>
+                  <p className="text-[9px] text-purple-600">Total</p>
+                </div>
+              </div>
+            )}
+
+            {/* Keyword Table */}
+            {kwLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+            ) : keywordDashboard?.keywords?.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-xs text-muted-foreground">
+                      <th className="text-left py-2 font-medium">Keyword</th>
+                      <th className="text-center py-2 font-medium w-16">Rank</th>
+                      <th className="text-center py-2 font-medium w-16">Clicks</th>
+                      <th className="text-center py-2 font-medium w-16">CTR</th>
+                      <th className="text-left py-2 font-medium w-32">Content</th>
+                      <th className="text-right py-2 font-medium w-24">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {keywordDashboard.keywords.map((kw, i) => {
+                      const bgClass = kw.position && kw.position <= 10
+                        ? 'bg-green-50/50'
+                        : kw.position && kw.position <= 30
+                          ? ''
+                          : kw.position && kw.position <= 50
+                            ? 'bg-amber-50/30'
+                            : kw.position && kw.position > 50
+                              ? 'bg-red-50/30'
+                              : 'bg-gray-50/30';
+
+                      return (
+                        <tr key={i} className={`border-b last:border-0 ${bgClass}`}>
+                          {/* Keyword */}
+                          <td className="py-2 pr-2">
+                            <p className="font-medium text-xs truncate max-w-[200px]">{kw.keyword}</p>
+                            <p className="text-[9px] text-muted-foreground truncate">{kw.actionReason}</p>
+                          </td>
+
+                          {/* Rank + Trend */}
+                          <td className="text-center py-2">
+                            {kw.position ? (
+                              <div className="flex items-center justify-center gap-0.5">
+                                <span className="font-mono text-xs font-bold">#{kw.position}</span>
+                                {kw.trend === 'improving' && <span className="text-green-600 text-[9px]">↑</span>}
+                                {kw.trend === 'declining' && <span className="text-red-600 text-[9px]">↓</span>}
+                              </div>
+                            ) : (
+                              <span className="text-[9px] text-muted-foreground">—</span>
+                            )}
+                          </td>
+
+                          {/* Clicks */}
+                          <td className="text-center py-2">
+                            <span className="text-xs">{kw.clicks > 0 ? kw.clicks : '—'}</span>
+                          </td>
+
+                          {/* CTR */}
+                          <td className="text-center py-2">
+                            <span className="text-xs">{kw.ctr > 0 ? `${kw.ctr}%` : '—'}</span>
+                          </td>
+
+                          {/* Content */}
+                          <td className="py-2">
+                            <div className="flex items-center gap-1">
+                              {kw.content.hasBlog && (
+                                <Link href={`/${companyId}/blog/${kw.content.blogId}`} className="text-[9px] text-primary hover:underline flex items-center gap-0.5">
+                                  <FileText className="w-3 h-3" /> Blog
+                                </Link>
+                              )}
+                              {kw.content.hasPage && (
+                                <Link href={`/${companyId}/landing-pages`} className="text-[9px] text-primary hover:underline flex items-center gap-0.5">
+                                  <Globe className="w-3 h-3" /> Page
+                                </Link>
+                              )}
+                              {!kw.content.hasBlog && !kw.content.hasPage && (
+                                <span className="text-[9px] text-muted-foreground">No content</span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Action */}
+                          <td className="text-right py-2">
+                            {kw.recommendedAction === 'create' && (
+                              <Button size="sm" variant="outline" className="h-6 text-[10px] px-2"
+                                onClick={() => addToPlan({ title: '', keyword: kw.keyword, searchIntent: 'informational', source: 'keyword', addedAt: Date.now() })}>
+                                {isInPlan(kw.keyword) ? '✓ Planned' : '+ Create'}
+                              </Button>
+                            )}
+                            {kw.recommendedAction === 'optimize' && kw.content.blogId && (
+                              <Link href={`/${companyId}/blog/${kw.content.blogId}`}>
+                                <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 text-amber-600">Optimize</Button>
+                              </Link>
+                            )}
+                            {kw.recommendedAction === 'improve' && kw.content.blogId && (
+                              <Link href={`/${companyId}/blog/${kw.content.blogId}`}>
+                                <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 text-red-600">Improve</Button>
+                              </Link>
+                            )}
+                            {kw.recommendedAction === 'scale' && (
+                              <Button size="sm" variant="outline" className="h-6 text-[10px] px-2 text-green-600"
+                                onClick={() => addToPlan({ title: '', keyword: kw.keyword, searchIntent: 'informational', source: 'keyword', addedAt: Date.now() })}>
+                                Scale
+                              </Button>
+                            )}
+                            {kw.recommendedAction === 'monitor' && (
+                              <span className="text-[9px] text-muted-foreground">Monitoring</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-6">No keyword data yet. Click Refresh to analyze.</p>
+            )}
+
+            {keywordDashboard?.lastUpdated && (
+              <p className="text-[10px] text-muted-foreground mt-2">
+                Last updated: {new Date(keywordDashboard.lastUpdated).toLocaleDateString()} at {new Date(keywordDashboard.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Content Plan */}
@@ -1014,10 +1238,9 @@ function SuggestionsSection({
   }
 
   const blogTopics = suggestions?.blogTopics || [];
-  const keywords = suggestions?.keywordOpportunities || [];
   const gaps = suggestions?.contentGaps || [];
 
-  if (blogTopics.length === 0 && keywords.length === 0 && gaps.length === 0) {
+  if (blogTopics.length === 0 && gaps.length === 0) {
     return null;
   }
 
@@ -1093,89 +1316,33 @@ function SuggestionsSection({
         </Card>
       )}
 
-      {/* Keyword Ideas & Content Gaps (side by side on desktop) */}
-      {(keywords.length > 0 || gaps.length > 0) && (
-        <div className="grid gap-4 md:grid-cols-2">
-          {keywords.length > 0 && (
-            <Card>
-              <CardContent className="pt-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold text-sm flex items-center gap-2">
-                    <Key className="w-4 h-4 text-purple-500" /> Keyword Ideas
-                  </h3>
-                  <Button size="sm" variant="ghost" className="text-xs" onClick={() => {
-                    suggestions?.keywordOpportunities?.forEach((kw: any) => {
-                      if (!isInPlan(kw.keyword)) {
-                        addToPlan({ title: '', keyword: kw.keyword, searchIntent: kw.intent || 'informational', source: 'keyword', addedAt: Date.now() });
-                      }
-                    });
-                  }}>
-                    Add All
+      {/* Content Gaps */}
+      {gaps.length > 0 && (
+        <Card>
+          <CardContent className="pt-4">
+            <h3 className="font-semibold text-sm flex items-center gap-2 mb-3">
+              <AlertCircle className="w-4 h-4 text-amber-500" /> Content Gaps
+            </h3>
+            <div className="space-y-1">
+              {gaps.map((gap, i) => (
+                <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/30 transition-colors">
+                  <p className="text-sm text-muted-foreground flex-1 mr-2">{gap}</p>
+                  <Button
+                    size="sm"
+                    variant={isInPlan(gap) ? 'default' : 'ghost'}
+                    className="h-6 text-[10px] px-2 shrink-0"
+                    onClick={() => isInPlan(gap)
+                      ? removeFromPlan(gap)
+                      : addToPlan({ title: '', keyword: gap, searchIntent: 'informational', source: 'gap', addedAt: Date.now() })
+                    }
+                  >
+                    {isInPlan(gap) ? '\u2713 Added' : '+ Add'}
                   </Button>
                 </div>
-                <div className="space-y-1">
-                  {keywords.map((kw, i) => (
-                    <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/30 transition-colors">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <span className="text-sm">{kw.keyword}</span>
-                        {kw.status === 'ranking' && (
-                          <div className="flex items-center gap-1.5">
-                            <Badge className="bg-green-100 text-green-700 text-[9px]">#{kw.currentPosition}</Badge>
-                            {(kw.clicks ?? 0) > 0 && (
-                              <span className="text-[10px] text-muted-foreground">{kw.clicks} clicks</span>
-                            )}
-                          </div>
-                        )}
-                        {kw.status === 'not_ranking' && (
-                          <Badge variant="outline" className="text-[9px] text-muted-foreground">New opportunity</Badge>
-                        )}
-                      </div>
-                      <Button
-                        size="sm"
-                        variant={isInPlan(kw.keyword) ? 'default' : 'ghost'}
-                        className="h-6 text-[10px] px-2"
-                        onClick={() => isInPlan(kw.keyword)
-                          ? removeFromPlan(kw.keyword)
-                          : addToPlan({ title: '', keyword: kw.keyword, searchIntent: kw.intent || 'informational', source: 'keyword', addedAt: Date.now() })
-                        }
-                      >
-                        {isInPlan(kw.keyword) ? '\u2713 Added' : '+ Add'}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {gaps.length > 0 && (
-            <Card>
-              <CardContent className="pt-4">
-                <h3 className="font-semibold text-sm flex items-center gap-2 mb-3">
-                  <AlertCircle className="w-4 h-4 text-amber-500" /> Content Gaps
-                </h3>
-                <div className="space-y-1">
-                  {gaps.map((gap, i) => (
-                    <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/30 transition-colors">
-                      <p className="text-sm text-muted-foreground flex-1 mr-2">{gap}</p>
-                      <Button
-                        size="sm"
-                        variant={isInPlan(gap) ? 'default' : 'ghost'}
-                        className="h-6 text-[10px] px-2 shrink-0"
-                        onClick={() => isInPlan(gap)
-                          ? removeFromPlan(gap)
-                          : addToPlan({ title: '', keyword: gap, searchIntent: 'informational', source: 'gap', addedAt: Date.now() })
-                        }
-                      >
-                        {isInPlan(gap) ? '\u2713 Added' : '+ Add'}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
