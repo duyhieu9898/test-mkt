@@ -35,6 +35,7 @@ export const users = pgTable('users', {
   // Status
   emailVerified: boolean('email_verified').default(false),
   isActive: boolean('is_active').default(true),
+  approvalStatus: varchar('approval_status', { length: 20 }).default('pending'), // pending | approved | rejected
   onboardingCompleted: boolean('onboarding_completed').default(false),
 
   // Timestamps

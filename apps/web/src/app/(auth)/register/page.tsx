@@ -10,7 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRegister } from '@/lib/api/hooks';
-import { Mail, Lock, User, ArrowRight, Check } from 'lucide-react';
+import { Mail, Lock, User, ArrowRight, Check, Clock } from 'lucide-react';
+import { useState } from 'react';
 
 const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
@@ -23,6 +24,7 @@ type RegisterForm = z.infer<typeof registerSchema>;
 export default function RegisterPage() {
   const router = useRouter();
   const registerMutation = useRegister();
+  const [pendingApproval, setPendingApproval] = useState(false);
 
   const {
     register,
@@ -43,15 +45,46 @@ export default function RegisterPage() {
 
   const onSubmit = async (data: RegisterForm) => {
     try {
-      await registerMutation.mutateAsync(data);
-      toast.success('Account created successfully!');
-      router.push('/welcome');
+      const res = await registerMutation.mutateAsync(data);
+      if ((res as any)?.pendingApproval) {
+        setPendingApproval(true);
+      } else {
+        toast.success('Account created!');
+        router.push('/welcome');
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Registration failed');
     }
   };
 
   const isLoading = registerMutation.isPending;
+
+  if (pendingApproval) {
+    return (
+      <div className="space-y-6">
+        <Card className="border-0 shadow-none lg:border lg:shadow-sm">
+          <CardContent className="pt-8 pb-8 text-center">
+            <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+              <Clock className="w-8 h-8 text-amber-600" />
+            </div>
+            <h2 className="text-xl font-bold mb-2">Account Created!</h2>
+            <p className="text-muted-foreground mb-4">
+              Your registration is pending admin approval.<br />
+              You'll be able to sign in once your account is approved.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              This usually takes less than 24 hours.
+            </p>
+            <Link href="/login">
+              <Button variant="outline" className="mt-6">
+                Go to Sign In
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
