@@ -112,6 +112,7 @@ auth.post('/login', zValidator('json', loginSchema), async (c) => {
       name: user.name,
       avatarUrl: user.avatarUrl,
       onboardingCompleted: user.onboardingCompleted,
+      role: (user as any).role || 'user',
     },
     accessToken,
     refreshToken,
@@ -138,6 +139,7 @@ auth.get('/me', authMiddleware, async (c) => {
     avatarUrl: user.avatarUrl,
     preferences: user.preferences,
     onboardingCompleted: user.onboardingCompleted,
+    role: (user as any).role || 'user',
     createdAt: user.createdAt,
   });
 });
@@ -157,6 +159,19 @@ auth.post('/logout', authMiddleware, async (c) => {
 // ============================================
 // ADMIN: User Approval (Alpha)
 // ============================================
+
+// Check admin role
+auth.get('/admin/check', authMiddleware, async (c) => {
+  const { userId } = c.get('user');
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
+  const role = (user as any)?.role || 'user';
+  if (role !== 'admin') {
+    throw new HTTPException(403, { message: 'Admin access required' });
+  }
+  return c.json({ isAdmin: true });
+});
 
 // List pending users
 auth.get('/admin/pending-users', authMiddleware, async (c) => {
@@ -208,7 +223,7 @@ auth.post('/admin/seed', async (c) => {
     return c.json({ message: 'Admin account already exists', email: adminEmail });
   }
 
-  // Create admin user (pre-approved)
+  // Create admin user (pre-approved, role=admin, skip onboarding)
   const passwordHash = await hashPassword(adminPassword);
   const [admin] = await db
     .insert(users)
@@ -216,8 +231,10 @@ auth.post('/admin/seed', async (c) => {
       email: adminEmail,
       passwordHash,
       name: 'Admin',
+      role: 'admin',
       approvalStatus: 'approved' as any,
       isActive: true,
+      onboardingCompleted: true,
     })
     .returning();
 

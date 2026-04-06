@@ -27,8 +27,10 @@ export async function seedAdmin() {
       email: adminEmail,
       passwordHash,
       name: 'Admin',
+      role: 'admin',
       approvalStatus: 'approved' as any,
       isActive: true,
+      onboardingCompleted: true,
     });
 
     console.log(`✅ Admin account created: ${adminEmail}`);

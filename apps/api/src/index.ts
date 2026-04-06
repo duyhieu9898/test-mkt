@@ -50,6 +50,7 @@ import leadsRouter from './routes/leads';
 import tenantAIRouter from './routes/tenant-ai';
 import seoEngineRouter from './routes/seo-engine';
 import blogRouter from './routes/blog';
+import adminRouter from './routes/admin';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -164,6 +165,7 @@ api.route('/leads', leadsRouter);
 api.route('/tenant-ai', tenantAIRouter);
 api.route('/seo-engine', seoEngineRouter);
 api.route('/blog', blogRouter);
+api.route('/admin', adminRouter);
 
 // Mount API
 app.route('/api/v1', api);

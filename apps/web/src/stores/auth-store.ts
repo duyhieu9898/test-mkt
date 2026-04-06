@@ -9,6 +9,7 @@ interface User {
   name: string;
   avatarUrl?: string;
   onboardingCompleted?: boolean;
+  role?: string;
 }
 
 interface AuthState {
