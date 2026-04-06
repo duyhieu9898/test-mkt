@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+.git
+.env
+.env.local
+*.md
+docs
+deploy
+infrastructure/nginx/ssl

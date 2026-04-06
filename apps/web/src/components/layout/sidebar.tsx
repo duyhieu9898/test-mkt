@@ -125,6 +125,22 @@ export function Sidebar() {
           })}
         </nav>
 
+        {/* Admin Link */}
+        <div className="px-3 pb-1">
+          <Link
+            href="/admin"
+            className={cn(
+              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
+              pathname === '/admin'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+            )}
+          >
+            <Shield className="w-5 h-5" />
+            <span>Admin</span>
+          </Link>
+        </div>
+
         {/* Bottom CTA */}
         <div className="p-3 border-t">
           {hasCompany ? (

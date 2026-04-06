@@ -49,6 +49,7 @@ import meetingsRouter from './routes/meetings';
 import leadsRouter from './routes/leads';
 import tenantAIRouter from './routes/tenant-ai';
 import seoEngineRouter from './routes/seo-engine';
+import blogRouter from './routes/blog';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -162,6 +163,7 @@ api.route('/meetings', meetingsRouter);
 api.route('/leads', leadsRouter);
 api.route('/tenant-ai', tenantAIRouter);
 api.route('/seo-engine', seoEngineRouter);
+api.route('/blog', blogRouter);
 
 // Mount API
 app.route('/api/v1', api);
@@ -194,6 +196,10 @@ serve({
   fetch: app.fetch,
   port,
 });
+
+// Auto-seed admin account on startup
+import { seedAdmin } from './lib/seed';
+seedAdmin();
 
 // Start BullMQ task worker (event-driven, no DB polling)
 import { taskWorker } from './workers/task-worker';

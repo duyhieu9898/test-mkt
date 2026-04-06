@@ -1,8 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone',
   images: {
-    domains: ['localhost', 'api.dicebear.com'],
+    domains: ['localhost', 'api.dicebear.com', '1person.bap-software.net'],
   },
   webpack: (config) => {
     config.watchOptions = {

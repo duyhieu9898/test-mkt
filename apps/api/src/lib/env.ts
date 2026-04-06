@@ -26,6 +26,10 @@ const envSchema = z.object({
 
   // URLs
   WEB_URL: z.string().default('http://localhost:3004'),
+
+  // Admin seed
+  ADMIN_EMAIL: z.string().default('admin@1person.ai'),
+  ADMIN_PASSWORD: z.string().default('Admin@1Person2025'),
 });
 
 export const env = envSchema.parse(process.env);

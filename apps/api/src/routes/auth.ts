@@ -192,4 +192,41 @@ auth.post('/admin/reject-user/:userId', authMiddleware, async (c) => {
   return c.json({ success: true, message: `${updated.name} rejected` });
 });
 
+// ============================================
+// ADMIN: Seed admin account (first-time setup)
+// ============================================
+auth.post('/admin/seed', async (c) => {
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@1person.ai';
+  const adminPassword = process.env.ADMIN_PASSWORD || 'Admin@1Person2025';
+
+  // Check if admin already exists
+  const existing = await db.query.users.findFirst({
+    where: eq(users.email, adminEmail),
+  });
+
+  if (existing) {
+    return c.json({ message: 'Admin account already exists', email: adminEmail });
+  }
+
+  // Create admin user (pre-approved)
+  const passwordHash = await hashPassword(adminPassword);
+  const [admin] = await db
+    .insert(users)
+    .values({
+      email: adminEmail,
+      passwordHash,
+      name: 'Admin',
+      approvalStatus: 'approved' as any,
+      isActive: true,
+    })
+    .returning();
+
+  return c.json({
+    message: 'Admin account created',
+    email: adminEmail,
+    password: adminPassword,
+    note: 'Change this password after first login!',
+  });
+});
+
 export default auth;
