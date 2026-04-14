@@ -19,6 +19,11 @@ import {
   ExternalLink,
   LogOut,
   BookOpen,
+  LineChart,
+  Brain,
+  Wallet,
+  TrendingUp,
+  Inbox,
 } from 'lucide-react';
 
 const contentSections = [
@@ -34,7 +39,14 @@ const contentSections = [
 const management = [
   { name: 'Users', href: '/admin/users', icon: Users },
   { name: 'Companies', href: '/admin/companies', icon: Building2 },
+  { name: 'Publish Queue', href: '/admin/publish-queue', icon: Inbox },
   { name: 'Blog Posts', href: '/admin/blog', icon: BookOpen },
+];
+
+const systemConfig = [
+  { name: 'LLM Config', href: '/admin/llm-config', icon: Brain },
+  { name: 'Credit Plans', href: '/admin/credit-plans', icon: Wallet },
+  { name: 'Credit Usage', href: '/admin/credit-monitoring', icon: TrendingUp },
 ];
 
 const system = [
@@ -84,8 +96,9 @@ export function AdminSidebar() {
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto p-3 space-y-6">
         {/* Dashboard */}
-        <div>
+        <div className="space-y-0.5">
           <NavItem item={{ name: 'Dashboard', href: '/admin', icon: LayoutDashboard }} />
+          <NavItem item={{ name: 'Metrics', href: '/admin/metrics', icon: LineChart }} />
         </div>
 
         {/* Content Sections */}
@@ -107,6 +120,18 @@ export function AdminSidebar() {
           </p>
           <div className="space-y-0.5">
             {management.map((item) => (
+              <NavItem key={item.href} item={item} />
+            ))}
+          </div>
+        </div>
+
+        {/* Configuration */}
+        <div>
+          <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+            Configuration
+          </p>
+          <div className="space-y-0.5">
+            {systemConfig.map((item) => (
               <NavItem key={item.href} item={item} />
             ))}
           </div>

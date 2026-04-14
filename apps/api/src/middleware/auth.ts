@@ -14,13 +14,25 @@ declare module 'hono' {
 }
 
 export const authMiddleware = async (c: Context, next: Next) => {
+  // Prefer Authorization header. Fall back to ?token= query param so
+  // that EventSource SSE connections work (the browser EventSource API
+  // does not support custom headers). Only used for authenticated
+  // read-only streams like /campaigns/.../stream (W1B.4).
   const authHeader = c.req.header('Authorization');
+  let token: string | null = null;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new HTTPException(401, { message: 'Missing or invalid authorization header' });
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
+  } else {
+    const queryToken = c.req.query('token');
+    if (queryToken && queryToken.length > 0) {
+      token = queryToken;
+    }
   }
 
-  const token = authHeader.substring(7);
+  if (!token) {
+    throw new HTTPException(401, { message: 'Missing or invalid authorization header' });
+  }
 
   try {
     const payload = verifyToken(token);

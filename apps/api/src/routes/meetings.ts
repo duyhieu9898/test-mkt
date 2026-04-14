@@ -13,6 +13,7 @@ import { meetings, knowledgeBase, tasks } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { buildBusinessContext } from '../services/business-context';
+import { resolveTranscriptionProvider } from '../lib/config-resolver';
 
 const meetingsRouter = new Hono();
 meetingsRouter.use('*', authMiddleware);
@@ -50,8 +51,12 @@ meetingsRouter.post('/company/:companyId/upload', async (c) => {
     })
     .returning();
 
-  // Try Whisper transcription if OpenAI key available
-  if (process.env.OPENAI_API_KEY) {
+  // Resolve active transcription provider via admin config (doc 10 §7).
+  // Picks Local (free) if faster-whisper-server is enabled, else OpenAI
+  // Whisper, else falls back to env. If nothing is configured, returns
+  // with needsTranscript=true so the user can paste a transcript.
+  const transcriptionProvider = await resolveTranscriptionProvider();
+  if (transcriptionProvider) {
     try {
       await db
         .update(meetings)
@@ -59,14 +64,18 @@ meetingsRouter.post('/company/:companyId/upload', async (c) => {
         .where(eq(meetings.id, meeting.id));
 
       const OpenAI = (await import('openai')).default;
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const openai = new OpenAI({
+        apiKey: transcriptionProvider.apiKey || 'local',
+        baseURL: transcriptionProvider.baseUrl || undefined,
+      });
 
-      // Read file for Whisper
+      // Read file for Whisper (shape works for both OpenAI and
+      // faster-whisper-server since the latter is OpenAI-compatible)
       const fileData = fs.readFileSync(filePath);
       const audioFile = new File([fileData], fileName, { type: 'audio/mpeg' });
 
       const transcription = await openai.audio.transcriptions.create({
-        model: 'whisper-1',
+        model: transcriptionProvider.model,
         file: audioFile,
       });
 
@@ -84,6 +93,15 @@ meetingsRouter.post('/company/:companyId/upload', async (c) => {
           updatedAt: new Date(),
         })
         .where(eq(meetings.id, meeting.id));
+
+      // Doc 10 §7 / Task 11.6 — push the learnings into the Brain so the
+      // next campaign + Deal Assistant + CEO Advisor benefit. Non-fatal.
+      extractMeetingBrainLearnings({
+        companyId,
+        meetingId: meeting.id,
+        meetingTitle: title,
+        insights,
+      }).catch(() => {});
 
       return c.json({ id: meeting.id, status: 'analyzed', title });
     } catch (err) {
@@ -147,6 +165,16 @@ meetingsRouter.post(
           updatedAt: new Date(),
         })
         .where(eq(meetings.id, id!));
+
+      // Doc 10 §7 / Task 11.6 — push learnings into Brain. Non-fatal.
+      if (id) {
+        extractMeetingBrainLearnings({
+          companyId,
+          meetingId: id,
+          meetingTitle: title || 'Meeting Transcript',
+          insights,
+        }).catch(() => {});
+      }
 
       return c.json({ id, status: 'analyzed', insights });
     } catch (err) {
@@ -279,6 +307,8 @@ async function analyzeMeetingTranscript(transcript: string, companyId?: string) 
     } catch {}
   }
 
+  // Doc 10 §7: extraction now also surfaces market insights + sales
+  // objections so they can feed the Business Brain (see extractMeetingBrainLearnings).
   const response = await llmGenerate(
     [
       {
@@ -295,14 +325,23 @@ Return JSON with this exact structure:
   "decisions": ["decision 1", "decision 2"],
   "tasks": [{"title": "task description", "assignee": "person name or null", "dueDate": "date or null"}],
   "strategies": ["strategy insight 1", "strategy insight 2"],
-  "keyTopics": ["topic 1", "topic 2"]
+  "keyTopics": ["topic 1", "topic 2"],
+  "marketInsights": ["things the team learned about the market, competitors, or customers"],
+  "salesObjections": ["objections or hesitations heard from prospects during this meeting"],
+  "keywords": ["5-8 terms that should drive future SEO + content work"]
 }
 
 TRANSCRIPT:
 ${transcript.substring(0, 8000)}`,
       },
     ],
-    { maxTokens: 1500, json: true }
+    {
+      maxTokens: 2000,
+      json: true,
+      featureKey: 'feedback_learning',
+      traceName: 'meetings.analyzeMeetingTranscript',
+      metadata: { companyId },
+    }
   );
 
   const parsed = extractJSON(response.text);
@@ -313,8 +352,101 @@ ${transcript.substring(0, 8000)}`,
       tasks: [],
       strategies: [],
       keyTopics: [],
+      marketInsights: [],
+      salesObjections: [],
+      keywords: [],
     }
   );
+}
+
+/**
+ * Meeting → Brain extraction (doc 10 §7 / Task 11.6).
+ *
+ * After `analyzeMeetingTranscript` returns, this function writes the
+ * extracted insights back to the Business Brain so the next campaign,
+ * the next Deal Assistant call, and the next CEO Advisor refresh all
+ * benefit from what the team just discussed. Non-fatal: if the brain
+ * write fails, logs and continues — the meeting is still analyzed.
+ *
+ * Writes to `brain_campaign_learnings` (category = insight / win / fail):
+ *  - marketInsights → category 'insight'
+ *  - salesObjections → category 'fail' (objections = friction to fix)
+ *  - strategies → category 'win' when prefixed with "worked"/"succeeded", else 'insight'
+ */
+async function extractMeetingBrainLearnings(params: {
+  companyId: string;
+  meetingId: string;
+  meetingTitle: string;
+  insights: any;
+}): Promise<void> {
+  const { companyId, meetingId, meetingTitle, insights } = params;
+  if (!insights) return;
+
+  try {
+    const { ensureTenantForCompany, getTenantAI } = await import('../lib/tenant-ai');
+    const { db: dbInstance } = await import('../lib/db');
+    const { companies: companiesTable } = await import('@1person/core/db');
+    const { eq: eqFn } = await import('drizzle-orm');
+
+    const company = await dbInstance.query.companies.findFirst({
+      where: eqFn(companiesTable.id, companyId),
+      columns: { id: true, name: true },
+    });
+    if (!company) return;
+
+    const tenantId = await ensureTenantForCompany(company.id, company.name);
+    const ai = getTenantAI();
+
+    const append = async (lesson: string, category: 'insight' | 'win' | 'fail') => {
+      await ai.brain.appendLearning(
+        tenantId,
+        {
+          lesson,
+          category,
+          metricSnapshot: {
+            source: 'meeting',
+            meetingId,
+            meetingTitle,
+            recordedAt: new Date().toISOString(),
+          },
+        },
+        `system:meeting-extract`,
+      );
+    };
+
+    const marketInsights: string[] = Array.isArray(insights.marketInsights)
+      ? insights.marketInsights.slice(0, 10)
+      : [];
+    const salesObjections: string[] = Array.isArray(insights.salesObjections)
+      ? insights.salesObjections.slice(0, 10)
+      : [];
+    const strategies: string[] = Array.isArray(insights.strategies)
+      ? insights.strategies.slice(0, 10)
+      : [];
+
+    for (const m of marketInsights) {
+      if (typeof m === 'string' && m.trim().length > 3) {
+        await append(`[Market] ${m.trim()}`, 'insight');
+      }
+    }
+    for (const o of salesObjections) {
+      if (typeof o === 'string' && o.trim().length > 3) {
+        await append(`[Objection] ${o.trim()}`, 'fail');
+      }
+    }
+    for (const s of strategies) {
+      if (typeof s === 'string' && s.trim().length > 3) {
+        const lower = s.toLowerCase();
+        const category: 'win' | 'insight' =
+          lower.includes('worked') || lower.includes('succeeded') || lower.includes('winning')
+            ? 'win'
+            : 'insight';
+        await append(`[Strategy] ${s.trim()}`, category);
+      }
+    }
+  } catch (err) {
+    console.warn('[meetings] extractMeetingBrainLearnings failed:', err);
+  }
 }
 
 export default meetingsRouter;

@@ -114,13 +114,20 @@ export async function generateEmbedding(
     throw new Error('Embedding service URL is not configured. Please set up your embedding provider.');
   }
 
-  const url = `${config.baseUrl.replace(/\/$/, '')}/v1/embeddings`;
+  // Convention: baseUrl already includes the API version suffix
+  // (e.g. https://api.openai.com/v1). Matches the LLM path builder below.
+  const url = `${config.baseUrl.replace(/\/$/, '')}/embeddings`;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (config.apiKey) {
+    headers['Authorization'] = `Bearer ${config.apiKey}`;
+  }
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({
       model: config.model,
       input: text,
@@ -155,13 +162,18 @@ export async function generateEmbeddingsBatch(
     throw new Error('Embedding service URL is not configured.');
   }
 
-  const url = `${config.baseUrl.replace(/\/$/, '')}/v1/embeddings`;
+  const url = `${config.baseUrl.replace(/\/$/, '')}/embeddings`;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.apiKey) {
+    headers['Authorization'] = `Bearer ${config.apiKey}`;
+  }
 
   try {
     // Try batch request first
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         model: config.model,
         input: texts,

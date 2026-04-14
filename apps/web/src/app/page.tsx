@@ -20,6 +20,16 @@ import {
   Wallet,
   Globe,
   ChevronDown,
+  Brain,
+  Eye,
+  Rocket,
+  Check,
+  X,
+  Server,
+  Download,
+  Gem,
+  Zap as ZapIcon,
+  Star as StarIcon,
 } from 'lucide-react';
 import { type Locale, locales, localeNames, localeFlags, getTranslations } from '@/lib/i18n';
 
@@ -151,25 +161,31 @@ export default function LandingPage() {
                 <span className="text-sm text-muted-foreground ml-2">{tx.preview_title}</span>
               </div>
               <div className="p-8 bg-gradient-to-br from-muted/30 to-muted/10 min-h-[400px] flex items-center justify-center">
-                <div className="grid grid-cols-3 gap-6 w-full max-w-3xl">
+                <div className="w-full max-w-2xl space-y-3">
                   {[
-                    { name: tx.preview_agent_1, status: tx.preview_active, icon: '👔', color: 'purple' },
-                    { name: tx.preview_agent_2, status: tx.preview_active, icon: '📈', color: 'blue' },
-                    { name: tx.preview_agent_3, status: tx.preview_working, icon: '✍️', color: 'green' },
-                  ].map((agent, i) => (
+                    { name: tx.preview_agent_1, status: tx.preview_active, done: true, icon: Brain },
+                    { name: tx.preview_agent_2, status: tx.preview_active, done: true, icon: Sparkles },
+                    { name: tx.preview_agent_3, status: tx.preview_working, done: false, icon: Zap },
+                  ].map((step, i) => (
                     <motion.div
                       key={i}
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: 0.5 + i * 0.1 }}
-                      className="bg-card rounded-xl p-4 border shadow-sm"
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.5 + i * 0.15 }}
+                      className="bg-card rounded-xl p-4 border shadow-sm flex items-center gap-4"
                     >
-                      <div className="text-3xl mb-3">{agent.icon}</div>
-                      <h3 className="font-semibold">{agent.name}</h3>
-                      <div className="flex items-center gap-2 mt-2">
-                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                        <span className="text-sm text-muted-foreground">{agent.status}</span>
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                        step.done ? 'bg-green-100 text-green-600' : 'bg-indigo-100 text-indigo-600'
+                      }`}>
+                        {step.done ? <Check className="w-5 h-5" /> : <step.icon className="w-5 h-5 animate-pulse" />}
                       </div>
+                      <div className="flex-1 text-left">
+                        <h3 className="font-semibold text-sm">{i + 1}. {step.name}</h3>
+                        <p className="text-xs text-muted-foreground">{step.status}</p>
+                      </div>
+                      {!step.done && (
+                        <div className="w-5 h-5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+                      )}
                     </motion.div>
                   ))}
                 </div>
@@ -193,12 +209,12 @@ export default function LandingPage() {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
             {[
-              { icon: Bot, title: tx.feat_agents_title, description: tx.feat_agents_desc },
-              { icon: Zap, title: tx.feat_commands_title, description: tx.feat_commands_desc },
-              { icon: LineChart, title: tx.feat_analytics_title, description: tx.feat_analytics_desc },
-              { icon: Shield, title: tx.feat_budget_title, description: tx.feat_budget_desc },
-              { icon: Sparkles, title: tx.feat_improve_title, description: tx.feat_improve_desc },
-              { icon: Play, title: tx.feat_setup_title, description: tx.feat_setup_desc },
+              { icon: Brain, title: tx.feat_agents_title, description: tx.feat_agents_desc },
+              { icon: Eye, title: tx.feat_commands_title, description: tx.feat_commands_desc },
+              { icon: ShieldCheck, title: tx.feat_analytics_title, description: tx.feat_analytics_desc },
+              { icon: Server, title: tx.feat_budget_title, description: tx.feat_budget_desc },
+              { icon: Rocket, title: tx.feat_improve_title, description: tx.feat_improve_desc },
+              { icon: Zap, title: tx.feat_setup_title, description: tx.feat_setup_desc },
             ].map((feature, i) => (
               <motion.div
                 key={i}
@@ -219,8 +235,166 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Comparison — Why not just use generic AI? (post Managed Agents launch) */}
+      <section id="compare" className="py-20 px-6">
+        <div className="container mx-auto max-w-5xl">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">
+              {tx.compare_title}
+            </h2>
+            <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
+              {tx.compare_desc}
+            </p>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+            <div className="grid grid-cols-[1.5fr_1fr_1fr] text-sm">
+              {/* Header */}
+              <div className="px-5 py-4 bg-muted/50 font-semibold"></div>
+              <div className="px-5 py-4 bg-muted/50 font-semibold text-center text-muted-foreground border-l">
+                {tx.compare_col_generic}
+              </div>
+              <div className="px-5 py-4 bg-primary/10 font-semibold text-center text-primary border-l">
+                {tx.compare_col_us}
+              </div>
+
+              {/* Rows */}
+              {[
+                { label: tx.compare_row1, generic: tx.compare_row1_generic, us: tx.compare_row1_us },
+                { label: tx.compare_row2, generic: tx.compare_row2_generic, us: tx.compare_row2_us },
+                { label: tx.compare_row3, generic: tx.compare_row3_generic, us: tx.compare_row3_us },
+                { label: tx.compare_row4, generic: tx.compare_row4_generic, us: tx.compare_row4_us },
+                { label: tx.compare_row5, generic: tx.compare_row5_generic, us: tx.compare_row5_us },
+                { label: tx.compare_row6, generic: tx.compare_row6_generic, us: tx.compare_row6_us },
+                { label: tx.compare_row7, generic: tx.compare_row7_generic, us: tx.compare_row7_us },
+              ].map((row, i) => (
+                <div key={i} className="contents">
+                  <div className="px-5 py-4 border-t font-medium">
+                    {row.label}
+                  </div>
+                  <div className="px-5 py-4 border-t border-l text-muted-foreground flex items-start gap-2">
+                    <X className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                    <span>{row.generic}</span>
+                  </div>
+                  <div className="px-5 py-4 border-t border-l bg-primary/[0.02] flex items-start gap-2">
+                    <Check className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
+                    <span className="font-medium">{row.us}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <p className="text-center text-sm text-muted-foreground mt-6 max-w-2xl mx-auto">
+            Claude and ChatGPT are incredible models. We use them too — and we let you bring your own key.
+            The difference is everything we&apos;ve built <em>around</em> the model.
+          </p>
+        </div>
+      </section>
+
+      {/* Credits Explainer Section */}
+      <section id="credits" className="py-20 px-6 bg-gradient-to-b from-background via-primary/5 to-background">
+        <div className="container mx-auto max-w-5xl">
+          <div className="text-center mb-12">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-4">
+              <Gem className="w-4 h-4" />
+              <span>Credits</span>
+            </div>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">
+              {tx.credits_section_title}
+            </h2>
+            <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
+              {tx.credits_section_subtitle}
+            </p>
+          </div>
+
+          {/* Quality tier cards */}
+          <div className="grid sm:grid-cols-3 gap-4 mb-12 max-w-3xl mx-auto">
+            {[
+              {
+                icon: ZapIcon,
+                title: tx.credits_tier_fast,
+                desc: tx.credits_tier_fast_desc,
+                cost: `~1 ${tx.credits_label_credit}`,
+                color: 'text-blue-500',
+                bg: 'bg-blue-500/10',
+              },
+              {
+                icon: StarIcon,
+                title: tx.credits_tier_balanced,
+                desc: tx.credits_tier_balanced_desc,
+                cost: `~3 ${tx.credits_label_credits}`,
+                color: 'text-amber-500',
+                bg: 'bg-amber-500/10',
+              },
+              {
+                icon: Gem,
+                title: tx.credits_tier_premium,
+                desc: tx.credits_tier_premium_desc,
+                cost: `~10 ${tx.credits_label_credits}`,
+                color: 'text-purple-500',
+                bg: 'bg-purple-500/10',
+              },
+            ].map((tier, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.1 }}
+                viewport={{ once: true }}
+                className="bg-card rounded-2xl p-6 border text-center hover:shadow-lg transition-shadow"
+              >
+                <div className={`w-12 h-12 rounded-xl ${tier.bg} flex items-center justify-center mb-4 mx-auto`}>
+                  <tier.icon className={`w-6 h-6 ${tier.color}`} />
+                </div>
+                <h3 className="text-lg font-semibold mb-1">{tier.title}</h3>
+                <div className="text-2xl font-bold gradient-text mb-2">{tier.cost}</div>
+                <p className="text-sm text-muted-foreground">{tier.desc}</p>
+              </motion.div>
+            ))}
+          </div>
+
+          {/* Examples table */}
+          <div className="bg-card rounded-2xl border overflow-hidden max-w-2xl mx-auto mb-8">
+            <div className="px-6 py-4 bg-muted/40 border-b">
+              <h3 className="font-semibold">{tx.credits_examples_title}</h3>
+            </div>
+            <div className="divide-y">
+              {[
+                { label: tx.credits_example_banner, cost: `3 ${tx.credits_label_credits}` },
+                { label: tx.credits_example_social, cost: `2 ${tx.credits_label_credits}` },
+                { label: tx.credits_example_seo, cost: `8 ${tx.credits_label_credits}` },
+                { label: tx.credits_example_campaign, cost: `50 ${tx.credits_label_credits}` },
+                { label: tx.credits_example_dashboard, cost: tx.credits_label_free },
+                { label: tx.credits_example_export, cost: tx.credits_label_free },
+              ].map((row, i) => (
+                <div key={i} className="px-6 py-3 flex items-center justify-between text-sm">
+                  <span className="font-medium">{row.label}</span>
+                  <span className={`font-mono ${row.cost === tx.credits_label_free ? 'text-green-600' : 'text-primary'}`}>
+                    {row.cost}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <p className="text-center text-sm text-muted-foreground max-w-2xl mx-auto mb-8">
+            {tx.credits_section_footnote}
+          </p>
+
+          <div className="text-center">
+            <Link href="/pricing">
+              <Button size="lg" variant="gradient" className="gap-2">
+                {tx.credits_section_cta}
+                <ArrowRight className="w-4 h-4" />
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* Security & Trust Section */}
-      <section id="security" className="py-20 px-6">
+      <section id="security" className="py-20 px-6 bg-muted/30">
         <div className="container mx-auto max-w-6xl">
           <div className="text-center mb-16">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-green-500/10 text-green-600 text-sm font-medium mb-4">
@@ -284,7 +458,7 @@ export default function LandingPage() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 px-6 bg-muted/30">
+      <section className="py-20 px-6">
         <div className="container mx-auto max-w-4xl text-center">
           <h2 className="text-3xl md:text-4xl font-bold mb-4">
             {tx.cta_title}

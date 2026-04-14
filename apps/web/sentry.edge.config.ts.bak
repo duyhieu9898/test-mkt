@@ -1,0 +1,14 @@
+/**
+ * Sentry edge config (P0-D3) — loaded by @sentry/nextjs on edge runtime.
+ */
+import * as Sentry from '@sentry/nextjs';
+
+const dsn = process.env.SENTRY_DSN;
+
+if (dsn) {
+  Sentry.init({
+    dsn,
+    environment: process.env.SENTRY_ENVIRONMENT || 'development',
+    tracesSampleRate: 0.1,
+  });
+}

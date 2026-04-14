@@ -9,6 +9,8 @@ export interface User {
   name: string;
   avatarUrl?: string;
   onboardingCompleted: boolean;
+  /** User role for admin gating (e.g. 'admin' | 'user') */
+  role?: string;
   createdAt: string;
 }
 
@@ -2888,5 +2890,137 @@ export const useGrowthOptimizationLoop = (companyId: string) => {
     },
     enabled: !!token && !!companyId,
     refetchInterval: 20000,
+  });
+};
+
+// ============================================
+// GAMIFICATION — CEO Motivation Engine
+// ============================================
+
+export type ScoreTrend = 'up' | 'down' | 'stable';
+
+export interface SubScore {
+  score: number;
+  breakdown: Record<string, number>;
+  trend: ScoreTrend;
+}
+
+export interface GrowthScoreData {
+  overall: number;
+  subscores: {
+    marketing: SubScore;
+    seo: SubScore;
+    automation: SubScore;
+    revenue: SubScore;
+  };
+  previousOverall: number | null;
+  level: number;
+  computedAt: string;
+}
+
+export interface MissionItem {
+  id: string;
+  title: string;
+  why: string;
+  impact: string;
+  category: 'growth' | 'automation' | 'content' | 'revenue' | 'optimization';
+  link: string;
+  status: 'pending' | 'completed' | 'skipped';
+  completedAt: string | null;
+}
+
+export interface MissionsData {
+  id: string;
+  date: string;
+  missions: MissionItem[];
+  completedCount: number;
+  totalCount: number;
+}
+
+export interface StreakData {
+  currentStreak: number;
+  longestStreak: number;
+  lastActiveDate: string | null;
+  totalMissionsCompleted: number;
+}
+
+export const useGrowthScore = (companyId: string) => {
+  const token = useAuthStore((s) => s.token);
+  return useQuery({
+    queryKey: ['gamification', 'growth-score', companyId],
+    queryFn: async () => {
+      const result = await api.get<{ success: boolean; data: GrowthScoreData }>(
+        `/gamification/${companyId}/growth-score`,
+        { token: token! }
+      );
+      return result.data;
+    },
+    enabled: !!token && !!companyId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+};
+
+export const useDailyMissions = (companyId: string) => {
+  const token = useAuthStore((s) => s.token);
+  return useQuery({
+    queryKey: ['gamification', 'missions', companyId],
+    queryFn: async () => {
+      const result = await api.get<{ success: boolean; data: MissionsData }>(
+        `/gamification/${companyId}/missions`,
+        { token: token! }
+      );
+      return result.data;
+    },
+    enabled: !!token && !!companyId,
+  });
+};
+
+export const useStreak = (companyId: string) => {
+  const token = useAuthStore((s) => s.token);
+  return useQuery({
+    queryKey: ['gamification', 'streak', companyId],
+    queryFn: async () => {
+      const result = await api.get<{ success: boolean; data: StreakData }>(
+        `/gamification/${companyId}/streak`,
+        { token: token! }
+      );
+      return result.data;
+    },
+    enabled: !!token && !!companyId,
+  });
+};
+
+export const useCompleteMission = (companyId: string) => {
+  const token = useAuthStore((s) => s.token);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (missionId: string) => {
+      return api.post<{ success: boolean; data: { mission: MissionItem; streak: StreakData } }>(
+        `/gamification/${companyId}/missions/${missionId}/complete`,
+        undefined,
+        { token: token! }
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['gamification', 'missions', companyId] });
+      queryClient.invalidateQueries({ queryKey: ['gamification', 'streak', companyId] });
+    },
+  });
+};
+
+export const useSkipMission = (companyId: string) => {
+  const token = useAuthStore((s) => s.token);
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (missionId: string) => {
+      return api.post<{ success: boolean; data: { mission: MissionItem } }>(
+        `/gamification/${companyId}/missions/${missionId}/skip`,
+        undefined,
+        { token: token! }
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['gamification', 'missions', companyId] });
+    },
   });
 };

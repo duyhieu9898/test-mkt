@@ -1,0 +1,267 @@
+# =============================================================================
+# 1Person — On-Premise Reference Deployment (P0-A3)
+# =============================================================================
+# This docker-compose file is the reference deployment for customers who
+# want to run 1Person fully on their own hardware. Nothing in this stack
+# sends data to external LLM providers — everything stays on the host
+# network.
+#
+# What customers get:
+#   - Postgres 16 with pgvector (trust data store)
+#   - Redis 7 (queue + cache)
+#   - Langfuse self-hosted (LLM observability)
+#   - vLLM serving an open-weights LLM (Qwen / Llama / Mistral)
+#   - 1Person API + Web (built from the main repo)
+#
+# What they DO NOT need:
+#   - OpenAI API key
+#   - Anthropic API key
+#   - Gemini API key
+#   - Any outbound connection to *.anthropic.com, *.openai.com, etc.
+#
+# Deployment steps:
+#   1. Clone the 1Person monorepo to the host
+#   2. Copy .env.on-premise.example → .env and fill in host-specific values
+#   3. Ensure the host has an NVIDIA GPU with CUDA drivers (for vLLM)
+#   4. docker compose -f infrastructure/docker/on-premise.yml up -d
+#   5. Run the migration:
+#      docker compose -f infrastructure/docker/on-premise.yml exec api \
+#        pnpm --filter @1person/ai-tenant db:migrate
+#   6. Create the first admin user:
+#      docker compose -f infrastructure/docker/on-premise.yml exec api \
+#        pnpm --filter @1person/api seed:admin
+#   7. Open https://1person.local (configure reverse proxy below)
+#
+# Compliance audit prep:
+#   - Every inbound/outbound network connection stays inside the docker
+#     network `onpremise` — no bridge to host except the reverse proxy.
+#   - The Postgres volume is encrypted at the filesystem level if LUKS/
+#     dm-crypt is mounted at /var/lib/1person-postgres.
+#   - The audit chain (trustai_audit_log) is tamper-evident: tampering
+#     with a single row breaks the hash chain, verifiable via the
+#     /api/v1/tenant-ai/public/proof/:id/verify endpoint.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Postgres 16 + pgvector — customer-controlled data store
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: 1person-onprem-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: oneperson
+      # Extra databases for Langfuse (same instance, separate DB)
+      POSTGRES_INITDB_ARGS: "-c listen_addresses='*'"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+    networks:
+      - onpremise
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # No port exposure to host — only the API container talks to Postgres
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 — BullMQ queue + rate-limit buckets
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: 1person-onprem-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - onpremise
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Langfuse — self-hosted LLM observability (W0.3 / ADR-01)
+  # ---------------------------------------------------------------------------
+  # Gives operators the "Why this output?" drill-down, entirely on-prem.
+  # Shares the Postgres instance with a separate `langfuse` database.
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: 1person-onprem-langfuse
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?LANGFUSE_NEXTAUTH_SECRET is required}
+      SALT: ${LANGFUSE_SALT:?LANGFUSE_SALT is required}
+      NEXTAUTH_URL: ${LANGFUSE_PUBLIC_URL:-http://localhost:5050}
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: 1person-onprem
+      LANGFUSE_INIT_ORG_NAME: 1Person On-Premise
+      LANGFUSE_INIT_PROJECT_ID: 1person-main
+      LANGFUSE_INIT_PROJECT_NAME: 1Person Main
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${ADMIN_EMAIL:-admin@1person.local}
+      LANGFUSE_INIT_USER_NAME: Admin
+      LANGFUSE_INIT_USER_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+    networks:
+      - onpremise
+
+  # ---------------------------------------------------------------------------
+  # vLLM — serves an open-weights LLM on customer's GPU
+  # ---------------------------------------------------------------------------
+  # Default: Qwen 2 7B Instruct. Swap VLLM_MODEL env var to use Llama 3.1,
+  # Mistral, etc. Needs NVIDIA GPU + nvidia-container-toolkit on the host.
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: 1person-onprem-vllm
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+    command:
+      - --model
+      - ${VLLM_MODEL:-Qwen/Qwen2-7B-Instruct}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --max-model-len
+      - "8192"
+    volumes:
+      - vllm_cache:/root/.cache/huggingface
+    networks:
+      - onpremise
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # ---------------------------------------------------------------------------
+  # 1Person API — built from monorepo
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/api.Dockerfile
+    container_name: 1person-onprem-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vllm:
+        condition: service_healthy
+      langfuse:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      API_PORT: "8004"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/oneperson
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@1person.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3004}
+
+      # Force on-premise LLM routing — no cloud provider keys set
+      LLM_PROVIDER: openai
+      LLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen2-7B-Instruct}
+      OPENAI_API_KEY: on-prem-dummy
+      OPENAI_BASE_URL: http://vllm:8000/v1
+
+      # BYO key encryption master (MUST be set, MUST be unique per deployment)
+      TRUSTAI_KEY_ENCRYPTION_KEY: ${TRUSTAI_KEY_ENCRYPTION_KEY:?TRUSTAI_KEY_ENCRYPTION_KEY is required}
+
+      # Langfuse pointing at the on-prem container
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_BASE_URL: http://langfuse:3000
+
+      # Sentry optional — only if customer wants to self-host GlitchTip
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: on-premise
+    volumes:
+      - tenant_data:/deploy/tenant-data
+    networks:
+      - onpremise
+
+  # ---------------------------------------------------------------------------
+  # 1Person Web — built from monorepo
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/web.Dockerfile
+    container_name: 1person-onprem-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8004/api/v1}
+      NEXT_PUBLIC_SITE_URL: ${PUBLIC_WEB_URL:-http://localhost:3004}
+    networks:
+      - onpremise
+
+  # ---------------------------------------------------------------------------
+  # Caddy reverse proxy — terminates TLS and routes /api/* to api, else web
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: 1person-onprem-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+      - web
+      - langfuse
+    ports:
+      - "80:80"
+      - "443:443"
+      - "5050:5050" # Langfuse UI — optional, restrict via firewall if needed
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - onpremise
+
+networks:
+  onpremise:
+    driver: bridge
+    # No external network access from this bridge. Customer's firewall
+    # decides what can egress. For strictest isolation, set up a
+    # separate egress-blocked iptables rule for the docker bridge.
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  vllm_cache:
+    driver: local
+  tenant_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local

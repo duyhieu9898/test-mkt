@@ -1,0 +1,49 @@
+# Caddy config for 1Person on-premise reference deployment.
+# Terminates TLS and reverse-proxies to the API + Web containers.
+# For production, replace :80 / :443 with your actual domain.
+
+{
+	# Global options
+	# email your-admin@company.com  # Uncomment for automatic Let's Encrypt
+	admin off
+}
+
+# Main site (replace `1person.local` with your domain)
+:80, :443 {
+	# API routes
+	handle /api/* {
+		reverse_proxy api:8004
+	}
+
+	# Langfuse UI — mount at /langfuse (optional — restrict via header auth for prod)
+	handle /langfuse/* {
+		uri strip_prefix /langfuse
+		reverse_proxy langfuse:3000
+	}
+
+	# Static tenant files (banner images, document exports, etc)
+	handle /tenant-files/* {
+		reverse_proxy api:8004
+	}
+
+	# Everything else → Next.js web
+	handle {
+		reverse_proxy web:3004
+	}
+
+	# Security headers
+	header {
+		# Tamper-evident audit is the real trust — but these headers help.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Don't leak server version
+		-Server
+	}
+}
+
+# Langfuse direct port (optional — disable if you only want /langfuse prefix)
+:5050 {
+	reverse_proxy langfuse:3000
+}

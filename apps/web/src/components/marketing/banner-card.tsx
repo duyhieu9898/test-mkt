@@ -8,8 +8,9 @@ import { Input } from '@/components/ui/input';
 import {
   Download, Edit3, RefreshCw, CheckCircle2, X, Save, Lightbulb,
   Image as ImageIcon, Palette, Type, Layout, Maximize2, Minimize2, Copy,
-  ShieldCheck, AlertTriangle, XCircle, ChevronDown, ChevronUp,
+  ShieldCheck, AlertTriangle, XCircle, ChevronDown, ChevronUp, HelpCircle,
 } from 'lucide-react';
+import { WhyThisOutputDialog } from './why-this-output';
 
 // ============================================================================
 // TYPES
@@ -49,6 +50,7 @@ interface QualityReport {
 
 interface BannerData {
   id: string;
+  companyId: string;
   name: string;
   size: string;
   status: string;
@@ -143,6 +145,8 @@ export function BannerCard({ banner, onApprove, onRegenerate, onUpdateBanner, on
   const [isGeneratingBg, setIsGeneratingBg] = useState(false);
   const [showQualityDetails, setShowQualityDetails] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [explainOpen, setExplainOpen] = useState(false);
+  const companyId = banner.companyId;
   const [editCopy, setEditCopy] = useState(banner.copy);
   const [editDesign, setEditDesign] = useState<BannerDesign>(banner.design || defaultDesign);
   const bannerRef = useRef<HTMLDivElement>(null);
@@ -592,6 +596,15 @@ export function BannerCard({ banner, onApprove, onRegenerate, onUpdateBanner, on
                     {isExporting ? 'Exporting...' : 'All Sizes'}
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1 text-indigo-600 hover:text-indigo-700 border-indigo-200"
+                  onClick={() => setExplainOpen(true)}
+                  title="See which model, tier, and Business Brain sources shaped this banner"
+                >
+                  <HelpCircle className="w-3 h-3" /> Why?
+                </Button>
                 {banner.status === 'draft' && onApprove && (
                   <Button size="sm" className="h-7 text-xs gap-1 bg-green-600 hover:bg-green-700" onClick={() => onApprove(banner.id)}>
                     <CheckCircle2 className="w-3 h-3" /> Use
@@ -627,6 +640,17 @@ export function BannerCard({ banner, onApprove, onRegenerate, onUpdateBanner, on
           </div>
         </div>
       )}
+
+      {/* "Why this output?" explainability panel */}
+      <WhyThisOutputDialog
+        open={explainOpen}
+        onClose={() => setExplainOpen(false)}
+        fetchUrl={
+          explainOpen
+            ? `/marketing/company/${companyId}/banners/${banner.id}/explain`
+            : null
+        }
+      />
     </>
   );
 }

@@ -12,7 +12,7 @@ import companiesRouter from './routes/companies';
 import agentsRouter from './routes/agents';
 import tasksRouter from './routes/tasks';
 import commandsRouter from './routes/commands';
-import strategyRouter from './routes/strategy';
+// strategyRouter deleted — OKR surface retired in doc 10 IA restructure
 import inboxRouter from './routes/inbox';
 import budgetRouter from './routes/budget';
 import auditRouter from './routes/audit';
@@ -48,9 +48,26 @@ import chatbotRouter from './routes/chatbot';
 import meetingsRouter from './routes/meetings';
 import leadsRouter from './routes/leads';
 import tenantAIRouter from './routes/tenant-ai';
+import campaignsRouter from './routes/campaigns';
+import brainRouter from './routes/brain';
 import seoEngineRouter from './routes/seo-engine';
 import blogRouter from './routes/blog';
 import adminRouter from './routes/admin';
+import billingRouter from './routes/billing';
+import exportRouter from './routes/export';
+import deploymentModeRouter from './routes/deployment-mode';
+import adminConfigRouter from './routes/admin-config';
+import adminPublishRouter from './routes/admin-publish';
+import creditsRouter from './routes/credits';
+import adminCreditsRouter from './routes/admin-credits';
+import insightsRouter from './routes/insights';
+import imageProvidersRouter from './routes/image-providers';
+import marketRouter from './routes/market';
+import salesRouter from './routes/sales';
+import channelsRouter from './routes/channels';
+import webhooksRouter from './routes/webhooks';
+import socialRouter from './routes/social';
+import gamificationRouter from './routes/gamification';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -120,6 +137,9 @@ app.get('/pages/:companyId/:slug', async (c) => {
   return c.html(html);
 });
 
+// Public webhooks (no auth — platforms call these directly)
+app.route('/webhooks', webhooksRouter);
+
 // API routes
 const api = new Hono();
 api.route('/auth', authRouter);
@@ -127,7 +147,7 @@ api.route('/companies', companiesRouter);
 api.route('/agents', agentsRouter);
 api.route('/tasks', tasksRouter);
 api.route('/commands', commandsRouter);
-api.route('/strategy', strategyRouter);
+// /strategy route removed — see docs/architecture/10-venture-ceo-ia.md
 api.route('/inbox', inboxRouter);
 api.route('/budget', budgetRouter);
 api.route('/audit', auditRouter);
@@ -163,9 +183,25 @@ api.route('/chatbot', chatbotRouter);
 api.route('/meetings', meetingsRouter);
 api.route('/leads', leadsRouter);
 api.route('/tenant-ai', tenantAIRouter);
+api.route('/campaigns', campaignsRouter);
+api.route('/brain', brainRouter);
 api.route('/seo-engine', seoEngineRouter);
 api.route('/blog', blogRouter);
 api.route('/admin', adminRouter);
+api.route('/billing', billingRouter);
+api.route('/export', exportRouter);
+api.route('/deployment-mode', deploymentModeRouter);
+api.route('/admin/config', adminConfigRouter);
+api.route('/admin/publish', adminPublishRouter);
+api.route('/credits', creditsRouter);
+api.route('/image-providers', imageProvidersRouter);
+api.route('/market', marketRouter);
+api.route('/admin/credits', adminCreditsRouter);
+api.route('/insights', insightsRouter);
+api.route('/sales', salesRouter);
+api.route('/channels', channelsRouter);
+api.route('/social', socialRouter);
+api.route('/gamification', gamificationRouter);
 
 // Mount API
 app.route('/api/v1', api);

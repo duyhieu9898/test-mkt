@@ -69,6 +69,7 @@ import {
   type LandingPage,
 } from '@/lib/api/hooks';
 import { PublishDialog } from '@/components/landing-pages/publish-dialog';
+import { MarketingTabs } from '@/components/marketing/marketing-tabs';
 
 const statusConfig: Record<
   string,
@@ -238,7 +239,8 @@ export default function LandingPagesPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-6xl mx-auto">
+      <MarketingTabs />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

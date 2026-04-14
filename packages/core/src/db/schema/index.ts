@@ -56,3 +56,6 @@ export * from './assets';
 
 // Site Config (CMS)
 export * from './site-config';
+
+// Gamification (CEO Motivation Engine)
+export * from './gamification';

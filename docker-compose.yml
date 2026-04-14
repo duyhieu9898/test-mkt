@@ -57,8 +57,57 @@ services:
       MEILI_ENV: development
       MEILI_NO_ANALYTICS: true
 
+  # Langfuse — self-hosted LLM observability for W0.3 / ADR-01.
+  # Powers the "Why this output?" trace drill-down in docs 06 §6b.
+  # Uses the same postgres instance as the main app (separate schema).
+  # Port 5050 (5000 is taken by macOS ControlCenter / AirPlay Receiver).
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: 1person-langfuse
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5050:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
+      NEXTAUTH_SECRET: langfuse-dev-secret-change-in-production
+      SALT: langfuse-dev-salt-change-in-production
+      NEXTAUTH_URL: http://localhost:5050
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: 1person
+      LANGFUSE_INIT_ORG_NAME: 1Person
+      LANGFUSE_INIT_PROJECT_ID: 1person-main
+      LANGFUSE_INIT_PROJECT_NAME: 1Person Main
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-dev-1person
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-dev-1person
+      LANGFUSE_INIT_USER_EMAIL: admin@1person.ai
+      LANGFUSE_INIT_USER_NAME: Admin
+      LANGFUSE_INIT_USER_PASSWORD: Admin@1Person2025
+
+  # faster-whisper-server — open-source Whisper transcription
+  # (doc 10 §7). Exposes an OpenAI-compatible /v1/audio/transcriptions
+  # endpoint so apps/api can swap OpenAI Whisper for a zero-cost local
+  # alternative. Default model is "Systran/faster-whisper-small" which
+  # runs on CPU on any modern laptop. Admins pick "Local" or
+  # "OpenAI Whisper" from the LLM Config screen — no code change.
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: 1person-whisper
+    restart: unless-stopped
+    ports:
+      - "8005:8000"
+    environment:
+      WHISPER__MODEL: Systran/faster-whisper-small
+      WHISPER__INFERENCE_DEVICE: cpu
+      ENABLE_UI: "false"
+    volumes:
+      - whisper_models:/root/.cache/huggingface
+
 volumes:
   postgres_data:
   redis_data:
   qdrant_data:
   meilisearch_data:
+  whisper_models:

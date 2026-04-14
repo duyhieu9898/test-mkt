@@ -14,15 +14,20 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
   Brain, Upload, Globe, FileText, Loader2, CheckCircle2, XCircle,
   Search, Plus, Trash2, Eye, BookOpen, MessageSquare, Sparkles,
-  File, Zap, Target, HelpCircle,
+  File, Zap, Target, HelpCircle, Lock, Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { TrustBanner } from '@/components/trust-banner';
 import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { friendlyError } from '@/lib/friendly-errors';
+import { KnowledgeTabs } from '@/components/knowledge/knowledge-tabs';
 
 export default function KnowledgePage() {
   const params = useParams();
@@ -68,7 +73,7 @@ export default function KnowledgePage() {
     // Client-side file size check
     const MAX_SIZE = 10 * 1024 * 1024; // 10MB
     if (file.size > MAX_SIZE) {
-      toast.error(`File too large (${Math.round(file.size / 1024 / 1024)}MB). Maximum is 10MB.`);
+      toast.error(`That file is too big (${Math.round(file.size / 1024 / 1024)} MB). Please upload a file under 10 MB.`);
       return;
     }
 
@@ -83,7 +88,12 @@ export default function KnowledgePage() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.error || `Upload failed (${res.status})`);
+        toast.error(
+          friendlyError(
+            new Error(err.error?.message || err.error || err.message || String(res.status)),
+            "We couldn't upload that file. Please try again.",
+          ),
+        );
         return;
       }
 
@@ -94,7 +104,9 @@ export default function KnowledgePage() {
         toast.success(`AI is reading "${file.name}"...`);
       }
       invalidate();
-    } catch { toast.error('Upload failed — check your connection'); }
+    } catch (err) {
+      toast.error(friendlyError(err, "We couldn't reach the server. Check your connection and try again."));
+    }
     finally { setIsUploading(false); }
   };
 
@@ -110,7 +122,9 @@ export default function KnowledgePage() {
         toast.success('AI is reading this website...');
       }
       setUrlInput(''); setAddUrlDialog(false); invalidate();
-    } catch { toast.error('Failed'); }
+    } catch (err) {
+      toast.error(friendlyError(err, "We couldn't read that website. Double-check the URL and try again."));
+    }
     finally { setIsAddingUrl(false); }
   };
 
@@ -120,7 +134,9 @@ export default function KnowledgePage() {
       await api.post(`/knowledge/company/${companyId}/add-text`, { title: textTitle, content: textContent }, { token });
       toast.success('Knowledge added — AI is now smarter!');
       setTextTitle(''); setTextContent(''); setAddTextDialog(false); invalidate();
-    } catch { toast.error('Failed'); }
+    } catch (err) {
+      toast.error(friendlyError(err, "We couldn't save that knowledge. Please try again."));
+    }
   };
 
   const handleApprove = async (docId: string) => {
@@ -129,13 +145,30 @@ export default function KnowledgePage() {
       const r = await api.patch<{ knowledgeEntriesSaved: number }>(`/knowledge/company/${companyId}/documents/${docId}/approve`, {}, { token });
       toast.success(`AI learned ${r.knowledgeEntriesSaved} new things!`);
       invalidate();
-    } catch { toast.error('Failed'); }
+    } catch (err) {
+      toast.error(friendlyError(err, "We couldn't approve that yet. Please try again."));
+    }
   };
 
   const handleDelete = async (docId: string) => {
     if (!token) return;
     await api.delete(`/knowledge/company/${companyId}/documents/${docId}`, { token });
     toast.success('Removed'); invalidate();
+  };
+
+  const handleVisibilityChange = async (docId: string, visibility: string) => {
+    if (!token) return;
+    try {
+      await api.patch(`/knowledge/company/${companyId}/documents/${docId}`, { visibility }, { token });
+      toast.success(
+        visibility === 'public' ? 'Document is now visible to website visitors' :
+        visibility === 'confidential' ? 'Document restricted to owner only' :
+        'Document visibility set to internal'
+      );
+      invalidate();
+    } catch (err) {
+      toast.error(friendlyError(err, "Could not update visibility. Please try again."));
+    }
   };
 
   // Generate summary from extracted entries
@@ -149,6 +182,7 @@ export default function KnowledgePage() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
+      <KnowledgeTabs />
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -160,7 +194,7 @@ export default function KnowledgePage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Card><CardContent className="pt-4 pb-4 flex items-center gap-3">
           <div className="p-2 bg-green-50 rounded-lg"><CheckCircle2 className="w-4 h-4 text-green-600" /></div>
           <div><p className="text-xl font-bold">{readyDocs.length}</p><p className="text-xs text-muted-foreground">Active Knowledge</p></div>
@@ -175,6 +209,26 @@ export default function KnowledgePage() {
         </CardContent></Card>
       </div>
 
+      {/* Visibility Summary */}
+      {documents.length > 0 && (() => {
+        const publicCount = documents.filter((d: any) => d.visibility === 'public').length;
+        const internalCount = documents.filter((d: any) => !d.visibility || d.visibility === 'internal').length;
+        const confidentialCount = documents.filter((d: any) => d.visibility === 'confidential').length;
+        return (
+          <Card>
+            <CardContent className="pt-4 pb-4">
+              <p className="text-sm font-medium mb-1">
+                Your knowledge: {documents.length} document{documents.length !== 1 ? 's' : ''} total
+                {' '}&middot; {publicCount} public &middot; {internalCount} internal &middot; {confidentialCount} confidential
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Only Public documents are used by the website chatbot widget.
+              </p>
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       {/* Data Protection Notice */}
       <TrustBanner variant="compact" />
 
@@ -187,17 +241,17 @@ export default function KnowledgePage() {
             <p className="text-sm text-muted-foreground mb-4">
               Upload documents, paste your website, or type what you know
             </p>
-            <div className="flex items-center justify-center gap-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
               <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.txt,.doc,.docx"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); }} />
-              <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="gap-2">
+              <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="gap-2 w-full sm:w-auto">
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                 Upload File
               </Button>
-              <Button variant="outline" className="gap-2" onClick={() => setAddUrlDialog(true)}>
+              <Button variant="outline" className="gap-2 w-full sm:w-auto" onClick={() => setAddUrlDialog(true)}>
                 <Globe className="w-4 h-4" /> Add Website
               </Button>
-              <Button variant="outline" className="gap-2" onClick={() => setAddTextDialog(true)}>
+              <Button variant="outline" className="gap-2 w-full sm:w-auto" onClick={() => setAddTextDialog(true)}>
                 <FileText className="w-4 h-4" /> Type Knowledge
               </Button>
             </div>
@@ -221,7 +275,10 @@ export default function KnowledgePage() {
 
       {/* Knowledge Cards */}
       {isLoading ? (
-        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+        <div className="space-y-3">
+          <div className="h-20 bg-slate-100 rounded-lg animate-pulse" />
+          <div className="h-20 bg-slate-100 rounded-lg animate-pulse" />
+        </div>
       ) : documents.length === 0 ? (
         /* Empty State */
         <Card className="p-12 text-center">
@@ -298,7 +355,7 @@ export default function KnowledgePage() {
                     </div>
 
                     {/* Actions */}
-                    <div className="flex gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1.5 shrink-0">
                       {summary && (
                         <Button size="sm" variant="ghost" className="gap-1 text-xs" onClick={() => setPreviewDoc(doc)}>
                           <Eye className="w-3 h-3" /> Preview
@@ -309,6 +366,35 @@ export default function KnowledgePage() {
                           <CheckCircle2 className="w-3 h-3" /> Approve
                         </Button>
                       )}
+                      <Select
+                        value={doc.visibility || 'internal'}
+                        onValueChange={(val) => handleVisibilityChange(doc.id, val)}
+                      >
+                        <SelectTrigger className={`w-[130px] h-8 text-xs ${
+                          (doc.visibility || 'internal') === 'public' ? 'text-green-700' :
+                          doc.visibility === 'confidential' ? 'text-red-700' :
+                          'text-slate-600'
+                        }`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="public">
+                            <span className="flex items-center gap-1.5 text-green-700">
+                              <Globe className="w-3 h-3" /> Public
+                            </span>
+                          </SelectItem>
+                          <SelectItem value="internal">
+                            <span className="flex items-center gap-1.5 text-slate-600">
+                              <Building2 className="w-3 h-3" /> Internal
+                            </span>
+                          </SelectItem>
+                          <SelectItem value="confidential">
+                            <span className="flex items-center gap-1.5 text-red-700">
+                              <Lock className="w-3 h-3" /> Confidential
+                            </span>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
                       <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => handleDelete(doc.id)}>
                         <Trash2 className="w-3 h-3" />
                       </Button>
@@ -324,11 +410,11 @@ export default function KnowledgePage() {
       {/* Knowledge Search */}
       {knowledgeEntries.length > 0 && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <h3 className="font-semibold flex items-center gap-2">
               <BookOpen className="w-4 h-4" /> What AI Knows
             </h3>
-            <div className="relative w-64">
+            <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search..." className="pl-9 h-8 text-sm" />
             </div>

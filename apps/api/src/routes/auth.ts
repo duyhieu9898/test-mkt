@@ -36,7 +36,10 @@ auth.post('/register', zValidator('json', registerSchema), async (c) => {
     throw new HTTPException(409, { message: 'Email already registered' });
   }
 
-  // Create user with pending approval
+  // Doc 10 walkthrough G6: auto-approve new signups so non-tech CEOs can
+  // test-drive without waiting. Set AUTO_APPROVE_SIGNUP=false in production
+  // to re-enable the admin gate for abuse control.
+  const autoApprove = process.env.AUTO_APPROVE_SIGNUP !== 'false';
   const passwordHash = await hashPassword(password);
   const [user] = await db
     .insert(users)
@@ -44,20 +47,49 @@ auth.post('/register', zValidator('json', registerSchema), async (c) => {
       email,
       passwordHash,
       name,
-      approvalStatus: 'pending',
+      approvalStatus: (autoApprove ? 'approved' : 'pending') as any,
+      isActive: true,
     })
     .returning();
+  if (!user) {
+    throw new HTTPException(500, { message: 'Failed to create account. Please try again.' });
+  }
 
-  // Don't create session — user must wait for admin approval
+  if (!autoApprove) {
+    return c.json({
+      success: true,
+      pendingApproval: true,
+      message: 'Registration successful! Your account is pending admin approval.',
+      user: { id: user.id, email: user.email, name: user.name },
+    });
+  }
+
+  // Auto-approve path — create a session immediately so the CEO lands
+  // in the FTUX flow right after clicking Register.
+  const accessToken = generateToken({ userId: user.id, email: user.email });
+  const refreshToken = generateRefreshToken({ userId: user.id, email: user.email });
+  await db.insert(sessions).values({
+    userId: user.id,
+    token: accessToken,
+    refreshToken,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    userAgent: c.req.header('User-Agent'),
+    ipAddress: c.req.header('X-Forwarded-For') || 'unknown',
+  });
+
   return c.json({
     success: true,
-    pendingApproval: true,
-    message: 'Registration successful! Your account is pending admin approval. You will be notified when approved.',
     user: {
       id: user.id,
       email: user.email,
       name: user.name,
+      avatarUrl: user.avatarUrl,
+      onboardingCompleted: false,
+      role: 'user',
     },
+    accessToken,
+    refreshToken,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
   });
 });
 
