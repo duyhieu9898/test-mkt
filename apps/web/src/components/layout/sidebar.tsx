@@ -30,6 +30,7 @@ import {
   Share2,
   Flame,
   Lock,
+  FileEdit,
 } from 'lucide-react';
 import { useCompanies, useStreak, useGrowthScore } from '@/lib/api/hooks';
 
@@ -48,6 +49,7 @@ const navigation = [
   { name: 'Campaigns', href: '/campaigns', icon: Rocket, unlockLevel: 2 },
   { name: 'Market & Competitors', href: '/market', icon: Globe, unlockLevel: 2 },
   { name: 'AI Visibility (GEO)', href: '/geo', icon: Search, unlockLevel: 2 },
+  { name: 'Content Editor', href: '/editor', icon: FileEdit, unlockLevel: 2 },
   { name: 'Brain', href: '/brain', icon: Brain, unlockLevel: 2 },
   { name: 'Sales', href: '/sales', icon: Briefcase, unlockLevel: 3 },
   { name: 'Chatbot', href: '/chatbot', icon: MessageSquare, unlockLevel: 2 },

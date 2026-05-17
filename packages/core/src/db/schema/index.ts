@@ -62,3 +62,6 @@ export * from './gamification';
 
 // GEO (Generative Engine Optimization) — Block 1
 export * from './geo';
+
+// Content Grader (Real-time Semantic Grader — Block 4)
+export * from './content-grader';
