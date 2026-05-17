@@ -24,7 +24,8 @@ import {
   type TrackingEvent,
   type Conversion,
 } from '@1person/core/db';
-import * as UAParser from 'ua-parser-js';
+// import * as UAParser from 'ua-parser-js';
+import UAParser from 'ua-parser-js';
 
 // Session timeout in minutes
 const SESSION_TIMEOUT = 30;

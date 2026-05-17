@@ -66,28 +66,28 @@
       # =========================
       - sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/" .env.production
 
+       =========================
+       DEPLOY
+       =========================
+      - |
+        docker compose \
+          -f docker-compose.prod.yml \
+          --env-file .env.production \
+          up -d --force-recreate
+
       # =========================
-      # DEPLOY
+      # WAIT FOR SERVICES
       # =========================
-#      - |
-#        docker compose \
-#          -f docker-compose.prod.yml \
-#          --env-file .env.production \
-#          up -d --force-recreate
-#
-#      # =========================
-#      # WAIT FOR SERVICES
-#      # =========================
-#      - sleep 15
-#
-#      # =========================
-#      # VERIFY
-#      # =========================
-#      - |
-#        docker compose \
-#          -f docker-compose.prod.yml \
-#          --env-file .env.production \
-#          ps
+      - sleep 15
+
+      # =========================
+      # VERIFY
+      # =========================
+      - |
+        docker compose \
+          -f docker-compose.prod.yml \
+          --env-file .env.production \
+          ps
 
     only:
       - develop
