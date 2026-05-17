@@ -1,6 +1,6 @@
 # 1Person AI — Build-Now Plan (18-week Ship Plan)
 
-> Version: 1.1 — updated 2026-05-17 (Blocks 1, 4, 6 MVP shipped)
+> Version: 1.2 — updated 2026-05-17 (Blocks 1, 4, 6 MVP + Walkthrough + Admin Setup Readiness shipped)
 > Status: **LIVE document — update mỗi tuần**
 >
 > Mục tiêu: ship "2027-grade" sản phẩm trong 18 tuần. Order theo **biggest gap × moat potential × shipping cost**.
@@ -47,6 +47,8 @@ Legend:
 | Redis Streams event bus | ☐ TODO | Cần trước Block 5 |
 | OpenTelemetry traces per agent action | ☐ TODO | Cần trước Block 5 |
 | Extend rate limiting to all endpoints | ☐ TODO | Security debt |
+| **Walkthrough page for end users** | ✅ shipped 2026-05-17 | `/walkthrough` — full feature map with Live/Partial/Soon status |
+| **Admin Setup Readiness checklist** | ✅ shipped 2026-05-17 | `/admin/setup` — 11 checks, 0-100 score, banner on admin dashboard |
 
 ---
 

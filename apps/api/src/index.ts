@@ -71,6 +71,7 @@ import socialRouter from './routes/social';
 import gamificationRouter from './routes/gamification';
 import geoRouter from './routes/geo';
 import contentEditorRouter from './routes/content-editor';
+import adminSetupRouter from './routes/admin-setup';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -210,6 +211,7 @@ api.route('/social', socialRouter);
 api.route('/gamification', gamificationRouter);
 api.route('/geo', geoRouter);
 api.route('/content-editor', contentEditorRouter);
+api.route('/admin/setup', adminSetupRouter);
 
 // Mount API
 app.route('/api/v1', api);

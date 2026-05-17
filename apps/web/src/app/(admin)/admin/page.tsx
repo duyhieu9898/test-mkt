@@ -4,6 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAdminDashboard } from '@/lib/api/admin-hooks';
+import { useSetupReadiness } from '@/lib/api/setup-hooks';
+import { Button } from '@/components/ui/button';
 import {
   Search,
   Menu,
@@ -18,6 +20,11 @@ import {
   Newspaper,
   Activity,
   Loader2,
+  Gauge,
+  ArrowRight,
+  AlertTriangle,
+  XCircle,
+  CheckCircle2,
 } from 'lucide-react';
 
 const sections = [
@@ -47,6 +54,8 @@ export default function AdminDashboardPage() {
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-gray-500 mt-1">Overview of your CMS</p>
       </div>
+
+      <SetupReadinessBanner />
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
@@ -97,5 +106,77 @@ export default function AdminDashboardPage() {
         </>
       )}
     </div>
+  );
+}
+
+function SetupReadinessBanner() {
+  const { data, isLoading } = useSetupReadiness();
+  if (isLoading || !data) return null;
+
+  const { score, summary } = data;
+  const scoreColor =
+    score >= 80 ? 'text-emerald-600' : score >= 50 ? 'text-amber-600' : 'text-rose-600';
+  const bgColor =
+    score >= 80
+      ? 'border-emerald-200 bg-emerald-50/50'
+      : score >= 50
+        ? 'border-amber-200 bg-amber-50/50'
+        : 'border-rose-200 bg-rose-50/50';
+
+  // When everything is OK, show a compact success line
+  if (score === 100) {
+    return (
+      <Card className={bgColor}>
+        <CardContent className="p-4 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 text-sm">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <span className="font-medium">All required configuration is in place.</span>
+            <span className="text-muted-foreground">Score 100/100.</span>
+          </div>
+          <Link href="/admin/setup">
+            <Button variant="ghost" size="sm" className="gap-1">
+              View checklist <ArrowRight className="w-3 h-3" />
+            </Button>
+          </Link>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className={bgColor}>
+      <CardContent className="p-5 flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <Gauge className={`w-8 h-8 ${scoreColor}`} />
+          <div>
+            <div className="text-sm text-muted-foreground">Setup readiness</div>
+            <div className={`text-2xl font-bold tabular-nums ${scoreColor}`}>{score}<span className="text-base text-muted-foreground">/100</span></div>
+          </div>
+        </div>
+        <div className="flex-1 min-w-[200px] text-sm space-y-1">
+          {summary.missing > 0 && (
+            <p className="flex items-center gap-1 text-rose-700">
+              <XCircle className="w-3.5 h-3.5" />
+              <span className="font-medium">{summary.missing} required configuration missing</span>
+              <span className="text-muted-foreground">— features will fail until fixed.</span>
+            </p>
+          )}
+          {summary.warn > 0 && (
+            <p className="flex items-center gap-1 text-amber-700">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              {summary.warn} optional or partial — some features run in degraded mode.
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Re-checked every 30s. {summary.ok} of {summary.total} items configured.
+          </p>
+        </div>
+        <Link href="/admin/setup">
+          <Button size="sm" className="gap-1">
+            Review checklist <ArrowRight className="w-3 h-3" />
+          </Button>
+        </Link>
+      </CardContent>
+    </Card>
   );
 }

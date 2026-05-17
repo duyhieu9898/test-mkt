@@ -33,6 +33,7 @@ import {
   FileEdit,
   Inbox,
   Link2,
+  Compass,
 } from 'lucide-react';
 import { useCompanies, useStreak, useGrowthScore } from '@/lib/api/hooks';
 
@@ -46,6 +47,7 @@ import { useCompanies, useStreak, useGrowthScore } from '@/lib/api/hooks';
 // grayed out with a lock tooltip.
 const navigation = [
   { name: 'Dashboard', href: '', icon: LayoutDashboard, unlockLevel: 1 },
+  { name: 'Walkthrough', href: '/walkthrough', icon: Compass, unlockLevel: 1 },
   { name: 'CEO Advisor', href: '/insights', icon: Sparkles, unlockLevel: 1 },
   { name: 'Knowledge', href: '/knowledge', icon: BookOpen, unlockLevel: 1 },
   { name: 'Campaigns', href: '/campaigns', icon: Rocket, unlockLevel: 2 },

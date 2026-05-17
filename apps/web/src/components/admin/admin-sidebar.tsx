@@ -24,6 +24,7 @@ import {
   Wallet,
   TrendingUp,
   Inbox,
+  Gauge,
 } from 'lucide-react';
 
 const contentSections = [
@@ -44,6 +45,7 @@ const management = [
 ];
 
 const systemConfig = [
+  { name: 'Setup Readiness', href: '/admin/setup', icon: Gauge },
   { name: 'LLM Config', href: '/admin/llm-config', icon: Brain },
   { name: 'Credit Plans', href: '/admin/credit-plans', icon: Wallet },
   { name: 'Credit Usage', href: '/admin/credit-monitoring', icon: TrendingUp },
