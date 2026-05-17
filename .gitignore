@@ -23,9 +23,13 @@ out/
 
 # Logs
 logs/
+.logs/
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Local process pids (start_script.sh)
+.pids/
 
 # Testing
 coverage/
