@@ -1,11 +1,5 @@
 # ============================================
-# 1Person API - Production Dockerfile
-# Optimized for:
-# - pnpm monorepo
-# - production stability
-# - smaller runtime image
-# - non-root security
-# - drizzle/runtime compatibility
+# 1Person API - Optimized Production Dockerfile
 # ============================================
 
 # ---------- Base ----------
@@ -53,29 +47,24 @@ ENV NODE_ENV=production
 RUN addgroup -S nodejs && adduser -S nodejs -G nodejs
 
 # Root package
-COPY --from=builder /app/package.json ./
+COPY --from=builder --chown=nodejs:nodejs /app/package.json ./
 
 # API
-COPY --from=builder /app/apps/api/dist ./apps/api/dist
-COPY --from=builder /app/apps/api/package.json ./apps/api/
+COPY --from=builder --chown=nodejs:nodejs /app/apps/api/dist ./apps/api/dist
+COPY --from=builder --chown=nodejs:nodejs /app/apps/api/package.json ./apps/api/
 
 # Core package
-COPY --from=builder /app/packages/core/dist ./packages/core/dist
-COPY --from=builder /app/packages/core/src ./packages/core/src
-COPY --from=builder /app/packages/core/drizzle.config.ts ./packages/core/
-COPY --from=builder /app/packages/core/package.json ./packages/core/
+COPY --from=builder --chown=nodejs:nodejs /app/packages/core/dist ./packages/core/dist
+COPY --from=builder --chown=nodejs:nodejs /app/packages/core/src ./packages/core/src
+COPY --from=builder --chown=nodejs:nodejs /app/packages/core/drizzle.config.ts ./packages/core/
+COPY --from=builder --chown=nodejs:nodejs /app/packages/core/package.json ./packages/core/
 
 # Shared dependencies
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 
-# Optional:
-# Uncomment ONLY if runtime gets MODULE_NOT_FOUND
-
-COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
-COPY --from=builder /app/packages/core/node_modules ./packages/core/node_modules
-
-# Permissions
-RUN chown -R nodejs:nodejs /app
+# Workspace runtime deps
+COPY --from=builder --chown=nodejs:nodejs /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=builder --chown=nodejs:nodejs /app/packages/core/node_modules ./packages/core/node_modules
 
 USER nodejs
 
