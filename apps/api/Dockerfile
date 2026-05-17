@@ -70,9 +70,9 @@ COPY --from=builder /app/node_modules ./node_modules
 
 # Optional:
 # Uncomment ONLY if runtime gets MODULE_NOT_FOUND
-#
-# COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
-# COPY --from=builder /app/packages/core/node_modules ./packages/core/node_modules
+
+COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=builder /app/packages/core/node_modules ./packages/core/node_modules
 
 # Permissions
 RUN chown -R nodejs:nodejs /app
