@@ -66,9 +66,9 @@
       # =========================
       - sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/" .env.production
 
-       =========================
-       DEPLOY
-       =========================
+#       =========================
+#       DEPLOY
+#       =========================
       - |
         docker compose \
           -f docker-compose.prod.yml \
