@@ -65,7 +65,7 @@
       # UPDATE DEPLOY ENV
       # =========================
       - sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/" .env.production
-
+      - export IMAGE_TAG=$IMAGE_TAG
 #       =========================
 #       DEPLOY
 #       =========================
