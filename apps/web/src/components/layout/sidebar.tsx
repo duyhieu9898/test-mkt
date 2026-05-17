@@ -32,6 +32,7 @@ import {
   Lock,
   FileEdit,
   Inbox,
+  Link2,
 } from 'lucide-react';
 import { useCompanies, useStreak, useGrowthScore } from '@/lib/api/hooks';
 
@@ -54,7 +55,8 @@ const navigation = [
   { name: 'Brain', href: '/brain', icon: Brain, unlockLevel: 2 },
   { name: 'Sales', href: '/sales', icon: Briefcase, unlockLevel: 3 },
   { name: 'Chatbot', href: '/chatbot', icon: MessageSquare, unlockLevel: 2 },
-  { name: 'Channels', href: '/channels', icon: Inbox, unlockLevel: 2 },
+  { name: 'Channels', href: '/channels', icon: Link2, unlockLevel: 2 },
+  { name: 'Inbox · Messages', href: '/inbox/messages', icon: Inbox, unlockLevel: 2 },
   { name: 'Social Media', href: '/social', icon: Share2, unlockLevel: 3 },
 ];
 

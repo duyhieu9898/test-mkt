@@ -1,8 +1,19 @@
 # 1Person AI — Current Feature Inventory
 
-> Snapshot date: 2026-05-16
+> Snapshot date: 2026-05-17 (updated post Block 1/4/6 MVP ship)
 > Method: Codebase exploration via Explore agent. File paths verified.
 > **This is a baseline snapshot.** Re-run after each major ship to refresh.
+
+## 2026-05-17 update — what changed since 2026-05-16 baseline
+
+| Change | Status | Commit |
+|---|---|---|
+| **GEO/LLMO tracking** (Block 1) | ❌ → ✅ | `ea4690c` |
+| **On-page real-time grader** (Block 4) | ❌ → ✅ | `1db0b72` |
+| **Cross-channel chat — FB Messenger** (Block 6) | ❌ → 🟡 (FB only) | `c640b1d` + inbox page |
+| **Unified inbox messages viewer** | ❌ → ✅ | inbox/messages page |
+| Other "CRITICAL MISSING" items below | unchanged | — |
+
 
 Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not implemented)
 
@@ -24,7 +35,11 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 - **Implemented**: Competitor website scanning, signal extraction, strength/weakness brief, 3 tactical actions per competitor, brain memory integration.
 - **Gaps**: No SERP scraping, no backlink analysis, no content word-count comparison.
 
-### On-Page SEO Scoring / Content Grader — ❌ NO
+### On-Page SEO Scoring / Content Grader — ✅ YES (MVP)
+- Files: `apps/api/src/services/content-grader.ts`, `apps/api/src/services/serp-scraper.ts`, `apps/api/src/routes/content-editor.ts`, `apps/web/src/app/(dashboard)/[companyId]/editor/page.tsx`
+- 5 sub-scores (entity coverage vs SERP, topic coverage, brand voice match, AI-citation likelihood, Flesch readability) + ranked suggestions.
+- SerpAPI integration with LLM-simulated fallback.
+- **Gaps for v2**: internal linking engine, topic cluster map (need vector embeddings — Block 3 dependency)
 
 ### Internal Linking Suggestions — ❌ NO
 
@@ -38,8 +53,10 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 - **Implemented**: FAQPage + Article schema auto-generated per blog.
 - **Gaps**: No Product, HowTo, Review, Organization, Breadcrumb.
 
-### AI Overview / LLMO / GEO Optimization — ❌ NO
-> **CRITICAL GAP** — biggest 2026-2027 risk.
+### AI Overview / LLMO / GEO Optimization — ✅ YES (MVP)
+- Files: `apps/api/src/services/geo-tracker.ts`, `apps/api/src/routes/geo.ts`, `apps/web/src/app/(dashboard)/[companyId]/geo/page.tsx`, `packages/core/src/db/schema/geo.ts`
+- Polls OpenAI + Anthropic per tracked prompt, parses brand + competitor mentions, computes AI Share of Voice trend (7-day vs prior 7-day), surfaces in dashboard widget.
+- **Gaps for v2**: Perplexity + Gemini providers, daily cron auto-run, auto-detect competitors, AI-citation-likelihood scoring integration with seo-engine.ts
 
 ### Backlink & Link Building — ❌ NO
 
@@ -130,10 +147,11 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 - Resend + SendGrid. Sequence CRUD, enrollment, open/click/reply tracking schema.
 - **Gaps**: No visual drip builder, no trigger-based enrollment.
 
-### Chatbot / Omnichannel Inbox — 🟡 PARTIAL (chat only, no omni)
-- Files: `apps/api/src/routes/chatbot.ts:1-150`, `apps/api/src/routes/inbox.ts`, `packages/core/src/db/schema/chatbot.ts`
-- Web widget with KB context, tone modes, lead capture, sales signal detection, embed with rate limit.
-- **Gaps**: No FB Messenger, Zalo, WhatsApp; no actual handoff mechanism.
+### Chatbot / Omnichannel Inbox — 🟡 PARTIAL (web widget + FB Messenger shipped; Zalo/WA/IG schema-reserved)
+- Files: existing web widget at `apps/api/src/routes/chatbot.ts` + new omnichannel at `apps/api/src/services/channels/fb-messenger.ts`, `apps/api/src/routes/omnichannel.ts`, `apps/api/src/lib/crypto.ts`, `apps/web/src/app/(dashboard)/[companyId]/channels/page.tsx`, `apps/web/src/app/(dashboard)/[companyId]/inbox/messages/page.tsx`, `packages/core/src/db/schema/omnichannel.ts`
+- FB Messenger: webhook verify handshake, payload parser, Graph API send, AES-256-GCM-encrypted page token storage, AI auto-reply opt-in.
+- Unified inbox page with thread grouping + manual reply.
+- **Gaps**: Zalo / WhatsApp / Instagram services not coded yet (schema reserves enum values); voice channel deferred; founder must register Meta App + paste Page Access Token to go live.
 
 ### Outreach Automation — 🟡 PARTIAL (email only)
 - Files: `apps/api/src/services/outreach-engine.ts`, `apps/api/src/routes/outreach.ts:100-140`
@@ -249,17 +267,17 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 
 > See [2027-product-vision.md](./2027-product-vision.md) and [competitive-research-2026.md](./competitive-research-2026.md) for full context.
 
-1. **GEO/LLMO tracking** — table stakes 2026.
+1. ~~**GEO/LLMO tracking** — table stakes 2026.~~ ✅ shipped 2026-05-17 (Block 1, OpenAI+Anthropic, no cron yet)
 2. **Vector embeddings / semantic RAG**.
 3. **Active prompt optimization loop** (skeleton exists, not running).
 4. **Brand IQ auto-extraction** (Jasper IQ pattern).
-5. **On-page real-time grader** (Surfer/Clearscope baseline).
+5. ~~**On-page real-time grader** (Surfer/Clearscope baseline).~~ ✅ shipped 2026-05-17 (Block 4, SerpAPI+LLM fallback)
 6. **Topic cluster / internal linking engine**.
 7. **Outcome-based billing**.
 8. **Audit cards** for AI actions.
 9. **AI Employees with personalities** (Sintra UX).
 10. **Programmatic SEO at scale with editorial gates**.
-11. **Cross-channel chat** (FB Messenger, Zalo, WhatsApp, voice).
+11. 🟡 **Cross-channel chat** — FB Messenger shipped 2026-05-17 (Block 6); Zalo/WhatsApp/IG/voice still missing.
 12. **Visual/video integrated with SEO pipeline**.
 13. **Real-time WebSocket updates** (currently polling).
 14. **Studio (no-code agent builder)**.

@@ -1,6 +1,6 @@
 # 1Person AI — Build-Now Plan (18-week Ship Plan)
 
-> Version: 1.0 — created 2026-05-16
+> Version: 1.1 — updated 2026-05-17 (Blocks 1, 4, 6 MVP shipped)
 > Status: **LIVE document — update mỗi tuần**
 >
 > Mục tiêu: ship "2027-grade" sản phẩm trong 18 tuần. Order theo **biggest gap × moat potential × shipping cost**.
@@ -26,12 +26,12 @@ Legend:
 
 | Block | Theme | Weeks | Status | Started | Shipped |
 |---|---|---|---|---|---|
-| 1 | GEO Layer MVP | 1-2 | ☐ TODO | — | — |
+| 1 | GEO Layer MVP | 1-2 | ✅ MVP shipped | 2026-05-16 | `ea4690c` (2026-05-17) |
 | 2 | Brand IQ Layer | 3-4 | ☐ TODO | — | — |
 | 3 | AI Employees UX + Vector Memory | 5-6 | ☐ TODO | — | — |
-| 4 | Real-time Semantic Grader + Internal Linking | 7-8 | ☐ TODO | — | — |
+| 4 | Real-time Semantic Grader + Internal Linking | 7-8 | ✅ MVP shipped (grader only — internal linking deferred) | 2026-05-16 | `1db0b72` (2026-05-17) |
 | 5 | Agent Evolution Loop (MOAT) | 9-10 | ☐ TODO | — | — |
-| 6 | Omnichannel Chat (Đợt 6) | 11-12 | ☐ TODO | — | — |
+| 6 | Omnichannel Chat (Đợt 6) | 11-12 | 🟡 MVP shipped (FB Messenger only; Inbox·Messages page added) | 2026-05-16 | `c640b1d` + Inbox page (2026-05-17) |
 | 7 | Outcome-Based Pricing + Audit Cards | 13-14 | ☐ TODO | — | — |
 | 8 | Multimodal SEO Pipeline | 15-16 | ☐ TODO | — | — |
 | 9 | Programmatic SEO + Studio | 17-18 | ☐ TODO | — | — |
@@ -54,28 +54,35 @@ Legend:
 
 > **Why first**: 86.83% search có AI Overview. Không có cái này = outdated 2026. Closes critical gap.
 
-**Status**: ☐ TODO
+**Status**: ✅ **MVP shipped 2026-05-17** — commit `ea4690c` (1126 LOC)
 
 ### Tasks
 
-- [ ] ☐ Schema mới: `geo_prompts`, `geo_mentions`, `geo_share_of_voice`
-  - Files: `packages/core/src/db/schema/geo.ts` (new), migration
-- [ ] ☐ Service `geo-tracker.ts`: poll ChatGPT + Perplexity + Gemini APIs
-  - Files: `apps/api/src/services/geo-tracker.ts` (new)
-  - Use ANTHROPIC_API_KEY, OPENAI_API_KEY, add PERPLEXITY_API_KEY + GEMINI_API_KEY
-  - Cache 24h to avoid cost explosion
-- [ ] ☐ Cron daily job poll 20-50 prompts của brand → đo mention count, position, sentiment
-  - Files: `apps/api/src/workers/geo-cron.ts` (new), wire in `index.ts`
-- [ ] ☐ Compute **AI Share of Voice** metric (% mention vs competitors trong cùng prompt set)
-  - Files: `apps/api/src/services/geo-sov.ts` (new)
-- [ ] ☐ Route `/geo` API: dashboard data, prompt CRUD, trend 7/30 ngày
-  - Files: `apps/api/src/routes/geo.ts` (new), wire in `index.ts`
-- [ ] ☐ Web dashboard widget "AI Share of Voice" với trend chart
-  - Files: `apps/web/src/components/growth-dashboard/AIShareOfVoice.tsx` (new)
-- [ ] ☐ Extend `seo-engine.ts` với AI-citation likelihood scoring (heuristic: structured answer + schema + entity coverage)
-  - Files: `apps/api/src/routes/seo-engine.ts`
-- [ ] ☐ Schema markup expansion: thêm Product, HowTo, Review, Organization, Breadcrumb
-  - Files: `apps/api/src/services/blog-generator.ts`, `apps/api/src/services/schema-builder.ts` (new)
+- [x] ✅ Schema mới: `geo_prompts`, `geo_mentions`, `geo_share_of_voice`
+  - Files: `packages/core/src/db/schema/geo.ts`, `packages/core/drizzle/0001_geo_tracking.sql`
+- [x] ✅ Service `geo-tracker.ts`: poll OpenAI + Anthropic per tracked prompt
+  - Files: `apps/api/src/services/geo-tracker.ts` (283 LOC)
+  - Uses existing ANTHROPIC_API_KEY + OPENAI_API_KEY. Perplexity + Gemini deferred.
+  - Heuristic competitor parser reads tracked competitors from `market.listCompetitors`
+- [ ] ☐ Cron daily auto-run — **deferred** (MVP = manual trigger only; cron belongs to Block 5 evolution loop)
+- [x] ✅ Compute **AI Share of Voice** metric
+  - Files: `geo-tracker.ts` (`getShareOfVoiceTrend`, `computeShareOfVoice` functions)
+  - Note: SoV = 0 until founder adds competitors at `/market` — hint added on page
+- [x] ✅ Route `/geo` API: prompt CRUD, manual Run Now, SoV trend, mentions feed
+  - Files: `apps/api/src/routes/geo.ts` (152 LOC), mounted at `/api/v1/geo`
+- [x] ✅ Web page `/geo` with SoV widget + prompt list + mentions feed
+  - Files: `apps/web/src/app/(dashboard)/[companyId]/geo/page.tsx` (383 LOC)
+  - Sidebar entry "AI Visibility (GEO)" unlockLevel 2
+- [ ] ☐ Extend `seo-engine.ts` AI-citation likelihood scoring — **partial**: scoring exists in Block 4 grader. Tighter integration with seo-engine deferred.
+- [ ] ☐ Schema markup expansion (Product/HowTo/Review/Organization/Breadcrumb) — **deferred** to a follow-up
+
+### Verified working (2026-05-17)
+- GET /api/v1/geo/{companyId}/prompts → returns array
+- POST /api/v1/geo/{companyId}/prompts → creates tracked prompt
+- POST /api/v1/geo/{companyId}/prompts/{id}/run → polls real LLMs (~9s), stores mentions, returns RunResult
+- GET /api/v1/geo/{companyId}/share-of-voice?days=7 → returns current/previous/delta
+- GET /api/v1/geo/{companyId}/mentions → returns recent mentions with provider/brand/competitor/sentiment
+- Web page http://localhost:3004/{companyId}/geo → HTTP 200, full UI
 
 ### Acceptance
 - Founder thấy 1 con số "AI Share of Voice" trên dashboard
@@ -170,30 +177,31 @@ Legend:
 
 > **Why fourth**: Parity với Surfer/Clearscope trước khi push moat features.
 
-**Status**: ☐ TODO
+**Status**: ✅ **Grader MVP shipped 2026-05-17** — commit `1db0b72` (1122 LOC). Internal Linking + Topic Cluster deferred.
 
 ### Tasks
 
-- [ ] ☐ Service `serp-scraper.ts`: lấy top 10 real-time (SerpAPI hoặc tự crawl với rotation)
-  - Files: `apps/api/src/services/serp-scraper.ts` (new)
-- [ ] ☐ Service `content-grader.ts`: score 0-100 dựa trên
-  - SERP top 10 entities coverage
-  - NLP topic coverage (dùng OpenAI/Anthropic structured extraction)
-  - AI-citation likelihood (Block 1 đã có)
-  - Brand voice match (Brand IQ từ Block 2)
-  - Files: `apps/api/src/services/content-grader.ts` (new)
-- [ ] ☐ Route `/content-editor`: paste content → score + recommendations
-  - Files: `apps/api/src/routes/content-editor.ts` (new)
-- [ ] ☐ Web Content Editor UI với live scoring
-  - Files: `apps/web/src/app/(dashboard)/editor/page.tsx` (new)
-  - Components: score widget, missing entities list, suggestions panel
-- [ ] ☐ Internal Linking Engine
-  - Files: `apps/api/src/services/internal-linking-engine.ts` (new)
-  - Input: new blog content + existing blog corpus (vector search)
-  - Output: top 5 link suggestions with anchor text + relevance score
-- [ ] ☐ Topic Cluster Visualization
-  - Files: `apps/api/src/services/topic-cluster.ts` (new), `apps/web/src/components/seo/TopicClusterMap.tsx` (new)
-  - Hub-spoke từ content đã có, đề xuất gap
+- [x] ✅ Service `serp-scraper.ts`: SERP fetcher
+  - Files: `apps/api/src/services/serp-scraper.ts` (160 LOC)
+  - Uses SerpAPI if `SERPAPI_KEY` configured via admin, else falls back to LLM-simulated SERP (works day-1)
+  - 24h in-memory cache
+- [x] ✅ Service `content-grader.ts`: 5 sub-score breakdown
+  - Files: `apps/api/src/services/content-grader.ts` (271 LOC)
+  - Entity coverage, topic coverage, brand voice match, AI-citation likelihood, Flesch readability
+  - Generates 5-10 ranked suggestions
+- [x] ✅ Route `/content-editor`: POST /grade, GET /grades, GET /grades/:id
+  - Files: `apps/api/src/routes/content-editor.ts` (133 LOC), mounted at `/api/v1/content-editor`
+- [x] ✅ Web `/editor` UI two-column layout
+  - Files: `apps/web/src/app/(dashboard)/[companyId]/editor/page.tsx` (371 LOC)
+  - Animated 0-100 score widget, 5 sub-score bars, ranked suggestion list with severity color coding, past grades panel
+  - Sidebar entry "Content Editor" unlockLevel 2
+- [ ] ☐ Internal Linking Engine — **deferred** (needs vector embeddings — Block 3 dependency)
+- [ ] ☐ Topic Cluster Visualization — **deferred**
+
+### Verified working (2026-05-17)
+- POST /api/v1/content-editor/grade with real content → returns score=37, 5 sub-scores, 5+ suggestions in ~5s
+- GET /api/v1/content-editor/grades → returns past grades array
+- Web page http://localhost:3004/{companyId}/editor → HTTP 200, full UI
 
 ### Acceptance
 - Paste blog post → see score in <3s with live updates as user edits
@@ -251,32 +259,51 @@ Legend:
 
 > **Why sixth**: Đợt 6 đã planned. API approval mất 2-3 tháng → **submit ngày 1 song song**.
 
-**Status**: ☐ TODO
+**Status**: 🟡 **FB Messenger MVP shipped 2026-05-17** — commit `c640b1d` (1031 LOC) + Inbox·Messages page (205 LOC). Zalo/WA/IG/voice deferred until API approvals.
 
 ### Tasks (parallel: API approval + code)
 
-- [ ] ☐ **Tuần 0 (làm ngay hôm nay)**: Submit applications
-  - Facebook Messenger Platform API
-  - Zalo Official Account API
-  - WhatsApp Business Platform (Cloud API)
-  - Instagram Messaging API
-  - Status tracking trong file này
-- [ ] ☐ Service `channel-fb.ts`: FB Messenger webhook + send/receive
-  - Files: `apps/api/src/services/channels/fb-messenger.ts` (new)
-- [ ] ☐ Service `channel-zalo.ts`: Zalo OA send/receive
-  - Files: `apps/api/src/services/channels/zalo.ts` (new)
-- [ ] ☐ Service `channel-whatsapp.ts`: WA Cloud API send/receive
-  - Files: `apps/api/src/services/channels/whatsapp.ts` (new)
-- [ ] ☐ Service `channel-ig.ts`: IG DM
-  - Files: `apps/api/src/services/channels/instagram.ts` (new)
-- [ ] ☐ Schema: `omnichannel_messages`, `channel_connections`
-  - Files: `packages/core/src/db/schema/omnichannel.ts` (new)
-- [ ] ☐ Unified inbox: 1 view tất cả channel, AI auto-reply, handoff threshold
-  - Files: `apps/api/src/routes/inbox.ts` (extend), `apps/web/src/app/(dashboard)/inbox/page.tsx`
-- [ ] ☐ Multi-bot architecture: mỗi bot có persona riêng (sales/support/qualifier)
-  - Files: extend `apps/api/src/routes/chatbot.ts`
-- [ ] ☐ Voice channel (beta): Twilio + Whisper + TTS cho inbound call
-  - Files: `apps/api/src/services/channels/voice.ts` (new)
+- [ ] ☐ **Tuần 0 (làm ngay)**: Submit applications — **founder action required**
+  - [ ] Facebook Messenger Platform API
+  - [ ] Zalo Official Account API
+  - [ ] WhatsApp Business Platform (Cloud API)
+  - [ ] Instagram Messaging API
+  - Status tracking trong file này (API Approval Tracking table below)
+- [x] ✅ Service `channels/fb-messenger.ts`: webhook verify + parse + send + handleInboundMessage
+  - Files: `apps/api/src/services/channels/fb-messenger.ts` (192 LOC)
+- [ ] ☐ Service `channels/zalo.ts` — **deferred** (awaits Zalo OA approval)
+- [ ] ☐ Service `channels/whatsapp.ts` — **deferred** (awaits WA Business approval)
+- [ ] ☐ Service `channels/instagram.ts` — **deferred** (awaits IG Messaging approval)
+- [x] ✅ Schema: `channel_connections` + `omnichannel_messages` (channel enum reserves all 4)
+  - Files: `packages/core/src/db/schema/omnichannel.ts` (106 LOC), `packages/core/drizzle/0003_omnichannel.sql`
+- [x] ✅ Encryption helper for page tokens at rest
+  - Files: `apps/api/src/lib/crypto.ts` (45 LOC) — AES-256-GCM, key derived from JWT_SECRET
+- [x] ✅ Authenticated route `/omnichannel` + public webhook router `/webhooks/omnichannel/messenger`
+  - Files: `apps/api/src/routes/omnichannel.ts` (236 LOC)
+- [x] ✅ Web Channels page: connect form, webhook URL surfaced, AI auto-reply toggle, disconnect
+  - Files: `apps/web/src/app/(dashboard)/[companyId]/channels/page.tsx` (259 LOC)
+  - Sidebar "Channels" (Link2 icon) unlockLevel 2
+- [x] ✅ Web Inbox · Messages page: unified thread list per sender, manual Reply on latest inbound
+  - Files: `apps/web/src/app/(dashboard)/[companyId]/inbox/messages/page.tsx` (205 LOC)
+  - Sidebar "Inbox · Messages" (Inbox icon) unlockLevel 2
+- [ ] ☐ Multi-bot personas per channel — **deferred** (Block 3 AI Employees territory)
+- [ ] ☐ Voice channel (Twilio + Whisper + TTS) — **deferred**
+
+### Verified working (2026-05-17)
+- GET /api/v1/omnichannel/company/{companyId} → returns connections array
+- GET /api/v1/omnichannel/company/{companyId}/messages → returns messages array
+- Web page http://localhost:3004/{companyId}/channels → HTTP 200, Connect Facebook Messenger dialog with webhook URL ready to copy
+- Web page http://localhost:3004/{companyId}/inbox/messages → HTTP 200, empty state with link back to Channels
+
+### Founder action to go live
+1. Create Meta App at https://developers.facebook.com
+2. Add Messenger product, request `pages_messaging` permission
+3. Get long-lived Page Access Token for your Page
+4. Open `/channels` → Connect Facebook Messenger
+5. Paste Page ID, App ID, Page Access Token, choose Verify Token
+6. Copy the Webhook URL (`http://your-domain/webhooks/omnichannel/messenger`) and paste in Meta console → Messenger → Webhooks
+7. Subscribe to `messages`, `messaging_postbacks` fields
+8. Test: send a message to your Page → it appears in `/inbox/messages` within seconds
 
 ### Acceptance
 - Founder connect FB page → tin nhắn từ FB hiển thị trong inbox app
@@ -423,7 +450,11 @@ Legend:
 
 > Append after each block ship. Format: `[Block N] [Date] Learning / What we'd do differently`
 
-(empty)
+- **[Multi-agent parallel] [2026-05-17]** First attempt at parallel coding via 3 subagents in worktrees stalled (watchdog 600s) right at the web-UI phase. **All 3 agents had actually written code to the main repo** (worktree isolation didn't fully isolate), so progress was preserved but only after a tense `git status` check. Pivoted to: I coded sequentially in main repo, splitting shared-file edits per block via reset-and-rebuild pattern. Result: 4 clean commits (1 infra + 3 block), ~3400 LOC, all typecheck pass. **Lesson**: for blocks > 500 LOC, the watchdog is the limiting factor — split into back+front subagents or just do it directly. Worktree isolation as offered by harness is not fully reliable.
+- **[Block 1] [2026-05-17]** SoV returns 0 unless competitors are tracked at `/market`. Added an in-page hint that links there. **Future**: auto-discover competitors from LLM mentions and offer "Track these?" CTA.
+- **[Block 4] [2026-05-17]** LLM-simulated SERP fallback (when no SerpAPI) works but suggestions can be generic. Quality jumps noticeably with real SerpAPI. Document this in admin onboarding so founders know to add `SERPAPI_KEY` via admin.
+- **[Block 6] [2026-05-17]** Block 6 agent stalled before adding the sidebar entry and the Inbox·Messages page. Verified after-the-fact via curl + page render. Took 2 extra commits to round out. **Lesson**: always grep sidebar.tsx as a smoke test after any block that adds a route.
+- **[DB migrations] [2026-05-17]** `pnpm db:migrate` failed because `_journal.json` was stale vs. `__drizzle_migrations` table (project had been `db:push`-ed many times skipping journal). Bypassed by applying the 3 new SQL files directly via `docker exec ... psql < file.sql`. **Action item**: reconcile journal vs. migration table in a follow-up so `db:migrate` works again.
 
 ---
 

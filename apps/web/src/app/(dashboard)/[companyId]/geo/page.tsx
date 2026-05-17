@@ -249,6 +249,19 @@ export default function GeoPage() {
               {sov?.current.brand ?? 0} brand mentions · {sov?.current.total ?? 0} total entity
               mentions in tracked prompts.
             </p>
+            {mentions.length > 0 && (sov?.current.total ?? 0) === 0 && (
+              <p className="text-xs text-amber-600 mt-1.5 flex items-start gap-1">
+                <Sparkles className="w-3 h-3 mt-0.5 shrink-0" />
+                Add competitors at{' '}
+                <a
+                  href={`/${companyId}/market`}
+                  className="underline font-medium hover:text-amber-800"
+                >
+                  Market &amp; Competitors
+                </a>{' '}
+                so we can score who else AI engines name in these answers.
+              </p>
+            )}
           </div>
           <div className="text-xs text-slate-500 flex items-center gap-1.5 bg-slate-50 px-3 py-2 rounded-lg">
             <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
