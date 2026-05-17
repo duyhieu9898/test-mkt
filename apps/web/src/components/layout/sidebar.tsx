@@ -47,6 +47,7 @@ const navigation = [
   { name: 'Knowledge', href: '/knowledge', icon: BookOpen, unlockLevel: 1 },
   { name: 'Campaigns', href: '/campaigns', icon: Rocket, unlockLevel: 2 },
   { name: 'Market & Competitors', href: '/market', icon: Globe, unlockLevel: 2 },
+  { name: 'AI Visibility (GEO)', href: '/geo', icon: Search, unlockLevel: 2 },
   { name: 'Brain', href: '/brain', icon: Brain, unlockLevel: 2 },
   { name: 'Sales', href: '/sales', icon: Briefcase, unlockLevel: 3 },
   { name: 'Chatbot', href: '/chatbot', icon: MessageSquare, unlockLevel: 2 },

@@ -68,6 +68,7 @@ import channelsRouter from './routes/channels';
 import webhooksRouter from './routes/webhooks';
 import socialRouter from './routes/social';
 import gamificationRouter from './routes/gamification';
+import geoRouter from './routes/geo';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -202,6 +203,7 @@ api.route('/sales', salesRouter);
 api.route('/channels', channelsRouter);
 api.route('/social', socialRouter);
 api.route('/gamification', gamificationRouter);
+api.route('/geo', geoRouter);
 
 // Mount API
 app.route('/api/v1', api);

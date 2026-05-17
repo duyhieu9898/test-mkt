@@ -274,6 +274,16 @@ export async function resolveFeature(
       creditCost: 1,
       source: 'default',
     },
+    geo_run: {
+      featureKey,
+      tier: 'balanced',
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      temperature: 0.5,
+      maxTokens: 800,
+      creditCost: 4,
+      source: 'default',
+    },
   };
   const fallback = defaults[featureKey] ?? {
     featureKey,

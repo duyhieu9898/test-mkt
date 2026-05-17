@@ -59,3 +59,6 @@ export * from './site-config';
 
 // Gamification (CEO Motivation Engine)
 export * from './gamification';
+
+// GEO (Generative Engine Optimization) — Block 1
+export * from './geo';

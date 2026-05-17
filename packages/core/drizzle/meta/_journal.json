@@ -8,6 +8,13 @@
       "when": 1775802847849,
       "tag": "0000_wonderful_devos",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779148800000,
+      "tag": "0001_geo_tracking",
+      "breakpoints": true
     }
   ]
 }
