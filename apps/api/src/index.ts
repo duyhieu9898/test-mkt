@@ -66,6 +66,7 @@ import marketRouter from './routes/market';
 import salesRouter from './routes/sales';
 import channelsRouter from './routes/channels';
 import webhooksRouter from './routes/webhooks';
+import omnichannelRouter, { messengerWebhookRouter } from './routes/omnichannel';
 import socialRouter from './routes/social';
 import gamificationRouter from './routes/gamification';
 import geoRouter from './routes/geo';
@@ -141,6 +142,8 @@ app.get('/pages/:companyId/:slug', async (c) => {
 
 // Public webhooks (no auth — platforms call these directly)
 app.route('/webhooks', webhooksRouter);
+// Block 6: Omnichannel webhooks (mounted at /webhooks/omnichannel/* — Meta calls these without auth)
+app.route('/webhooks/omnichannel', messengerWebhookRouter);
 
 // API routes
 const api = new Hono();
@@ -202,6 +205,7 @@ api.route('/admin/credits', adminCreditsRouter);
 api.route('/insights', insightsRouter);
 api.route('/sales', salesRouter);
 api.route('/channels', channelsRouter);
+api.route('/omnichannel', omnichannelRouter);
 api.route('/social', socialRouter);
 api.route('/gamification', gamificationRouter);
 api.route('/geo', geoRouter);

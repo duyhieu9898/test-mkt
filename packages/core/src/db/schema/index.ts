@@ -65,3 +65,6 @@ export * from './geo';
 
 // Content Grader (Real-time Semantic Grader — Block 4)
 export * from './content-grader';
+
+// Omnichannel Inbox (Block 6 / Đợt 6 — FB Messenger MVP)
+export * from './omnichannel';
