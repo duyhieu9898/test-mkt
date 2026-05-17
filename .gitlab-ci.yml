@@ -1,0 +1,93 @@
+  stages:
+    - deploy
+
+  variables:
+    API_IMAGE: 1person-api
+    WEB_IMAGE: 1person-web
+
+  deploy:
+    stage: deploy
+
+    tags:
+      - 1person
+
+    script:
+      # =========================
+      # SYNC SOURCE
+      # =========================
+      - cd /srv/1person
+
+      - git fetch origin
+      - git reset --hard origin/develop
+
+      # =========================
+      # LOAD ENV
+      # =========================
+      - export $(grep -v '^#' .env.production | xargs)
+
+      # =========================
+      # BUILD METADATA
+      # =========================
+      - export BUILD_DATE="$(date +%Y%m%d)"
+      - export IMAGE_TAG="${CI_COMMIT_REF_SLUG}-${BUILD_DATE}-${CI_COMMIT_SHORT_SHA}"
+      - export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      # =========================
+      # BUILD API IMAGE
+      # =========================
+      - |
+        docker build \
+          -f apps/api/Dockerfile \
+          --build-arg CI_COMMIT_SHA=$CI_COMMIT_SHORT_SHA \
+          --build-arg BUILD_TIME=$BUILD_TIME \
+          --build-arg BRANCH=$CI_COMMIT_REF_SLUG \
+          --build-arg RELEASE_VERSION=v1.0.0 \
+          --build-arg TAG=$IMAGE_TAG \
+          -t $API_IMAGE:$IMAGE_TAG \
+          .
+
+      # =========================
+      # BUILD WEB IMAGE
+      # =========================
+      - |
+        docker build \
+          -f apps/web/Dockerfile \
+          --build-arg NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+          --build-arg CI_COMMIT_SHA=$CI_COMMIT_SHORT_SHA \
+          --build-arg BUILD_TIME=$BUILD_TIME \
+          --build-arg BRANCH=$CI_COMMIT_REF_SLUG \
+          --build-arg RELEASE_VERSION=v1.0.0 \
+          --build-arg TAG=$IMAGE_TAG \
+          -t $WEB_IMAGE:$IMAGE_TAG \
+          .
+
+      # =========================
+      # UPDATE DEPLOY ENV
+      # =========================
+      - sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/" .env.production
+
+      # =========================
+      # DEPLOY
+      # =========================
+#      - |
+#        docker compose \
+#          -f docker-compose.prod.yml \
+#          --env-file .env.production \
+#          up -d --force-recreate
+#
+#      # =========================
+#      # WAIT FOR SERVICES
+#      # =========================
+#      - sleep 15
+#
+#      # =========================
+#      # VERIFY
+#      # =========================
+#      - |
+#        docker compose \
+#          -f docker-compose.prod.yml \
+#          --env-file .env.production \
+#          ps
+
+    only:
+      - develop

@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p ${WEB_PORT:-3004}",
+    "dev": "next dev -p ${PORT:-3000}",
     "build": "next build",
-    "start": "next start -p ${WEB_PORT:-3004}",
+    "start": "next start -p ${PORT:-3000}",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
