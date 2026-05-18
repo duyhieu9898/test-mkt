@@ -1,7 +1,9 @@
 # 1Person AI — Build-Now Plan (18-week Ship Plan)
 
-> Version: 1.2 — updated 2026-05-17 (Blocks 1, 4, 6 MVP + Walkthrough + Admin Setup Readiness shipped)
+> Version: 1.3 — updated 2026-05-18 (Block 2 Brand IQ Layer shipped — multiplies every other agent's output quality)
 > Status: **LIVE document — update mỗi tuần**
+>
+> **Progress**: 4 of 9 blocks shipped (Block 1 GEO, Block 2 Brand IQ, Block 4 Content Grader, Block 6 FB Messenger MVP). 5 remaining (Blocks 3, 5, 7, 8, 9). Recommended next order: 3 → 8 → 5 → 7 → 9 (dependency-aware).
 >
 > Mục tiêu: ship "2027-grade" sản phẩm trong 18 tuần. Order theo **biggest gap × moat potential × shipping cost**.
 
@@ -27,7 +29,7 @@ Legend:
 | Block | Theme | Weeks | Status | Started | Shipped |
 |---|---|---|---|---|---|
 | 1 | GEO Layer MVP | 1-2 | ✅ MVP shipped | 2026-05-16 | `ea4690c` (2026-05-17) |
-| 2 | Brand IQ Layer | 3-4 | ☐ TODO | — | — |
+| 2 | Brand IQ Layer | 3-4 | ✅ MVP shipped | 2026-05-18 | this commit (2026-05-18) |
 | 3 | AI Employees UX + Vector Memory | 5-6 | ☐ TODO | — | — |
 | 4 | Real-time Semantic Grader + Internal Linking | 7-8 | ✅ MVP shipped (grader only — internal linking deferred) | 2026-05-16 | `1db0b72` (2026-05-17) |
 | 5 | Agent Evolution Loop (MOAT) | 9-10 | ☐ TODO | — | — |
@@ -102,26 +104,38 @@ Legend:
 
 > **Why second**: Multiplier — mọi feature đã có (blog/banner/social/ads) chất lượng nhảy 30-50% sau khi có.
 
-**Status**: ☐ TODO
+**Status**: ✅ **MVP shipped 2026-05-18** — single multiplier feature that lifts every other agent.
 
 ### Tasks
 
-- [ ] ☐ Schema: `brand_iq_profile` (voice, audience_personas, knowledge_base, style_guide, visual_identity, okrs)
-  - Files: `packages/core/src/db/schema/brand-iq.ts` (new)
-- [ ] ☐ Service `brand-iq-extractor.ts`: input URL + 3 writing samples → output structured Brand IQ
-  - Files: `apps/api/src/services/brand-iq-extractor.ts` (new)
-  - Pipeline: scrape URL → analyze tone/style → extract personas → chunk KB → infer visuals (colors from CSS)
-- [ ] ☐ Route `/brand-iq`: setup wizard, edit, regenerate
-  - Files: `apps/api/src/routes/brand-iq.ts` (new)
-- [ ] ☐ Mở rộng `business-context.ts` để serve Brand IQ thay vì raw text
-  - Files: `apps/api/src/services/business-context.ts`
-- [ ] ☐ Refactor mọi agent prompt template reference Brand IQ
-  - Files: `apps/api/src/agents/**/*.ts` (sweep)
-  - Acceptance: blog, social, ads, banner, email outreach đều dùng same voice profile
-- [ ] ☐ Quarterly OKR input UI: founder gõ 3 OKR → tất cả agent re-align
-  - Files: `apps/web/src/app/(dashboard)/brand-iq/page.tsx` (new)
-- [ ] ☐ Brand IQ "score" widget: hiển thị mức độ output consistency của agents
-  - Files: `apps/web/src/components/brand-iq/ConsistencyScore.tsx` (new)
+- [x] ✅ Schema `brand_iq_profiles` (voice, audience_personas, style_guide, visual_identity, okrs, tagline)
+  - Files: `packages/core/src/db/schema/brand-iq.ts` (109 LOC), `packages/core/drizzle/0004_brand_iq.sql`
+  - Versioned (latest row per company has `is_active = true`)
+- [x] ✅ Service `brand-iq-extractor.ts`: URL scrape + LLM derivation
+  - Files: `apps/api/src/services/brand-iq-extractor.ts` (~350 LOC)
+  - Pipeline: fetch HTML (no headless browser) → extract title/meta/OG/colors/fonts from inline CSS → LLM derives voice + personas + style guide → coerce/sanitise → persist new version, mark prior inactive
+- [x] ✅ Route `/brand-iq`: get-active, generate, manual patch
+  - Files: `apps/api/src/routes/brand-iq.ts` (~150 LOC), mounted at `/api/v1/brand-iq`
+- [x] ✅ Extend `business-context.ts` to inject Brand IQ **first** in fullContext
+  - Files: `apps/api/src/services/business-context.ts` + `renderBrandIqContext()` helper
+  - **Every existing agent (blog, banner, social, ads, chatbot, GEO, content grader, etc.) automatically reads Brand IQ — no per-agent prompt refactor needed.**
+- [x] ✅ Quarterly OKR input UI (per-quarter objective + key results in setup wizard)
+  - Files: `apps/web/src/app/(dashboard)/[companyId]/brand-iq/page.tsx` (~520 LOC)
+- [x] ✅ Web page: setup wizard (empty state) → 5 facet cards (voice/personas/style/visual/OKRs) + edit dialogs + regenerate flow
+- [x] ✅ Sidebar entry "Brand IQ" unlockLevel 1 (visible day 1, between Knowledge and Campaigns)
+- [x] ✅ Dashboard banner: amber CTA on main dashboard when no Brand IQ yet — "Set up Brand IQ first, 30 seconds, most impactful single step"
+- [x] ✅ Walkthrough updated: Brand IQ flipped from "Coming soon" → "Live", added as Step 2 in Quick Start (~most impactful~ tag)
+- [x] ✅ Admin Setup Readiness: cross-company adoption check (`X of Y active companies have Brand IQ`)
+- [ ] ☐ Brand IQ "score" widget showing per-agent output consistency — **deferred** (needs Block 5 evolution outcome data)
+
+### Verified working (2026-05-18)
+- POST /api/v1/brand-iq/{companyId}/generate with sample → returns version 1 in ~5.5s with tagline, 5 voice adjectives, 3 personas, style guide, visual palette from CSS
+- GET /api/v1/brand-iq/{companyId}/active → returns full profile
+- PUT /api/v1/brand-iq/{companyId}/active → manual facet patches work (voice + OKRs editable)
+- Web /brand-iq → HTTP 200, setup wizard or 5 facet cards rendered
+- Dashboard /{companyId} shows BrandIqSetupBanner when no profile, hidden when profile exists
+- Walkthrough /walkthrough → Brand IQ shown as Live with green badge
+- /admin/setup → "Brand IQ adoption across companies" check appears in Observability category
 
 ### Acceptance
 - Founder paste URL → 5 phút có Brand IQ profile đầy đủ

@@ -284,6 +284,16 @@ export async function resolveFeature(
       creditCost: 4,
       source: 'default',
     },
+    brand_iq_extract: {
+      featureKey,
+      tier: 'premium',
+      provider: 'openai',
+      model: 'gpt-4o',
+      temperature: 0.4,
+      maxTokens: 2500,
+      creditCost: 10,
+      source: 'default',
+    },
   };
   const fallback = defaults[featureKey] ?? {
     featureKey,

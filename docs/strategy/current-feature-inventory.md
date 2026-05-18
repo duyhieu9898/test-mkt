@@ -12,6 +12,8 @@
 | **On-page real-time grader** (Block 4) | ❌ → ✅ | `1db0b72` |
 | **Cross-channel chat — FB Messenger** (Block 6) | ❌ → 🟡 (FB only) | `c640b1d` + inbox page |
 | **Unified inbox messages viewer** | ❌ → ✅ | inbox/messages page |
+| **Walkthrough + Admin Setup Readiness** | ❌ → ✅ | `90553be` |
+| **Brand IQ Layer** (Block 2) | ❌ → ✅ | 2026-05-18 |
 | Other "CRITICAL MISSING" items below | unchanged | — |
 
 
@@ -77,9 +79,11 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 ### Blog Generator with Research — 🟡 PARTIAL
 - AI-native research only; no external fact-checking.
 
-### Tone / Voice / Brand Customization — ✅ YES
-- Files: `apps/api/src/services/business-context.ts`, `apps/api/src/routes/brand.ts`
-- **Gaps**: Not auto-generated from URL+samples (Jasper IQ style).
+### Tone / Voice / Brand Customization — ✅ YES (auto-generated since 2026-05-18)
+- Files: `apps/api/src/services/brand-iq-extractor.ts`, `apps/api/src/routes/brand-iq.ts`, `apps/web/src/app/(dashboard)/[companyId]/brand-iq/page.tsx`, `packages/core/src/db/schema/brand-iq.ts`, `apps/api/src/services/business-context.ts` (injection)
+- Block 2 shipped: auto-extract from URL + 1-5 samples → voice + 3-5 personas + style guide + visual identity (palette/fonts/logo) + tagline + quarterly OKRs.
+- Versioned profile (latest active row per company). Manual edit per facet via PUT.
+- **Every existing agent automatically benefits** — Brand IQ injected at the front of `buildBusinessContext().fullContext`.
 
 ### Templates Library — ✅ YES
 - Files: `apps/api/src/routes/templates.ts`, `apps/api/src/services/template-service.ts`, `packages/core/src/db/schema/templates.ts`
@@ -270,7 +274,7 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 1. ~~**GEO/LLMO tracking** — table stakes 2026.~~ ✅ shipped 2026-05-17 (Block 1, OpenAI+Anthropic, no cron yet)
 2. **Vector embeddings / semantic RAG**.
 3. **Active prompt optimization loop** (skeleton exists, not running).
-4. **Brand IQ auto-extraction** (Jasper IQ pattern).
+4. ~~**Brand IQ auto-extraction** (Jasper IQ pattern).~~ ✅ shipped 2026-05-18 (Block 2, URL+samples→profile, auto-injected into all agents)
 5. ~~**On-page real-time grader** (Surfer/Clearscope baseline).~~ ✅ shipped 2026-05-17 (Block 4, SerpAPI+LLM fallback)
 6. **Topic cluster / internal linking engine**.
 7. **Outcome-based billing**.

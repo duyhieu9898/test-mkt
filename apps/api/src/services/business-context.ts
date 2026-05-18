@@ -21,6 +21,7 @@ import {
   brandIdentities,
   agentMemories,
 } from '@1person/core/db';
+import { getActiveBrandIq, renderBrandIqContext } from './brand-iq-extractor';
 
 /**
  * Visibility filter level — controls which knowledge entries are included.
@@ -148,6 +149,14 @@ export async function buildBusinessContext(
 
   // Build comprehensive context string for LLM
   const contextParts: string[] = [];
+
+  // Brand IQ first — every agent reads this before anything else (Block 2).
+  // Falls back silently if the founder hasn't set one up yet.
+  const brandIq = await getActiveBrandIq(companyId).catch(() => null);
+  if (brandIq) {
+    contextParts.push(renderBrandIqContext(brandIq));
+    contextParts.push('');
+  }
 
   contextParts.push(`COMPANY: ${company?.name || 'Unknown'}`);
   contextParts.push(`INDUSTRY: ${company?.industry || 'Unknown'}`);

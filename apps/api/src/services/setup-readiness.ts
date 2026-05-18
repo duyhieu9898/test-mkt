@@ -240,6 +240,41 @@ async function checkSentry(): Promise<ReadinessItem> {
   };
 }
 
+async function checkBrandIqAdoption(): Promise<ReadinessItem> {
+  // Cross-company adoption metric — what % of active companies have a
+  // Brand IQ profile. Surfaces low founder adoption to the admin.
+  let total = 0;
+  let withProfile = 0;
+  try {
+    const totals = await db.execute(
+      sql`SELECT COUNT(*)::int AS n FROM companies WHERE status IN ('setup', 'active')`,
+    );
+    total = Number((totals as any)[0]?.n ?? 0);
+    const adopted = await db.execute(
+      sql`SELECT COUNT(DISTINCT company_id)::int AS n FROM brand_iq_profiles WHERE is_active = true`,
+    );
+    withProfile = Number((adopted as any)[0]?.n ?? 0);
+  } catch {
+    // table may not exist before migration runs
+    total = 0;
+    withProfile = 0;
+  }
+  const pct = total > 0 ? Math.round((withProfile / total) * 100) : 0;
+  const status: ReadinessStatus = total === 0 ? 'warn' : pct >= 80 ? 'ok' : pct >= 30 ? 'warn' : 'missing';
+  return {
+    id: 'observability.brand_iq_adoption',
+    category: 'observability',
+    label: 'Brand IQ adoption across companies',
+    status,
+    detail:
+      total === 0
+        ? 'No active companies yet — once founders sign up, this measures how many have set up their Brand IQ.'
+        : `${withProfile} of ${total} active companies (${pct}%) have an active Brand IQ profile. Until set up, every agent uses generic AI tone instead of brand voice.`,
+    fixHref: '/admin/users',
+    enables: ['Consistent brand voice across all agent outputs', 'Audience-aware personas', 'Style guide enforcement'],
+  };
+}
+
 async function checkJwtSecret(): Promise<ReadinessItem> {
   const secret = process.env.JWT_SECRET ?? '';
   const isDefault =
@@ -272,6 +307,7 @@ const RUN_CHECKS = [
   checkFbMessenger,
   checkGSC,
   checkSentry,
+  checkBrandIqAdoption,
   checkJwtSecret,
 ];
 

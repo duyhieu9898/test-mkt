@@ -105,10 +105,12 @@ const SECTIONS = (companyId: string): Section[] => [
       {
         name: 'Brand IQ (auto voice + audience extract)',
         description: 'Paste your URL + samples. Get a structured brand voice, audience personas, style guide that every agent will reuse.',
-        href: null,
-        status: 'soon',
+        href: `/${companyId}/brand-iq`,
+        status: 'live',
         icon: Sparkles,
         block: 'Block 2',
+        whatItDoes:
+          'Single source of truth for voice + audience + style + visuals + OKRs. Every blog, banner, ad, social post, chat reply, landing page automatically reads it — no per-agent setup needed.',
       },
     ],
   },
@@ -378,7 +380,7 @@ export default function WalkthroughPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
-            <Rocket className="w-4 h-4 text-primary" /> Quick start — 5 minutes
+            <Rocket className="w-4 h-4 text-primary" /> Quick start — 6 steps, ~10 minutes
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -401,6 +403,22 @@ export default function WalkthroughPage() {
                 2
               </span>
               <span>
+                Set up{' '}
+                <Link href={`/${companyId}/brand-iq`} className="text-primary underline font-medium">
+                  Brand IQ
+                </Link>{' '}
+                — paste your URL + 1-2 writing samples. Takes ~30 seconds. After this, every blog,
+                banner, ad, chat reply uses your real voice instead of generic AI tone.
+                <span className="inline-block ml-1 text-[10px] uppercase font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                  most impactful
+                </span>
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center shrink-0">
+                3
+              </span>
+              <span>
                 Add 3-5 competitors at{' '}
                 <Link href={`/${companyId}/market`} className="text-primary underline font-medium">
                   Market &amp; Competitors
@@ -410,7 +428,7 @@ export default function WalkthroughPage() {
             </li>
             <li className="flex gap-3">
               <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center shrink-0">
-                3
+                4
               </span>
               <span>
                 Open{' '}
@@ -423,7 +441,7 @@ export default function WalkthroughPage() {
             </li>
             <li className="flex gap-3">
               <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center shrink-0">
-                4
+                5
               </span>
               <span>
                 Try the{' '}
@@ -436,7 +454,7 @@ export default function WalkthroughPage() {
             </li>
             <li className="flex gap-3">
               <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center shrink-0">
-                5
+                6
               </span>
               <span>
                 Connect your Facebook Page at{' '}

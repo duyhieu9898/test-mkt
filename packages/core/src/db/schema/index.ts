@@ -68,3 +68,6 @@ export * from './content-grader';
 
 // Omnichannel Inbox (Block 6 / Đợt 6 — FB Messenger MVP)
 export * from './omnichannel';
+
+// Brand IQ Layer (Block 2 — voice + audience + style + visual + OKRs)
+export * from './brand-iq';
