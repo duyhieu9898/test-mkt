@@ -52,6 +52,54 @@ export class CMSIntegration {
   }
 
   /**
+   * Upload a media file (image) to the WP library.
+   * Returns the media ID + source URL so the caller can attach it as
+   * a featured_media on a post.
+   */
+  async uploadMedia(
+    siteUrl: string,
+    username: string,
+    appPassword: string,
+    imageBytes: Uint8Array,
+    filename: string,
+    contentType = 'image/png',
+    altText?: string,
+  ): Promise<{ id: number; url: string }> {
+    const baseUrl = this.normalizeUrl(siteUrl);
+    const res = await fetch(`${baseUrl}/wp-json/wp/v2/media`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(username, appPassword),
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      },
+      body: imageBytes as unknown as BodyInit,
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`WordPress media upload failed (HTTP ${res.status}): ${errBody.slice(0, 300)}`);
+    }
+    const data = await res.json();
+    const mediaId = data.id as number;
+    const url = (data.source_url as string) ?? (data.guid?.rendered as string) ?? '';
+    // Optional alt text
+    if (altText) {
+      try {
+        await fetch(`${baseUrl}/wp-json/wp/v2/media/${mediaId}`, {
+          method: 'POST',
+          headers: { ...this.authHeaders(username, appPassword), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ alt_text: altText }),
+          signal: AbortSignal.timeout(10000),
+        });
+      } catch {
+        // alt text is best-effort
+      }
+    }
+    return { id: mediaId, url };
+  }
+
+  /**
    * Publish a post to WordPress.
    */
   async publishPost(
@@ -65,6 +113,7 @@ export class CMSIntegration {
       status: 'draft' | 'publish';
       categories?: number[];
       tags?: string[];
+      featuredMediaId?: number;
     }
   ): Promise<{ id: number; url: string }> {
     const baseUrl = this.normalizeUrl(siteUrl);
@@ -84,6 +133,7 @@ export class CMSIntegration {
     if (post.excerpt) body.excerpt = post.excerpt;
     if (post.categories && post.categories.length > 0) body.categories = post.categories;
     if (tagIds.length > 0) body.tags = tagIds;
+    if (post.featuredMediaId) body.featured_media = post.featuredMediaId;
 
     const response = await fetch(`${baseUrl}/wp-json/wp/v2/posts`, {
       method: 'POST',

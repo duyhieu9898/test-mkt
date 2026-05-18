@@ -1,9 +1,9 @@
 # 1Person AI — Build-Now Plan (18-week Ship Plan)
 
-> Version: 1.4 — updated 2026-05-18 (Block 3 AI Employees + Vector Memory shipped — pgvector RAG online, 7 named employees with DM chat)
+> Version: 1.5 — updated 2026-05-18 (Block 8 Campaign Launcher + WordPress publish + image variations shipped)
 > Status: **LIVE document — update mỗi tuần**
 >
-> **Progress**: 5 of 9 blocks shipped (Block 1 GEO, Block 2 Brand IQ, Block 3 AI Employees + Vector, Block 4 Content Grader, Block 6 FB Messenger MVP). 4 remaining (Blocks 5, 7, 8, 9). Recommended next order: 8 → 5 → 7 → 9 (Block 5 evolution loop now unblocked by Block 3 RAG infra).
+> **Progress**: 6 of 9 blocks shipped (Block 1 GEO, Block 2 Brand IQ, Block 3 AI Employees + Vector, Block 4 Content Grader, Block 6 FB Messenger MVP, Block 8 Multimodal + WP). 3 remaining (Blocks 5, 7, 9). Recommended next order: 5 → 7 → 9.
 >
 > Mục tiêu: ship "2027-grade" sản phẩm trong 18 tuần. Order theo **biggest gap × moat potential × shipping cost**.
 
@@ -35,7 +35,7 @@ Legend:
 | 5 | Agent Evolution Loop (MOAT) | 9-10 | ☐ TODO | — | — |
 | 6 | Omnichannel Chat (Đợt 6) | 11-12 | 🟡 MVP shipped (FB Messenger only; Inbox·Messages page added) | 2026-05-16 | `c640b1d` + Inbox page (2026-05-17) |
 | 7 | Outcome-Based Pricing + Audit Cards | 13-14 | ☐ TODO | — | — |
-| 8 | Multimodal SEO Pipeline | 15-16 | ☐ TODO | — | — |
+| 8 | Multimodal SEO Pipeline | 15-16 | ✅ MVP shipped (Campaign Launcher + WP publish + image variations; real video render deferred) | 2026-05-18 | this commit (2026-05-18) |
 | 9 | Programmatic SEO + Studio | 17-18 | ☐ TODO | — | — |
 
 ---

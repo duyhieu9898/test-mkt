@@ -16,6 +16,9 @@
 | **Brand IQ Layer** (Block 2) | ❌ → ✅ | `5781c30` |
 | **pgvector + Vector RAG memory** (Block 3 infra) | ❌ → ✅ | 2026-05-18 |
 | **AI Employees with personalities + DM chat** (Block 3) | ❌ → ✅ | 2026-05-18 |
+| **WordPress publish + featured image upload** (Block 8) | ❌ → ✅ | 2026-05-18 |
+| **Blog image variations engine** (Block 8) | ❌ → ✅ | 2026-05-18 |
+| **Campaign Launcher (one-click orchestrator)** (Block 8) | ❌ → ✅ | 2026-05-18 |
 | Other "CRITICAL MISSING" items below | unchanged | — |
 
 
@@ -286,7 +289,7 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 9. ~~**AI Employees with personalities** (Sintra UX).~~ ✅ shipped 2026-05-18 (Block 3 — 7 named employees with DM chat)
 10. **Programmatic SEO at scale with editorial gates**.
 11. 🟡 **Cross-channel chat** — FB Messenger shipped 2026-05-17 (Block 6); Zalo/WhatsApp/IG/voice still missing.
-12. **Visual/video integrated with SEO pipeline**.
+12. 🟡 **Visual/video integrated with SEO pipeline** — Block 8 shipped Campaign Launcher (blog + hero/in-content images + WP publish + social drafts + GEO seed) 2026-05-18. Real video rendering (Runway/Pika) still deferred.
 13. **Real-time WebSocket updates** (currently polling).
 14. **Studio (no-code agent builder)**.
 15. **Mobile native app**.

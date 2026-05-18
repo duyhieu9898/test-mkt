@@ -74,3 +74,6 @@ export * from './brand-iq';
 
 // AI Employees + Vector Memory (Block 3)
 export * from './team';
+
+// Campaign Launches (Block 8 — orchestrate blog + images + WP + social)
+export * from './launches';

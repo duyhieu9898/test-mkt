@@ -53,6 +53,7 @@ const navigation = [
   { name: 'Brand IQ', href: '/brand-iq', icon: Sparkles, unlockLevel: 1 },
   { name: 'Your AI Team', href: '/team', icon: Users, unlockLevel: 1 },
   { name: 'Campaigns', href: '/campaigns', icon: Rocket, unlockLevel: 2 },
+  { name: 'Campaign Launcher', href: '/launch', icon: Rocket, unlockLevel: 2 },
   { name: 'Market & Competitors', href: '/market', icon: Globe, unlockLevel: 2 },
   { name: 'AI Visibility (GEO)', href: '/geo', icon: Search, unlockLevel: 2 },
   { name: 'Content Editor', href: '/editor', icon: FileEdit, unlockLevel: 2 },

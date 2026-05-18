@@ -148,12 +148,32 @@ const SECTIONS = (companyId: string): Section[] => [
         icon: Share2,
       },
       {
+        name: 'Campaign Launcher (one-click multi-channel)',
+        description: 'One keyword → blog + hero + in-content images + WordPress draft + LinkedIn/FB drafts + GEO tracking, all in one orchestrated run.',
+        href: `/${companyId}/launch`,
+        status: 'live',
+        icon: Rocket,
+        block: 'Block 8',
+        whatItDoes:
+          'Pick a target keyword + which platforms to publish to. The orchestrator generates the blog post (using your Brand IQ), 1 hero + 2 in-content images, embeds for AI memory, uploads featured image + publishes draft to your connected WordPress site, drafts platform-native social posts, and seeds a GEO tracking prompt — typically in 30-60 seconds.',
+      },
+      {
+        name: 'WordPress publishing',
+        description: 'Connect your WordPress site (Application Password). Blog drafts + featured images push straight in.',
+        href: `/${companyId}/seo-engine`,
+        status: 'live',
+        icon: FileEdit,
+        block: 'Block 8',
+        whatItDoes:
+          'Existing site? Connect with Application Password, the launcher then publishes drafts (with featured image upload) you can review and ship from within WP itself.',
+      },
+      {
         name: 'Real video rendering (TikTok / YouTube auto-publish)',
         description: 'End-to-end pipeline: blog → script → rendered video → upload with SEO metadata.',
         href: null,
         status: 'soon',
         icon: Video,
-        block: 'Block 8',
+        block: 'Block 8 v2',
       },
     ],
   },
@@ -489,6 +509,94 @@ export default function WalkthroughPage() {
           </div>
         );
       })}
+
+      {/* Recipe: B2B + WordPress (bap-blockchain.com style) */}
+      <Card className="border-indigo-200 bg-gradient-to-br from-indigo-50/60 to-blue-50/40">
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Rocket className="w-4 h-4 text-indigo-600" /> Recipe — B2B service company on WordPress
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Example: a blockchain development agency wants enterprise buyers to find them via Google
+            + LinkedIn + ChatGPT. End-to-end workflow using only Live features.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <ol className="space-y-2 text-sm">
+            <li className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center shrink-0">1</span>
+              <span>
+                <Link href={`/${companyId}/brand-iq`} className="text-indigo-700 underline font-medium">
+                  Brand IQ
+                </Link>{' '}
+                — paste your WordPress site URL + 1-2 case study writeups. The system auto-extracts
+                your B2B voice, audience personas (CTO, Head of Eng, etc.) and your visual palette.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center shrink-0">2</span>
+              <span>
+                <Link href={`/${companyId}/seo-engine`} className="text-indigo-700 underline font-medium">
+                  Connect WordPress
+                </Link>{' '}
+                — paste your site URL + an Application Password (WP Admin → Users → Profile →
+                Application Passwords). Drafts will land in WP for you to review.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center shrink-0">3</span>
+              <span>
+                Connect{' '}
+                <Link href={`/${companyId}/social`} className="text-indigo-700 underline font-medium">
+                  LinkedIn
+                </Link>{' '}
+                via the platform connections. (Most important channel for enterprise B2B.)
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center shrink-0">4</span>
+              <span>
+                Add 3-5 competitors at{' '}
+                <Link href={`/${companyId}/market`} className="text-indigo-700 underline font-medium">
+                  Market &amp; Competitors
+                </Link>{' '}
+                (e.g. Consensys, Chainstack, similar agencies).
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center shrink-0">5</span>
+              <span>
+                Open{' '}
+                <Link href={`/${companyId}/geo`} className="text-indigo-700 underline font-medium">
+                  AI Visibility (GEO)
+                </Link>{' '}
+                and add prompts your buyers ask AI tools — e.g. <em>"best blockchain development
+                companies for enterprise"</em>, <em>"top Web3 dev agencies 2026"</em>. Click Run Now
+                to baseline today.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center shrink-0">6</span>
+              <span>
+                Open{' '}
+                <Link href={`/${companyId}/launch`} className="text-indigo-700 underline font-medium">
+                  Campaign Launcher
+                </Link>
+                . Keyword: <em>"enterprise blockchain development services"</em>. Toggle WordPress +
+                LinkedIn ON. Click Launch. In ~60 seconds you have a draft blog with hero image
+                in WP, a draft LinkedIn post in your social queue, and the keyword tracked in GEO.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center shrink-0">7</span>
+              <span>
+                Review in WP, hit Publish. Repeat the launcher once a week with new keywords. Watch
+                GEO Share-of-Voice trend up over 4-8 weeks.
+              </span>
+            </li>
+          </ol>
+        </CardContent>
+      </Card>
 
       <Card className="border-dashed">
         <CardContent className="p-5 text-center text-sm text-muted-foreground">
