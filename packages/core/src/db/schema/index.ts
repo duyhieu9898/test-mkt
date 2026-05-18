@@ -71,3 +71,6 @@ export * from './omnichannel';
 
 // Brand IQ Layer (Block 2 — voice + audience + style + visual + OKRs)
 export * from './brand-iq';
+
+// AI Employees + Vector Memory (Block 3)
+export * from './team';

@@ -255,11 +255,13 @@ const SECTIONS = (companyId: string): Section[] => [
       },
       {
         name: 'AI Employees with personalities',
-        description: 'Named team members (Cleo CEO, Seomi SEO, etc.) with KPI dashboards and weekly check-ins.',
-        href: null,
-        status: 'soon',
+        description: 'Seven named team members (Cleo CEO, Cassie Support, Soshie Social, Seomi SEO, Geoffrey GEO, Penn Copy, Vio Video) — each with KPI dashboard and DM chat.',
+        href: `/${companyId}/team`,
+        status: 'live',
         icon: Users,
         block: 'Block 3',
+        whatItDoes:
+          'Each employee replies in their own voice, reads your Brand IQ, and runs semantic search across your knowledge base + blog posts + GEO mentions before answering. Open any card to chat — every answer cites the memory snippets it leaned on.',
       },
       {
         name: 'Agent evolution loop (auto-improving prompts)',

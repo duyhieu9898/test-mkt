@@ -51,6 +51,7 @@ const navigation = [
   { name: 'CEO Advisor', href: '/insights', icon: Sparkles, unlockLevel: 1 },
   { name: 'Knowledge', href: '/knowledge', icon: BookOpen, unlockLevel: 1 },
   { name: 'Brand IQ', href: '/brand-iq', icon: Sparkles, unlockLevel: 1 },
+  { name: 'Your AI Team', href: '/team', icon: Users, unlockLevel: 1 },
   { name: 'Campaigns', href: '/campaigns', icon: Rocket, unlockLevel: 2 },
   { name: 'Market & Competitors', href: '/market', icon: Globe, unlockLevel: 2 },
   { name: 'AI Visibility (GEO)', href: '/geo', icon: Search, unlockLevel: 2 },

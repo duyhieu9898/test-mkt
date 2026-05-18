@@ -28,6 +28,7 @@ import {
   type BrandIqProfile,
 } from '@1person/core/db';
 import { llmGenerate, extractJSON } from '../lib/llm';
+import { embedBrandIqProfile } from './embedding-service';
 
 /* ─── Public types ───────────────────────────────────────────────── */
 
@@ -348,6 +349,19 @@ export async function generateBrandIq(companyId: string, input: BrandIqInput): P
     .returning();
 
   if (!inserted) throw new Error('Failed to persist Brand IQ');
+
+  // Auto-embed so AI Employees can semantically recall brand context
+  // when chatting. Don't block on failure — embedding is non-critical.
+  try {
+    await embedBrandIqProfile({
+      companyId,
+      profileId: inserted.id,
+      text: renderBrandIqContext(inserted),
+    });
+  } catch (e) {
+    console.warn('[brand-iq] embedding failed (non-fatal):', (e as Error).message);
+  }
+
   return inserted;
 }
 

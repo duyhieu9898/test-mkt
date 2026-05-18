@@ -294,6 +294,16 @@ export async function resolveFeature(
       creditCost: 10,
       source: 'default',
     },
+    employee_chat: {
+      featureKey,
+      tier: 'balanced',
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      temperature: 0.6,
+      maxTokens: 1200,
+      creditCost: 2,
+      source: 'default',
+    },
   };
   const fallback = defaults[featureKey] ?? {
     featureKey,

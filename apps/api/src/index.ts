@@ -73,6 +73,7 @@ import geoRouter from './routes/geo';
 import contentEditorRouter from './routes/content-editor';
 import adminSetupRouter from './routes/admin-setup';
 import brandIqRouter from './routes/brand-iq';
+import teamRouter from './routes/team';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -214,6 +215,7 @@ api.route('/geo', geoRouter);
 api.route('/content-editor', contentEditorRouter);
 api.route('/admin/setup', adminSetupRouter);
 api.route('/brand-iq', brandIqRouter);
+api.route('/team', teamRouter);
 
 // Mount API
 app.route('/api/v1', api);

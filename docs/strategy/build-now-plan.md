@@ -1,9 +1,9 @@
 # 1Person AI — Build-Now Plan (18-week Ship Plan)
 
-> Version: 1.3 — updated 2026-05-18 (Block 2 Brand IQ Layer shipped — multiplies every other agent's output quality)
+> Version: 1.4 — updated 2026-05-18 (Block 3 AI Employees + Vector Memory shipped — pgvector RAG online, 7 named employees with DM chat)
 > Status: **LIVE document — update mỗi tuần**
 >
-> **Progress**: 4 of 9 blocks shipped (Block 1 GEO, Block 2 Brand IQ, Block 4 Content Grader, Block 6 FB Messenger MVP). 5 remaining (Blocks 3, 5, 7, 8, 9). Recommended next order: 3 → 8 → 5 → 7 → 9 (dependency-aware).
+> **Progress**: 5 of 9 blocks shipped (Block 1 GEO, Block 2 Brand IQ, Block 3 AI Employees + Vector, Block 4 Content Grader, Block 6 FB Messenger MVP). 4 remaining (Blocks 5, 7, 8, 9). Recommended next order: 8 → 5 → 7 → 9 (Block 5 evolution loop now unblocked by Block 3 RAG infra).
 >
 > Mục tiêu: ship "2027-grade" sản phẩm trong 18 tuần. Order theo **biggest gap × moat potential × shipping cost**.
 
@@ -29,8 +29,8 @@ Legend:
 | Block | Theme | Weeks | Status | Started | Shipped |
 |---|---|---|---|---|---|
 | 1 | GEO Layer MVP | 1-2 | ✅ MVP shipped | 2026-05-16 | `ea4690c` (2026-05-17) |
-| 2 | Brand IQ Layer | 3-4 | ✅ MVP shipped | 2026-05-18 | this commit (2026-05-18) |
-| 3 | AI Employees UX + Vector Memory | 5-6 | ☐ TODO | — | — |
+| 2 | Brand IQ Layer | 3-4 | ✅ MVP shipped | 2026-05-18 | `5781c30` (2026-05-18) |
+| 3 | AI Employees UX + Vector Memory | 5-6 | ✅ MVP shipped | 2026-05-18 | this commit (2026-05-18) |
 | 4 | Real-time Semantic Grader + Internal Linking | 7-8 | ✅ MVP shipped (grader only — internal linking deferred) | 2026-05-16 | `1db0b72` (2026-05-17) |
 | 5 | Agent Evolution Loop (MOAT) | 9-10 | ☐ TODO | — | — |
 | 6 | Omnichannel Chat (Đợt 6) | 11-12 | 🟡 MVP shipped (FB Messenger only; Inbox·Messages page added) | 2026-05-16 | `c640b1d` + Inbox page (2026-05-17) |
@@ -44,7 +44,7 @@ Legend:
 
 | Task | Status | Notes |
 |---|---|---|
-| Enable `pgvector` extension trong PostgreSQL | ☐ TODO | Cần trước Block 3 |
+| Enable `pgvector` extension trong PostgreSQL | ✅ done 2026-05-18 | enabled via Block 3 migration |
 | WebSocket realtime (Socket.io) replace polling | ☐ TODO | Cần trước Block 6 |
 | Redis Streams event bus | ☐ TODO | Cần trước Block 5 |
 | OpenTelemetry traces per agent action | ☐ TODO | Cần trước Block 5 |
@@ -152,7 +152,30 @@ Legend:
 
 > **Why third**: Chuyển nhận thức "AI tool" → "AI company". Quan trọng positioning + viral demo.
 
-**Status**: ☐ TODO
+**Status**: ✅ **MVP shipped 2026-05-18** — 7 named employees with DM chat + pgvector RAG over Brand IQ.
+
+### What shipped
+- pgvector extension enabled. `embedding_chunks` table (1536-dim, ivfflat cosine index).
+- `embedding-service.ts`: chunk → embed (OpenAI text-embedding-3-small) → upsert → semantic search (`<=>` cosine). Auto-index hook wired into Brand IQ generate; hooks ready for blog posts and knowledge entries.
+- `team-service.ts`: 7 default employees (Cleo, Cassie, Soshie, Seomi, Geoffrey, Penn, Vio) seeded lazily per company. Each has avatar + accent color + persona prompt + KPI slot definitions.
+- Chat handler grounds every reply with Brand IQ + business context + top-K semantic snippets; replies carry citations the founder can expand.
+- KPI resolver maps slot keys to existing data (growth_score, blog_count, social_count, leads_count, chatbot_conversations, geo_sov, static).
+- Routes: `GET /team/{cid}`, `GET /team/{cid}/{slug}`, `POST /team/{cid}/{slug}/chat`.
+- Web pages: `/team` grid with 7 employee cards + memory summary; `/team/{slug}` DM-style chat with KPI strip, intro card, citation expansion per reply.
+- Sidebar entry "Your AI Team" (Users icon, unlockLevel 1).
+- Walkthrough updated: "AI Employees with personalities" → Live with deep link.
+- Credit feature `employee_chat` registered (balanced tier, 2 credits per chat).
+
+### Verified working (2026-05-18)
+- GET /api/v1/team/{cid} → 7 employees seeded automatically, KPI snapshots resolved
+- POST /api/v1/brand-iq/{cid}/generate → embedding indexed automatically (1 chunk after first gen)
+- POST /api/v1/team/{cid}/cleo/chat → ~4s reply, persona-on, cites brand_iq snippet with score
+- Web pages /team, /team/cleo, /team/seomi all HTTP 200
+
+### Deferred (next iteration)
+- Weekly Monday auto-check-in cron (each employee posts a status update to inbox)
+- Per-employee prompt evolution loop (rolls into Block 5)
+- Embedding backfill for existing knowledge entries / blog posts (currently embeds on next save)
 
 ### Tasks
 

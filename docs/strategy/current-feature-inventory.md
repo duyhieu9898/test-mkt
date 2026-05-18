@@ -13,7 +13,9 @@
 | **Cross-channel chat — FB Messenger** (Block 6) | ❌ → 🟡 (FB only) | `c640b1d` + inbox page |
 | **Unified inbox messages viewer** | ❌ → ✅ | inbox/messages page |
 | **Walkthrough + Admin Setup Readiness** | ❌ → ✅ | `90553be` |
-| **Brand IQ Layer** (Block 2) | ❌ → ✅ | 2026-05-18 |
+| **Brand IQ Layer** (Block 2) | ❌ → ✅ | `5781c30` |
+| **pgvector + Vector RAG memory** (Block 3 infra) | ❌ → ✅ | 2026-05-18 |
+| **AI Employees with personalities + DM chat** (Block 3) | ❌ → ✅ | 2026-05-18 |
 | Other "CRITICAL MISSING" items below | unchanged | — |
 
 
@@ -179,10 +181,12 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 - Files: `apps/api/src/agents/orchestrator.ts:1-150`, `apps/api/src/lib/queue.ts`
 - DAG dependency resolution, sequential exec, auto-expand from suggestions.
 
-### Memory / RAG / Vector DB — 🟡 PARTIAL (no vector)
-- Files: `apps/api/src/agents/memory.ts`, `apps/api/src/services/knowledge-extraction.ts`, `packages/core/src/db/schema/memory.ts`, `apps/api/src/routes/knowledge.ts`
-- Memory store (context/events/feedback), KB CRUD, GSC stored as KB entry, brain extraction.
-- **Gaps**: No vector embeddings, no semantic search.
+### Memory / RAG / Vector DB — ✅ YES (pgvector shipped 2026-05-18)
+- Files: `apps/api/src/services/embedding-service.ts`, `packages/core/src/db/schema/team.ts` (`embedding_chunks`), `packages/core/drizzle/0005_team.sql` (ivfflat cosine index)
+- text-embedding-3-small (1536-dim). `semanticSearch(companyId, query, {sourceTypes, limit, minScore})` returns top-K with citations.
+- Auto-index hooks wired into Brand IQ generate. Hooks ready for blog posts + knowledge entries (callers add as those flows ship).
+- Used by: AI Employees chat (Block 3), Brand IQ injection (Block 2) — every employee reply cites semantic snippets.
+- **Gaps**: Embedding backfill for existing content not yet automated; per-feature search filters could expand.
 
 ### Tool Use / Function Calling — ✅ YES
 - Files: `apps/api/src/intelligence/tools.ts`, `apps/api/src/services/tool-registry-service.ts`, `apps/api/src/services/skill-registry-service.ts`
@@ -272,14 +276,14 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 > See [2027-product-vision.md](./2027-product-vision.md) and [competitive-research-2026.md](./competitive-research-2026.md) for full context.
 
 1. ~~**GEO/LLMO tracking** — table stakes 2026.~~ ✅ shipped 2026-05-17 (Block 1, OpenAI+Anthropic, no cron yet)
-2. **Vector embeddings / semantic RAG**.
+2. ~~**Vector embeddings / semantic RAG**.~~ ✅ shipped 2026-05-18 (Block 3 infra — pgvector + embedding-service)
 3. **Active prompt optimization loop** (skeleton exists, not running).
 4. ~~**Brand IQ auto-extraction** (Jasper IQ pattern).~~ ✅ shipped 2026-05-18 (Block 2, URL+samples→profile, auto-injected into all agents)
 5. ~~**On-page real-time grader** (Surfer/Clearscope baseline).~~ ✅ shipped 2026-05-17 (Block 4, SerpAPI+LLM fallback)
 6. **Topic cluster / internal linking engine**.
 7. **Outcome-based billing**.
 8. **Audit cards** for AI actions.
-9. **AI Employees with personalities** (Sintra UX).
+9. ~~**AI Employees with personalities** (Sintra UX).~~ ✅ shipped 2026-05-18 (Block 3 — 7 named employees with DM chat)
 10. **Programmatic SEO at scale with editorial gates**.
 11. 🟡 **Cross-channel chat** — FB Messenger shipped 2026-05-17 (Block 6); Zalo/WhatsApp/IG/voice still missing.
 12. **Visual/video integrated with SEO pipeline**.
