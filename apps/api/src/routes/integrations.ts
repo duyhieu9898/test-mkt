@@ -386,7 +386,11 @@ async function handleGSCAuthUrl(c: any) {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
   const apiBase = baseUrl.includes('/api/v1') ? baseUrl : `${baseUrl}/api/v1`;
   const redirectUri = `${apiBase}/integrations/google/callback`;
-  const scope = 'https://www.googleapis.com/auth/webmasters.readonly';
+  // One Google connect grants both Search Console AND Analytics (GA4) read access.
+  const scope = [
+    'https://www.googleapis.com/auth/webmasters.readonly',
+    'https://www.googleapis.com/auth/analytics.readonly',
+  ].join(' ');
   const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent&state=${c.get('user').userId}`;
   return c.json({ url });
 }

@@ -1,18 +1,24 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+/**
+ * Publish Dialog — subdomain + SEO submission for admin review.
+ * doc 10 §L3 (Đợt 5). No hosting keys — CEO picks a subdomain, fills SEO,
+ * submits for review. Admin approves at /admin/publish-queue.
+ */
+
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Globe, Loader2, AlertCircle, ArrowRight } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Globe, Loader2, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api/client';
 import { useAuthStore } from '@/stores/auth-store';
 import { useQuery } from '@tanstack/react-query';
-import Link from 'next/link';
+import { BlockListRenderer } from './blocks/block-renderer';
 
 interface PublishDialogProps {
   open: boolean;
@@ -22,180 +28,152 @@ interface PublishDialogProps {
   onPublished?: (url: string) => void;
 }
 
+interface PageData {
+  id: string; name: string; subdomain: string | null;
+  seo: { title?: string; description?: string; keywords?: string[] } | null;
+  primaryColor: string;
+  content: { blocks?: any[] } | null;
+  publishApprovalStatus: 'draft' | 'pending_approval' | 'approved' | 'rejected';
+  publishRejectReason: string | null;
+}
+
+const SUB_RE = /^[a-z0-9-]+$/;
+
 export function PublishDialog({ open, onOpenChange, pageId, companyId, onPublished }: PublishDialogProps) {
-  const token = useAuthStore((state) => state.token);
-  const router = useRouter();
-
-  const [target, setTarget] = useState<'builtin' | 'wordpress' | 'aws'>('builtin');
-  const [wpPath, setWpPath] = useState('');
-  const [wpStatus, setWpStatus] = useState<'draft' | 'publish'>('publish');
-  const [awsBucket, setAwsBucket] = useState('');
-  const [awsRegion, setAwsRegion] = useState('ap-southeast-1');
-  const [awsAccessKey, setAwsAccessKey] = useState('');
-  const [awsSecretKey, setAwsSecretKey] = useState('');
-  const [isPublishing, setIsPublishing] = useState(false);
-
-  // Check WordPress connection
-  const { data: wpConnection } = useQuery<{ connected: boolean; siteUrl?: string }>({
-    queryKey: ['wp-status-publish', companyId],
-    queryFn: () => api.post(`/seo-engine/company/${companyId}/wordpress/test`, {}, { token: token! }),
+  const token = useAuthStore((s) => s.token);
+  const { data: page, refetch } = useQuery<PageData>({
+    queryKey: ['publish-dialog-page', pageId],
+    queryFn: () => api.get<PageData>(`/landing-pages/${pageId}`, { token: token! }),
     enabled: !!token && open,
   });
 
-  const wpConnected = wpConnection?.connected === true;
+  const [subdomain, setSubdomain] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [keywords, setKeywords] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handlePublish = async () => {
-    if (!token) return;
-    setIsPublishing(true);
+  useEffect(() => {
+    if (!page) return;
+    setSubdomain(page.subdomain || '');
+    setTitle(page.seo?.title || page.name || '');
+    setDescription(page.seo?.description || '');
+    setKeywords((page.seo?.keywords || []).join(', '));
+  }, [page, open]);
 
+  const subError = useMemo(() => {
+    if (!subdomain) return 'Required';
+    if (subdomain.length < 3 || subdomain.length > 60) return '3 to 60 characters';
+    if (!SUB_RE.test(subdomain)) return 'Lowercase letters, digits, and dashes only';
+    return null;
+  }, [subdomain]);
+
+  const status = page?.publishApprovalStatus || 'draft';
+  const isPending = status === 'pending_approval';
+
+  const handleSubmit = async () => {
+    if (!token || !page) return;
+    if (subError) return toast.error(subError);
+    if (!title.trim() || !description.trim()) return toast.error('Meta title and description are required');
+    setSubmitting(true);
     try {
-      const body: any = { target };
-
-      if (target === 'wordpress') {
-        if (!wpConnected) {
-          toast.error('Please connect WordPress first in Settings');
-          setIsPublishing(false);
-          return;
-        }
-        body.wordpress = {
-          parentPath: wpPath || undefined,
-          pageStatus: wpStatus,
-        };
-      } else if (target === 'aws') {
-        if (!awsBucket || !awsAccessKey || !awsSecretKey) {
-          toast.error('Please fill in all AWS fields');
-          setIsPublishing(false);
-          return;
-        }
-        body.aws = {
-          bucket: awsBucket,
-          region: awsRegion,
-          accessKeyId: awsAccessKey,
-          secretAccessKey: awsSecretKey,
-        };
-      }
-
-      const res = await api.post<{ success: boolean; publishedUrl: string; message: string }>(
-        `/landing-pages/${pageId}/publish`, body, { token }
+      await api.post(
+        `/landing-pages/${companyId}/${pageId}/submit-publish`,
+        {
+          subdomain: subdomain.toLowerCase(),
+          seo: {
+            metaTitle: title.trim(),
+            metaDescription: description.trim(),
+            metaKeywords: keywords.split(',').map((s) => s.trim()).filter(Boolean),
+          },
+        },
+        { token },
       );
-
-      if (res.success) {
-        toast.success(res.message || 'Page published!');
-        onOpenChange(false);
-        onPublished?.(res.publishedUrl);
-      } else {
-        toast.error('Publishing failed');
-      }
-    } catch (err: any) {
-      toast.error(err.message || 'Could not publish page');
-    } finally {
-      setIsPublishing(false);
-    }
+      toast.success('Submitted for review. An admin will approve shortly.');
+      await refetch();
+      onPublished?.(`/pages/${subdomain.toLowerCase()}`);
+      onOpenChange(false);
+    } catch (e: any) {
+      toast.error(e.message || 'Could not submit page');
+    } finally { setSubmitting(false); }
   };
+
+  const badge =
+    status === 'pending_approval' ? <Badge className="gap-1 bg-amber-100 text-amber-700 border-amber-200"><Clock className="w-3 h-3" />Pending review</Badge>
+    : status === 'approved' ? <Badge className="gap-1 bg-emerald-100 text-emerald-700 border-emerald-200"><CheckCircle2 className="w-3 h-3" />Live</Badge>
+    : status === 'rejected' ? <Badge className="gap-1 bg-red-100 text-red-700 border-red-200"><AlertCircle className="w-3 h-3" />Rejected</Badge>
+    : <Badge variant="outline">Draft</Badge>;
+
+  const primaryLabel =
+    status === 'draft' ? 'Submit for publish approval'
+    : status === 'pending_approval' ? 'Waiting for admin review'
+    : status === 'approved' ? 'Resubmit changes'
+    : 'Submit again';
+
+  const blocks = (page?.content?.blocks as any[]) || [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle>Publish Landing Page</DialogTitle>
-          <DialogDescription>Choose where to publish your page</DialogDescription>
+          <div className="flex items-center gap-3">
+            <DialogTitle className="flex items-center gap-2"><Globe className="w-4 h-4" />Publish landing page</DialogTitle>
+            {badge}
+          </div>
+          <DialogDescription>
+            Submit for admin review. Once approved it will be live at
+            <code className="mx-1 px-1 py-0.5 bg-muted rounded text-xs">/pages/{subdomain || 'your-subdomain'}</code>
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3 py-3">
-          {/* Built-in */}
-          <div
-            className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${target === 'builtin' ? 'border-primary bg-primary/5' : 'border-muted hover:border-primary/30'}`}
-            onClick={() => setTarget('builtin')}
-          >
-            <div className="flex items-center gap-2">
-              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${target === 'builtin' ? 'border-primary bg-primary' : 'border-muted-foreground/30'}`}>
-                {target === 'builtin' && <div className="w-2 h-2 rounded-full bg-white" />}
-              </div>
-              <div>
-                <p className="font-medium text-sm">Built-in Hosting</p>
-                <p className="text-xs text-muted-foreground">Instant — hosted by 1Person</p>
-              </div>
+        {status === 'rejected' && page?.publishRejectReason && (
+          <div className="p-3 rounded-md border border-red-200 bg-red-50 text-sm text-red-700">
+            <p className="font-semibold flex items-center gap-1 mb-0.5"><AlertCircle className="w-4 h-4" />Rejected by admin</p>
+            <p>{page.publishRejectReason}</p>
+          </div>
+        )}
+
+        <div className="grid md:grid-cols-2 gap-6 flex-1 overflow-y-auto">
+          <div className="space-y-4">
+            <div>
+              <Label>Subdomain</Label>
+              <Input value={subdomain} onChange={(e) => setSubdomain(e.target.value.toLowerCase())} placeholder="my-product" />
+              <p className={`text-xs mt-1 ${subError ? 'text-red-600' : 'text-muted-foreground'}`}>{subError || `Public URL: /pages/${subdomain}`}</p>
+            </div>
+            <div>
+              <Label>Meta title</Label>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} />
+              <p className="text-xs text-muted-foreground mt-1">{title.length}/200 — browser tab and search results</p>
+            </div>
+            <div>
+              <Label>Meta description</Label>
+              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} maxLength={500} />
+              <p className="text-xs text-muted-foreground mt-1">{description.length}/500</p>
+            </div>
+            <div>
+              <Label>Keywords</Label>
+              <Input value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="ai, marketing, automation" />
+              <p className="text-xs text-muted-foreground mt-1">Comma-separated</p>
             </div>
           </div>
 
-          {/* WordPress */}
-          <div
-            className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${target === 'wordpress' ? 'border-primary bg-primary/5' : 'border-muted hover:border-primary/30'}`}
-            onClick={() => setTarget('wordpress')}
-          >
-            <div className="flex items-center gap-2">
-              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${target === 'wordpress' ? 'border-primary bg-primary' : 'border-muted-foreground/30'}`}>
-                {target === 'wordpress' && <div className="w-2 h-2 rounded-full bg-white" />}
-              </div>
-              <div>
-                <p className="font-medium text-sm">WordPress</p>
-                <p className="text-xs text-muted-foreground">Publish as a page on your WordPress site</p>
-              </div>
+          <div className="border rounded-lg overflow-hidden bg-white">
+            <div className="px-3 py-2 text-xs border-b bg-gray-50 text-muted-foreground">Preview</div>
+            <div className="overflow-y-auto max-h-[55vh] origin-top scale-[0.55]" style={{ width: '181.8%' }}>
+              {blocks.length > 0 ? (
+                <BlockListRenderer blocks={blocks} primaryColor={page?.primaryColor || '#3b82f6'} />
+              ) : (
+                <div className="p-12 text-center text-sm text-muted-foreground">No blocks to preview</div>
+              )}
             </div>
-            {target === 'wordpress' && (
-              <div className="mt-3 pl-6 space-y-2">
-                {wpConnected ? (
-                  <>
-                    <p className="text-xs text-green-600 flex items-center gap-1">Connected to {wpConnection?.siteUrl}</p>
-                    <div>
-                      <Label className="text-xs">Parent page path (optional)</Label>
-                      <Input value={wpPath} onChange={(e) => setWpPath(e.target.value)} placeholder="/en/products-land" className="text-xs h-8 mt-1" />
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Leave empty to publish at root level</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs">Status</Label>
-                      <Select value={wpStatus} onValueChange={(v) => setWpStatus(v as any)}>
-                        <SelectTrigger className="h-8 text-xs mt-1"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="publish">Publish immediately</SelectItem>
-                          <SelectItem value="draft">Save as draft</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex items-center gap-2 text-amber-600 text-xs">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    <span>WordPress not connected</span>
-                    <Link href={`/${companyId}/seo-engine`} className="text-primary hover:underline flex items-center gap-0.5 ml-1">
-                      Connect in SEO Engine <ArrowRight className="w-3 h-3" />
-                    </Link>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* AWS */}
-          <div
-            className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${target === 'aws' ? 'border-primary bg-primary/5' : 'border-muted hover:border-primary/30'}`}
-            onClick={() => setTarget('aws')}
-          >
-            <div className="flex items-center gap-2">
-              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${target === 'aws' ? 'border-primary bg-primary' : 'border-muted-foreground/30'}`}>
-                {target === 'aws' && <div className="w-2 h-2 rounded-full bg-white" />}
-              </div>
-              <div>
-                <p className="font-medium text-sm">AWS S3</p>
-                <p className="text-xs text-muted-foreground">Host as static page on Amazon S3</p>
-              </div>
-            </div>
-            {target === 'aws' && (
-              <div className="mt-3 pl-6 space-y-2">
-                <Input value={awsBucket} onChange={(e) => setAwsBucket(e.target.value)} placeholder="Bucket name" className="text-xs h-8" />
-                <Input value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)} placeholder="Region" className="text-xs h-8" />
-                <Input value={awsAccessKey} onChange={(e) => setAwsAccessKey(e.target.value)} placeholder="Access Key ID" className="text-xs h-8" />
-                <Input value={awsSecretKey} onChange={(e) => setAwsSecretKey(e.target.value)} placeholder="Secret Access Key" type="password" className="text-xs h-8" />
-              </div>
-            )}
           </div>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handlePublish} disabled={isPublishing} className="gap-2">
-            {isPublishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
-            {isPublishing ? 'Publishing...' : 'Publish'}
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+          <Button onClick={handleSubmit} disabled={submitting || isPending || !!subError} className="gap-2">
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            {primaryLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -12,11 +12,12 @@ import { OrgChartView } from '@/components/ftux/org-chart-view';
 import { MasterPlanView } from '@/components/ftux/master-plan-view';
 import { ExecutionTriggerView } from '@/components/ftux/execution-trigger-view';
 import { CelebrationView } from '@/components/ftux/celebration-view';
+import { MeetYourBrainView } from '@/components/ftux/meet-your-brain-view';
 import { SetupChecklist } from '@/components/setup-checklist';
 import { Button } from '@/components/ui/button';
 import { STEP_LABELS } from '@/lib/ftux/processing-simulation';
 import { api } from '@/lib/api/client';
-import type { ProcessingStep, FTUXAgent, FTUXStrategy, MasterPlan, WebsiteAnalysis } from '@/lib/ftux/types';
+import type { ProcessingStep, FTUXAgent, FTUXStrategy, MasterPlan, WebsiteAnalysis, FTUXStep } from '@/lib/ftux/types';
 
 interface FTUXStatusResponse {
   status: 'processing' | 'complete' | 'error';
@@ -442,7 +443,22 @@ export default function FTUXWelcomePage() {
             agentCount={agents.length}
             taskCount={strategy?.days.reduce((sum, d) => sum + d.activities.length, 0) || 0}
             budget={500}
-            onComplete={() => setStep('setup')}
+            onComplete={() => setStep(('meet-brain' as unknown as FTUXStep))}
+          />
+        </motion.div>
+      )}
+
+      {(step as string) === 'meet-brain' && company && (
+        <motion.div
+          key="meet-brain"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -20 }}
+          transition={{ duration: 0.3 }}
+        >
+          <MeetYourBrainView
+            companyId={company.id}
+            onContinue={() => router.push(`/${company.id}`)}
           />
         </motion.div>
       )}

@@ -7,7 +7,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../lib/db';
 import {
   chatConversations,
@@ -15,6 +15,7 @@ import {
   chatbotConfig,
   knowledgeBase,
   leads,
+  companies,
 } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { llmGenerate } from '../lib/llm';
@@ -81,6 +82,8 @@ authed.post(
     tone: z.enum(['professional', 'friendly', 'bold']).optional(),
     mode: z.enum(['sales', 'support', 'both']).optional(),
     primaryColor: z.string().optional(),
+    knowledgeTags: z.array(z.string()).optional(),
+    handoffEnabled: z.boolean().optional(),
   })),
   async (c) => {
     const companyId = c.req.param('companyId');
@@ -111,6 +114,12 @@ authed.post(
       mode: z.enum(['sales', 'support', 'both']).optional(),
       primaryColor: z.string().optional(),
       isActive: z.boolean().optional(),
+      accessLevel: z.enum(['public', 'internal', 'admin']).optional(),
+      embedEnabled: z.boolean().optional(),
+      embedAllowedDomains: z.array(z.string()).optional(),
+      logoUrl: z.string().url().max(1000).optional().nullable(),
+      avatarUrl: z.string().url().max(1000).optional().nullable(),
+      poweredByVisible: z.boolean().optional(),
     })
   ),
   async (c) => {
@@ -221,6 +230,101 @@ authed.get('/company/:companyId/conversations/:id', async (c) => {
 });
 
 // ============================================
+// HANDOFF ENDPOINTS
+// ============================================
+
+// List conversations waiting for handoff
+authed.get('/company/:companyId/handoff-queue', async (c) => {
+  const companyId = c.req.param('companyId');
+  const waiting = await db
+    .select()
+    .from(chatConversations)
+    .where(and(
+      eq(chatConversations.companyId, companyId),
+      sql`${chatConversations.metadata}->>'handoffStatus' = 'waiting_handoff'`,
+    ))
+    .orderBy(desc(chatConversations.updatedAt))
+    .limit(50);
+
+  // Attach last message preview to each conversation
+  const result = await Promise.all(
+    waiting.map(async (conv) => {
+      const [lastMsg] = await db
+        .select()
+        .from(chatMessages)
+        .where(eq(chatMessages.conversationId, conv.id))
+        .orderBy(desc(chatMessages.createdAt))
+        .limit(1);
+      return { ...conv, lastMessage: lastMsg?.content || '' };
+    }),
+  );
+  return c.json({ data: result });
+});
+
+// Staff picks up a conversation
+authed.post('/company/:companyId/conversations/:convId/pickup', async (c) => {
+  const convId = c.req.param('convId');
+  const user = c.get('user');
+  const conv = await db.query.chatConversations.findFirst({
+    where: eq(chatConversations.id, convId),
+  });
+  if (!conv) return c.json({ error: 'Conversation not found' }, 404);
+
+  const [updated] = await db
+    .update(chatConversations)
+    .set({
+      handoffStaffId: user.userId,
+      metadata: { ...(conv.metadata as any || {}), handoffStatus: 'staff_handling' },
+      updatedAt: new Date(),
+    })
+    .where(eq(chatConversations.id, convId))
+    .returning();
+  return c.json(updated);
+});
+
+// Staff sends a reply
+authed.post(
+  '/company/:companyId/conversations/:convId/staff-reply',
+  zValidator('json', z.object({ message: z.string().min(1) })),
+  async (c) => {
+    const convId = c.req.param('convId');
+    const { message } = c.req.valid('json');
+
+    await db.insert(chatMessages).values({
+      conversationId: convId,
+      role: 'system',
+      content: message,
+      metadata: { staffReply: true } as any,
+    });
+    await db
+      .update(chatConversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(chatConversations.id, convId));
+    return c.json({ sent: true });
+  },
+);
+
+// Staff closes a handoff conversation
+authed.post('/company/:companyId/conversations/:convId/close', async (c) => {
+  const convId = c.req.param('convId');
+  const conv = await db.query.chatConversations.findFirst({
+    where: eq(chatConversations.id, convId),
+  });
+  if (!conv) return c.json({ error: 'Conversation not found' }, 404);
+
+  const [updated] = await db
+    .update(chatConversations)
+    .set({
+      status: 'closed',
+      metadata: { ...(conv.metadata as any || {}), handoffStatus: 'closed' },
+      updatedAt: new Date(),
+    })
+    .where(eq(chatConversations.id, convId))
+    .returning();
+  return c.json(updated);
+});
+
+// ============================================
 // PUBLIC WIDGET ROUTES (no auth)
 // ============================================
 
@@ -242,6 +346,9 @@ chatbotRouter.get('/widget/:companyId/config', async (c) => {
     primaryColor: config.primaryColor,
     tone: config.tone,
     mode: config.mode,
+    logoUrl: config.logoUrl,
+    avatarUrl: config.avatarUrl,
+    poweredByVisible: config.poweredByVisible,
   });
 });
 
@@ -326,7 +433,7 @@ async function handleChat(
         channel: channel as any,
       })
       .returning();
-    conversationId = conv.id;
+    conversationId = conv!.id;
   } else {
     // Update visitor info if provided
     if (visitorEmail || visitorName) {
@@ -348,9 +455,64 @@ async function handleChat(
     content: message,
   });
 
-  // 3. Load FULL business context (knowledge + meetings + brand + website)
-  const businessCtx = await buildBusinessContext(companyId);
-  const knowledgeContext = businessCtx.fullContext || 'No company knowledge available yet.';
+  // 2b. Brain Hub internal tap — every visitor message flows into the
+  // event stream so watchers (Phase B) can detect recurring questions.
+  // Fire-and-forget; never blocks the chatbot reply path.
+  void import('../services/brain-hub/event-service').then(({ ingestInternalTap }) =>
+    ingestInternalTap({
+      companyId,
+      subtype: 'chatbot_message',
+      type: 'message',
+      subject: `Chatbot · ${visitorName ?? visitorEmail ?? 'visitor'}`,
+      content: message,
+      payload: { conversationId, channel, visitorId, visitorEmail, visitorName },
+    }),
+  );
+
+  // 3. Load business context filtered by chatbot access level.
+  // Public widget → only 'public' knowledge (never leak internal data).
+  // Logged-in dashboard → 'internal' (public + internal).
+  // Admin → everything.
+  const config0 = await db.query.chatbotConfig.findFirst({
+    where: eq(chatbotConfig.companyId, companyId),
+  });
+  const accessLevel = (config0 as any)?.accessLevel || 'internal';
+  const visibilityFilter = accessLevel === 'public' ? 'public' as const
+    : accessLevel === 'admin' ? 'admin' as const
+    : 'internal' as const;
+
+  // B2 fix (doc 11 §7): Try vector RAG first (semantic search) for
+  // better answer quality, fall back to SQL-dump business context.
+  let knowledgeContext = '';
+  try {
+    const { getTenantAI, ensureTenantForCompany } = await import('../lib/tenant-ai');
+    const company = await db.query.companies.findFirst({
+      where: eq(companies.id, companyId),
+      columns: { id: true, name: true },
+    });
+    if (company) {
+      const tenantId = await ensureTenantForCompany(company.id, company.name);
+      const ai = getTenantAI();
+      const ragResult = await ai.query({ tenantId, question: message });
+      if (ragResult.answer && ragResult.answer.length > 20) {
+        // Use RAG answer + sources as knowledge context
+        const sourceTexts = (ragResult.sources || [])
+          .map((s: any) => s.chunkText || '')
+          .filter(Boolean)
+          .slice(0, 5)
+          .join('\n---\n');
+        knowledgeContext = sourceTexts || ragResult.answer;
+      }
+    }
+  } catch {
+    // RAG unavailable — fall through to SQL-dump fallback
+  }
+
+  // Fallback: SQL-dump business context (original path)
+  if (!knowledgeContext) {
+    const businessCtx = await buildBusinessContext(companyId, visibilityFilter);
+    knowledgeContext = businessCtx.fullContext || 'No company knowledge available yet.';
+  }
 
   // 4. Load conversation history (last 10 messages)
   const history = await db
@@ -395,6 +557,11 @@ CONVERSATION RULES:
 3. Keep responses concise: 2-3 sentences for simple questions, more for complex ones. Use bullet points for lists.
 4. NEVER make up information not in the knowledge base — accuracy builds trust.
 5. If the visitor shares contact info (email, phone), acknowledge warmly and confirm you'll pass it to the team.
+6. When you have clear next-step suggestions, return a JSON block at the END of your response:
+<!--QUICK_REPLIES-->
+[{"label":"See pricing","value":"show me pricing"},{"label":"Book demo","value":"I want a demo"},{"label":"Talk to human","value":"connect me to team"}]
+<!--/QUICK_REPLIES-->
+Only include this when there are obvious next steps. Max 3 options.
 
 ${mode === 'sales' ? `SALES MODE:
 - Understand the visitor's needs FIRST before recommending products/services
@@ -423,18 +590,47 @@ ${mode === 'both' ? `DUAL MODE (Sales + Support):
 
   const llmResponse = await llmGenerate(llmMessages, { maxTokens: 500 });
 
+  // 7b. Parse quick replies from LLM response
+  let cleanText = llmResponse.text;
+  let quickReplies: Array<{ label: string; value: string }> | undefined;
+  const qrMatch = llmResponse.text.match(/<!--QUICK_REPLIES-->\s*([\s\S]*?)\s*<!--\/QUICK_REPLIES-->/);
+  if (qrMatch) {
+    try {
+      quickReplies = JSON.parse(qrMatch[1]!);
+    } catch { /* ignore malformed JSON */ }
+    cleanText = llmResponse.text.replace(/<!--QUICK_REPLIES-->[\s\S]*?<!--\/QUICK_REPLIES-->/, '').trim();
+  }
+
   // 8. Save assistant response
   await db.insert(chatMessages).values({
     conversationId,
     role: 'assistant',
-    content: llmResponse.text,
+    content: cleanText,
+    metadata: quickReplies ? { quickReplies } as any : undefined,
   });
 
-  // Update conversation timestamp
-  await db
-    .update(chatConversations)
-    .set({ updatedAt: new Date() })
-    .where(eq(chatConversations.id, conversationId));
+  // 8b. Handoff trigger — queue for human if bot signals transfer
+  const handoffPhrases = ['connect you to', 'let me transfer', 'transfer you', 'human agent', 'speak to a person'];
+  const shouldHandoff = config?.handoffEnabled && handoffPhrases.some((p) => cleanText.toLowerCase().includes(p));
+  if (shouldHandoff && conversationId) {
+    const existingConv = await db.query.chatConversations.findFirst({
+      where: eq(chatConversations.id, conversationId),
+    });
+    await db
+      .update(chatConversations)
+      .set({
+        handoffAt: new Date(),
+        metadata: { ...(existingConv?.metadata as any || {}), handoffStatus: 'waiting_handoff' },
+        updatedAt: new Date(),
+      })
+      .where(eq(chatConversations.id, conversationId));
+  } else {
+    // Update conversation timestamp
+    await db
+      .update(chatConversations)
+      .set({ updatedAt: new Date() })
+      .where(eq(chatConversations.id, conversationId));
+  }
 
   // 9. Auto-create lead if visitor provided email
   if (visitorEmail) {
@@ -461,9 +657,35 @@ ${mode === 'both' ? `DUAL MODE (Sales + Support):
     }
   }
 
+  // 10. Auto-detect VN phone numbers (0xxx, +84xxx, 84xxx)
+  const phoneMatch = message.match(/(0|\+84|84)(3|5|7|8|9)\d{8}/);
+  if (phoneMatch && conversationId) {
+    const phone = phoneMatch[0];
+    try {
+      await db.update(chatConversations).set({ visitorPhone: phone, updatedAt: new Date() }).where(eq(chatConversations.id, conversationId));
+      // Also create/update lead with phone
+      if (visitorEmail) {
+        await db.update(leads).set({ phone }).where(and(eq(leads.companyId, companyId), eq(leads.email, visitorEmail)));
+      } else {
+        const existingPhoneLead = await db.query.leads.findFirst({
+          where: and(eq(leads.companyId, companyId), eq(leads.phone, phone)),
+        });
+        if (!existingPhoneLead) {
+          await db.insert(leads).values({
+            companyId, phone, email: `${phone}@phone.lead`,
+            firstName: visitorName || undefined,
+            source: 'organic' as any, score: 30,
+            notes: 'Lead captured via phone from chatbot.',
+          });
+        }
+      }
+    } catch { /* Non-critical */ }
+  }
+
   return {
     conversationId,
-    response: llmResponse.text,
+    response: cleanText,
+    quickReplies,
     model: llmResponse.model,
   };
 }

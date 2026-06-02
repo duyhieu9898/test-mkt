@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth-store';
+import { KnowledgeTabs } from '@/components/knowledge/knowledge-tabs';
 import { api } from '@/lib/api/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -221,6 +222,7 @@ export default function MeetingsPage() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
+      <KnowledgeTabs />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Meeting Intelligence</h1>

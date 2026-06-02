@@ -15,6 +15,8 @@ import { authMiddleware } from '../middleware/auth';
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { buildBusinessContext } from '../services/business-context';
 import { generateImage, buildBannerImagePrompt } from '../services/image-generator';
+import { resolveImageProvider } from '../lib/config-resolver';
+import { ensureSufficientCredits, chargeFixedCredits } from '../lib/credits';
 import { getViralFrameworkPrompt, getAdCopySpecPrompt, AIDA_FRAMEWORK, AB_TEST_ANGLES, EMAIL_SEQUENCE_FRAMEWORK, EMAIL_SUBJECT_FORMULAS, KEYWORD_CLUSTER_PROMPT } from '../services/marketing-frameworks';
 import { adaptDesignForSize, AD_SIZES } from '../services/creative-adapter';
 import { validateBanner } from '../services/creative-quality';
@@ -404,7 +406,7 @@ marketingEngineRouter.post(
     const brandSecondary = ctx.brandColors.secondary || '#8b5cf6';
 
     // STEP 1: Generate creative set — concept + variants (NOT images)
-    const { text } = await llmGenerate([{
+    const llmResult = await llmGenerate([{
       role: 'system',
       content: `You are a creative director at a top ad agency. You create ad concepts, NOT images. Your output is structured creative briefs that a designer (or template engine) will render.
 
@@ -451,7 +453,38 @@ Return ONLY JSON:
     }
   ]
 }`,
-    }], { maxTokens: 1500 });
+    }], {
+      maxTokens: 1500,
+      featureKey: 'campaign_banner_copy',
+      traceName: 'marketing.banner.generate_creative_set',
+      metadata: { companyId, campaignId, requestedSize: size, variants },
+    });
+    const { text } = llmResult;
+
+    // Build a shared lineage block attached to every banner we create.
+    // The `/explain` endpoint returns this so the "Why this output?" panel
+    // can show provider/model/tier/sources + deep link into Langfuse.
+    const contextSourcesUsed = {
+      companyName: ctx.companyName,
+      industry: ctx.industry,
+      productsCount: ctx.products.length,
+      faqsCount: ctx.faqs.length,
+      brandVoice: ctx.brandVoice,
+      brandStyle: ctx.brandStyle,
+      brandColors: ctx.brandColors,
+    };
+    const lineage = {
+      generatedAt: new Date().toISOString(),
+      featureKey: 'campaign_banner_copy',
+      provider: llmResult.provider,
+      model: llmResult.model,
+      tierUsed: llmResult.tierUsed,
+      configSource: llmResult.configSource,
+      creditCost: llmResult.creditCost,
+      traceId: llmResult.traceId,
+      traceUrl: llmResult.traceUrl,
+      sources: contextSourcesUsed,
+    };
 
     const parsed = extractJSON(text) || {};
     const concept = parsed.concept || 'Brand awareness campaign';
@@ -492,6 +525,7 @@ Return ONLY JSON:
           alignment: layout === 'left-text' || layout === 'split' ? 'left' : 'center',
         },
         overlayOpacity: 0.6,
+        lineage,
       };
 
       const copyData = {
@@ -552,12 +586,20 @@ Return ONLY JSON:
   }
 );
 
-// Generate background image for a specific banner (optional enhancement)
+// Generate background image for a specific banner.
+//
+// Body: { imageProviderKey?: string } — omit to use the cheapest enabled
+// provider, or pass one of: "gemini-imagen" | "dalle" | "banana" |
+// "banana-pro" to pick a specific quality tier. Admins configure which
+// providers are enabled + their credit cost in /admin/llm-config.
 marketingEngineRouter.post(
   '/company/:companyId/banners/:bannerId/generate-background',
   async (c) => {
     const companyId = c.req.param('companyId');
     const bannerId = c.req.param('bannerId');
+
+    const body = await c.req.json().catch(() => ({}));
+    const requestedProviderKey: string | undefined = body.imageProviderKey;
 
     const banner = await db.select().from(banners)
       .where(and(eq(banners.id, bannerId), eq(banners.companyId, companyId)))
@@ -565,19 +607,54 @@ marketingEngineRouter.post(
 
     if (!banner[0]) return c.json({ error: 'Banner not found' }, 404);
 
+    // Resolve the requested provider + credit cost BEFORE doing the work
+    // so we can fail fast with a friendly 402.
+    let creditCost = 0;
+    if (requestedProviderKey) {
+      const cfg = await resolveImageProvider(requestedProviderKey);
+      if (!cfg) {
+        return c.json({ success: false, error: 'This image quality tier is not available right now.' }, 400);
+      }
+      if (!cfg.enabled || !cfg.hasCredentials) {
+        return c.json({ success: false, error: `"${cfg.label}" is not ready yet. Ask your admin to enable it.` }, 400);
+      }
+      creditCost = cfg.creditCost;
+      await ensureSufficientCredits(companyId, creditCost);
+    }
+
     const ctx = await buildBusinessContext(companyId);
     const b = banner[0];
     const design = b.design as any;
 
     try {
-      const [w, h] = b.size.split('x').map(Number);
+      const [wRaw, hRaw] = b.size.split('x').map(Number);
+      const w = wRaw ?? 1200;
+      const h = hRaw ?? 628;
       const imagePrompt = buildBannerImagePrompt(
         ctx.fullContext.substring(0, 300),
         'minimal',
         b.strategyTag || 'value',
         b.size
       );
-      const imageResult = await generateImage({ prompt: imagePrompt, width: w, height: h });
+      const imageResult = await generateImage({
+        prompt: imagePrompt,
+        width: w,
+        height: h,
+        providerKey: requestedProviderKey,
+      });
+
+      // Charge credits after successful generation. If no provider was
+      // requested we still use the resolved cost from the actual result.
+      const chargeAmount = creditCost > 0 ? creditCost : imageResult.creditCost;
+      if (chargeAmount > 0) {
+        await chargeFixedCredits(companyId, chargeAmount, {
+          featureKey: 'banner_image',
+          tier: imageResult.providerKey,
+          refKind: 'banner_bg',
+          refId: bannerId,
+          note: `Banner background via ${imageResult.providerKey}`,
+        });
+      }
 
       await db.update(banners).set({
         imageUrl: imageResult.url,
@@ -586,15 +663,58 @@ marketingEngineRouter.post(
           backgroundType: 'image',
           backgroundValue: imageResult.url,
           backgroundPrompt: imagePrompt,
+          imageProvider: imageResult.providerKey,
         },
         updatedAt: new Date(),
       }).where(eq(banners.id, bannerId));
 
-      return c.json({ success: true, imageUrl: imageResult.url });
-    } catch (err) {
-      return c.json({ success: false, error: 'Could not generate background image. Please try again.' });
+      return c.json({
+        success: true,
+        imageUrl: imageResult.url,
+        provider: imageResult.providerKey,
+        creditsCharged: chargeAmount,
+      });
+    } catch (err: any) {
+      // HTTPException from credit layer bubbles up as its own status
+      if (err?.status === 402) {
+        return c.json({ success: false, error: err.message || 'Not enough credits.' }, 402);
+      }
+      console.error('[banner generate-background] failed:', err);
+      return c.json({
+        success: false,
+        error: err?.message || 'Could not generate background image. Please try again.'
+      });
     }
   }
+);
+
+// "Why this output?" — returns the lineage block stored when the banner
+// was generated: provider, model, tier, credit cost, sources used, and
+// a Langfuse trace deep-link for full prompt inspection.
+marketingEngineRouter.get(
+  '/company/:companyId/banners/:bannerId/explain',
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const bannerId = c.req.param('bannerId');
+    const row = await db
+      .select()
+      .from(banners)
+      .where(and(eq(banners.id, bannerId), eq(banners.companyId, companyId)))
+      .limit(1);
+    if (!row[0]) return c.json({ error: 'Banner not found' }, 404);
+    const design = (row[0].design as any) ?? {};
+    const lineage = design.lineage ?? null;
+    return c.json({
+      bannerId,
+      name: row[0].name,
+      lineage,
+      // Current design also tells us which image provider was used for
+      // the background (if any), so the panel can show both LLM and
+      // image-gen lineage side-by-side.
+      imageProvider: design.imageProvider ?? null,
+      backgroundPrompt: design.backgroundPrompt ?? null,
+    });
+  },
 );
 
 // Update banner (edit mode — user changes copy, design, colors)

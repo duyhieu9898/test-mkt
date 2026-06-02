@@ -10,6 +10,10 @@
 
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { buildBusinessContext } from './business-context';
+import { renderSkillKnowledge } from '@1person/core';
+
+// Expert copywriting playbook injected into the prose-writing step (skill K01).
+const COPYWRITING_FRAMEWORK = renderSkillKnowledge('copywriting');
 
 export class BlogGenerator {
   /**
@@ -106,7 +110,9 @@ Requirements:
           role: 'system',
           content: `You are an expert SEO blog writer. Write engaging, informative content that ranks on Google.
 All output MUST be in language: ${options.language}.
-Write ONLY the HTML content — no JSON wrapper, no markdown fences.`,
+Write ONLY the HTML content — no JSON wrapper, no markdown fences.
+
+${COPYWRITING_FRAMEWORK}`,
         },
         {
           role: 'user',

@@ -56,3 +56,27 @@ export * from './assets';
 
 // Site Config (CMS)
 export * from './site-config';
+
+// Gamification (CEO Motivation Engine)
+export * from './gamification';
+
+// GEO (Generative Engine Optimization) — Block 1
+export * from './geo';
+
+// Content Grader (Real-time Semantic Grader — Block 4)
+export * from './content-grader';
+
+// Omnichannel Inbox (Block 6 / Đợt 6 — FB Messenger MVP)
+export * from './omnichannel';
+
+// Brand IQ Layer (Block 2 — voice + audience + style + visual + OKRs)
+export * from './brand-iq';
+
+// AI Employees + Vector Memory (Block 3)
+export * from './team';
+
+// Campaign Launches (Block 8 — orchestrate blog + images + WP + social)
+export * from './launches';
+
+// Brain Hub Phase A — source-agnostic data plane (sources + events)
+export * from './brain-hub';

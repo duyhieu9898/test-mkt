@@ -11,6 +11,7 @@ import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../lib/db';
 import { companies, landingPages, banners, socialPosts } from '@1person/core/db';
 import { CMSIntegration } from '../services/cms-integration';
+import { encryptSecret, decryptMaybe } from '../lib/crypto';
 import { authMiddleware } from '../middleware/auth';
 
 const seoEngineRouter = new Hono();
@@ -239,7 +240,8 @@ seoEngineRouter.post(
         wordpress: {
           siteUrl: cleanSiteUrl,
           username,
-          appPassword,
+          // Encrypted at rest (AES-256-GCM). Never returned to the client.
+          appPassword: encryptSecret(appPassword),
           connectedAt: new Date().toISOString(),
         },
       };
@@ -286,7 +288,7 @@ seoEngineRouter.post('/company/:companyId/wordpress/test', async (c) => {
     }
 
     const wpApiUrl = `${wp.siteUrl}/wp-json/wp/v2/posts?per_page=1`;
-    const authHeader = 'Basic ' + Buffer.from(`${wp.username}:${wp.appPassword}`).toString('base64');
+    const authHeader = 'Basic ' + Buffer.from(`${wp.username}:${decryptMaybe(wp.appPassword)}`).toString('base64');
 
     const testResponse = await fetch(wpApiUrl, {
       headers: { 'Authorization': authHeader },
@@ -333,7 +335,7 @@ seoEngineRouter.get('/company/:companyId/wordpress/categories', async (c) => {
     }
 
     const cms = new CMSIntegration();
-    const categories = await cms.getCategories(wpSettings.siteUrl, wpSettings.username, wpSettings.appPassword);
+    const categories = await cms.getCategories(wpSettings.siteUrl, wpSettings.username, decryptMaybe(wpSettings.appPassword));
     return c.json({ categories });
   } catch {
     return c.json({ categories: [], error: 'Could not load categories' });
@@ -383,7 +385,7 @@ seoEngineRouter.post(
       let categoryId = body.categoryId;
       if (!categoryId && body.categoryName) {
         try {
-          categoryId = await cms.resolveOrCreateCategory(wp.siteUrl, wp.username, wp.appPassword, body.categoryName);
+          categoryId = await cms.resolveOrCreateCategory(wp.siteUrl, wp.username, decryptMaybe(wp.appPassword), body.categoryName);
         } catch (catErr) {
           console.error('[SEO Engine] Category resolution failed:', catErr);
         }
@@ -397,7 +399,7 @@ seoEngineRouter.post(
         }
 
         try {
-          const result = await cms.publishPost(wp.siteUrl, wp.username, wp.appPassword, {
+          const result = await cms.publishPost(wp.siteUrl, wp.username, decryptMaybe(wp.appPassword), {
             title: blogPost.title,
             content: blogPost.content || blogPost.body || '',
             excerpt: blogPost.excerpt || '',

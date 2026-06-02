@@ -15,10 +15,11 @@ import {
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import { Switch } from '@/components/ui/switch';
 import {
   MessageSquare, Send, Loader2, Settings2, Code2, MessagesSquare,
   Bot, User, Copy, Check, ExternalLink, Plus, Trash2, RefreshCw,
-  AlertCircle,
+  AlertCircle, Globe, Building2, Lock, Shield, PhoneForwarded, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { TrustBanner } from '@/components/trust-banner';
@@ -26,11 +27,13 @@ import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+interface QuickReply { label: string; value: string }
 interface ChatMessage {
   role: string;
   content: string;
   status: 'sending' | 'sent' | 'error';
   id: string;
+  quickReplies?: QuickReply[];
 }
 
 export default function ChatbotPage() {
@@ -43,6 +46,12 @@ export default function ChatbotPage() {
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [createDialog, setCreateDialog] = useState(false);
   const [newBotName, setNewBotName] = useState('');
+  const [newBotTags, setNewBotTags] = useState('');
+
+  // === HANDOFF STATE ===
+  const [handoffConvId, setHandoffConvId] = useState<string | null>(null);
+  const [staffReply, setStaffReply] = useState('');
+  const [isSendingStaff, setIsSendingStaff] = useState(false);
 
   // === CONFIG STATE ===
   const [name, setName] = useState('');
@@ -50,7 +59,16 @@ export default function ChatbotPage() {
   const [tone, setTone] = useState('friendly');
   const [mode, setMode] = useState('both');
   const [primaryColor, setPrimaryColor] = useState('#6366f1');
+  const [accessLevel, setAccessLevel] = useState('internal');
+  const [embedEnabled, setEmbedEnabled] = useState(false);
+  const [embedAllowedDomains, setEmbedAllowedDomains] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [poweredByVisible, setPoweredByVisible] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingAccess, setIsSavingAccess] = useState(false);
+  const [isSavingEmbed, setIsSavingEmbed] = useState(false);
+  const [embedCopied, setEmbedCopied] = useState(false);
 
   // === CHAT STATE ===
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -91,6 +109,16 @@ export default function ChatbotPage() {
       setTone(selectedBot.tone || 'friendly');
       setMode(selectedBot.mode || 'both');
       setPrimaryColor(selectedBot.primaryColor || '#6366f1');
+      setAccessLevel(selectedBot.accessLevel || 'internal');
+      setEmbedEnabled(selectedBot.embedEnabled || false);
+      setEmbedAllowedDomains(
+        Array.isArray(selectedBot.embedAllowedDomains)
+          ? selectedBot.embedAllowedDomains.join('\n')
+          : ''
+      );
+      setLogoUrl(selectedBot.logoUrl || '');
+      setAvatarUrl(selectedBot.avatarUrl || '');
+      setPoweredByVisible(selectedBot.poweredByVisible !== false);
     }
   }, [selectedBot]);
 
@@ -101,6 +129,22 @@ export default function ChatbotPage() {
     enabled: !!token,
   });
   const conversations = convsData?.data || [];
+
+  // Fetch handoff queue
+  const { data: handoffData } = useQuery({
+    queryKey: ['handoff-queue', companyId],
+    queryFn: () => api.get<{ data: any[] }>(`/chatbot/company/${companyId}/handoff-queue`, { token: token! }),
+    enabled: !!token,
+    refetchInterval: 15000,
+  });
+  const handoffQueue = handoffData?.data || [];
+
+  // Fetch handoff conversation detail
+  const { data: handoffDetail } = useQuery({
+    queryKey: ['chatbot-conversation', handoffConvId],
+    queryFn: () => api.get<{ conversation: any; messages: any[] }>(`/chatbot/company/${companyId}/conversations/${handoffConvId}`, { token: token! }),
+    enabled: !!token && !!handoffConvId,
+  });
 
   // Fetch selected conversation
   const { data: convDetail } = useQuery({
@@ -119,10 +163,12 @@ export default function ChatbotPage() {
   const handleCreateBot = async () => {
     if (!token || !newBotName.trim()) return;
     try {
-      const res = await api.post<any>(`/chatbot/company/${companyId}/chatbots`, { name: newBotName }, { token });
+      const tags = newBotTags.split(',').map((t) => t.trim()).filter(Boolean);
+      const res = await api.post<any>(`/chatbot/company/${companyId}/chatbots`, { name: newBotName, knowledgeTags: tags.length > 0 ? tags : undefined }, { token });
       toast.success(`"${newBotName}" created!`);
       setSelectedBotId(res.id);
       setNewBotName('');
+      setNewBotTags('');
       setCreateDialog(false);
       qc.invalidateQueries({ queryKey: ['chatbots'] });
     } catch (err: any) {
@@ -148,7 +194,10 @@ export default function ChatbotPage() {
     if (!token) return;
     setIsSaving(true);
     try {
-      await api.post(`/chatbot/company/${companyId}/config`, { name, greeting, tone, mode, primaryColor }, { token });
+      await api.post(`/chatbot/company/${companyId}/config`, {
+        name, greeting, tone, mode, primaryColor,
+        logoUrl: logoUrl || null, avatarUrl: avatarUrl || null, poweredByVisible,
+      }, { token });
       toast.success('Saved!');
       qc.invalidateQueries({ queryKey: ['chatbots'] });
     } catch (err: any) {
@@ -158,9 +207,34 @@ export default function ChatbotPage() {
     finally { setIsSaving(false); }
   };
 
-  const handleSendMessage = useCallback(async () => {
-    if (!token || !chatInput.trim() || isSending) return;
-    const text = chatInput.trim();
+  const handleSaveAccessLevel = async () => {
+    if (!token) return;
+    setIsSavingAccess(true);
+    try {
+      await api.post(`/chatbot/company/${companyId}/config`, { accessLevel }, { token });
+      toast.success('Access level saved!');
+      qc.invalidateQueries({ queryKey: ['chatbots'] });
+    } catch {
+      toast.error('Could not save access level. Please try again.');
+    } finally { setIsSavingAccess(false); }
+  };
+
+  const handleSaveEmbed = async () => {
+    if (!token) return;
+    setIsSavingEmbed(true);
+    try {
+      const domains = embedAllowedDomains.split('\n').map((d) => d.trim()).filter(Boolean);
+      await api.post(`/chatbot/company/${companyId}/config`, { embedEnabled, embedAllowedDomains: domains }, { token });
+      toast.success('Embed settings saved!');
+      qc.invalidateQueries({ queryKey: ['chatbots'] });
+    } catch {
+      toast.error('Could not save embed settings. Please try again.');
+    } finally { setIsSavingEmbed(false); }
+  };
+
+  const handleSendMessage = useCallback(async (overrideText?: string) => {
+    const text = (overrideText || chatInput).trim();
+    if (!token || !text || isSending) return;
     const msgId = `msg_${Date.now()}`;
 
     setChatInput('');
@@ -169,13 +243,13 @@ export default function ChatbotPage() {
     setIsTyping(true);
 
     try {
-      const res = await api.post<{ conversationId: string; response: string }>(
+      const res = await api.post<{ conversationId: string; response: string; quickReplies?: QuickReply[] }>(
         `/chatbot/company/${companyId}/chat`, { conversationId, message: text }, { token }
       );
       setConversationId(res.conversationId);
       setMessages((prev) => [
         ...prev.map((m) => m.id === msgId ? { ...m, status: 'sent' as const } : m),
-        { role: 'assistant', content: res.response, status: 'sent', id: `res_${Date.now()}` },
+        { role: 'assistant', content: res.response, status: 'sent', id: `res_${Date.now()}`, quickReplies: res.quickReplies },
       ]);
     } catch {
       setMessages((prev) =>
@@ -200,6 +274,39 @@ export default function ChatbotPage() {
     setMessages([]);
     setConversationId(null);
     inputRef.current?.focus();
+  };
+
+  // === HANDOFF HANDLERS ===
+  const handlePickup = async (convId: string) => {
+    if (!token) return;
+    try {
+      await api.post(`/chatbot/company/${companyId}/conversations/${convId}/pickup`, {}, { token });
+      setHandoffConvId(convId);
+      toast.success('Conversation picked up');
+      qc.invalidateQueries({ queryKey: ['handoff-queue'] });
+      qc.invalidateQueries({ queryKey: ['chatbot-conversation', convId] });
+    } catch { toast.error('Could not pick up conversation'); }
+  };
+
+  const handleStaffReply = async () => {
+    if (!token || !handoffConvId || !staffReply.trim()) return;
+    setIsSendingStaff(true);
+    try {
+      await api.post(`/chatbot/company/${companyId}/conversations/${handoffConvId}/staff-reply`, { message: staffReply }, { token });
+      setStaffReply('');
+      qc.invalidateQueries({ queryKey: ['chatbot-conversation', handoffConvId] });
+    } catch { toast.error('Could not send reply'); }
+    finally { setIsSendingStaff(false); }
+  };
+
+  const handleCloseHandoff = async () => {
+    if (!token || !handoffConvId) return;
+    try {
+      await api.post(`/chatbot/company/${companyId}/conversations/${handoffConvId}/close`, {}, { token });
+      toast.success('Conversation closed');
+      setHandoffConvId(null);
+      qc.invalidateQueries({ queryKey: ['handoff-queue'] });
+    } catch { toast.error('Could not close conversation'); }
   };
 
   // Embed code
@@ -242,6 +349,7 @@ export default function ChatbotPage() {
         <TabsList>
           <TabsTrigger value="training" className="gap-1"><Settings2 className="w-3.5 h-3.5" /> Training</TabsTrigger>
           <TabsTrigger value="conversations" className="gap-1"><MessagesSquare className="w-3.5 h-3.5" /> Conversations {conversations.length > 0 && `(${conversations.length})`}</TabsTrigger>
+          <TabsTrigger value="handoff" className="gap-1"><PhoneForwarded className="w-3.5 h-3.5" /> Handoff {handoffQueue.length > 0 && <Badge variant="destructive" className="ml-1 text-[10px] px-1">{handoffQueue.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="deploy" className="gap-1"><Code2 className="w-3.5 h-3.5" /> Deploy</TabsTrigger>
         </TabsList>
 
@@ -282,6 +390,27 @@ export default function ChatbotPage() {
                         style={{ backgroundColor: c }} />
                     ))}
                   </div>
+                </div>
+                <div>
+                  <Label>Logo URL</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://example.com/logo.png" className="flex-1" />
+                    {logoUrl && <img src={logoUrl} alt="Logo" className="w-8 h-8 object-contain rounded border" onError={(e) => (e.currentTarget.style.display = 'none')} />}
+                  </div>
+                </div>
+                <div>
+                  <Label>Avatar URL</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Input value={avatarUrl} onChange={(e) => setAvatarUrl(e.target.value)} placeholder="https://example.com/avatar.png" className="flex-1" />
+                    {avatarUrl && <img src={avatarUrl} alt="Avatar" className="w-8 h-8 rounded-full object-cover border" onError={(e) => (e.currentTarget.style.display = 'none')} />}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Show "Powered by 1Person"</Label>
+                    <p className="text-xs text-muted-foreground">Display branding in widget footer</p>
+                  </div>
+                  <Switch checked={poweredByVisible} onCheckedChange={setPoweredByVisible} />
                 </div>
                 <Button onClick={handleSaveConfig} disabled={isSaving} className="w-full gap-2">
                   {isSaving && <Loader2 className="w-4 h-4 animate-spin" />} Save
@@ -327,6 +456,16 @@ export default function ChatbotPage() {
                           </div>
                         )}
                       </div>
+                      {msg.role === 'assistant' && msg.quickReplies && msg.quickReplies.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1 ml-8">
+                          {msg.quickReplies.map((qr, i) => (
+                            <button key={i} onClick={() => handleSendMessage(qr.value)}
+                              className="text-xs px-2 py-1 rounded-full border border-primary/30 text-primary hover:bg-primary/10 transition-colors">
+                              {qr.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                   {/* Typing indicator */}
@@ -353,6 +492,118 @@ export default function ChatbotPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Access Level */}
+          <Card className="mt-6">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Shield className="w-4 h-4" /> Knowledge Access Level
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Controls which of your uploaded documents the chatbot can use when answering questions.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {[
+                { value: 'public', icon: Globe, label: 'Public', desc: 'Only uses documents marked as Public. Safe for customer-facing widget.', color: 'text-green-700' },
+                { value: 'internal', icon: Building2, label: 'Internal', desc: 'Uses Public + Internal documents. For your team\'s dashboard chat.', color: 'text-slate-700' },
+                { value: 'admin', icon: Lock, label: 'Admin', desc: 'Uses all documents including Confidential. For owner/admin only.', color: 'text-red-700' },
+              ].map((opt) => (
+                <label key={opt.value} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${accessLevel === opt.value ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
+                  <input
+                    type="radio"
+                    name="accessLevel"
+                    value={opt.value}
+                    checked={accessLevel === opt.value}
+                    onChange={() => setAccessLevel(opt.value)}
+                    className="mt-1"
+                  />
+                  <div className="flex-1">
+                    <span className={`flex items-center gap-1.5 font-medium text-sm ${opt.color}`}>
+                      <opt.icon className="w-3.5 h-3.5" /> {opt.label}
+                    </span>
+                    <p className="text-xs text-muted-foreground mt-0.5">{opt.desc}</p>
+                  </div>
+                </label>
+              ))}
+              <Button onClick={handleSaveAccessLevel} disabled={isSavingAccess} className="w-full gap-2">
+                {isSavingAccess && <Loader2 className="w-4 h-4 animate-spin" />} Save Access Level
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Embed Widget */}
+          <Card className="mt-6">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Code2 className="w-4 h-4" /> Website Widget
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Add this AI chatbot to your website. It only answers using your Public documents — internal data is never exposed.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="font-medium">Enable embed widget</Label>
+                  <p className="text-xs text-muted-foreground">Allow the chatbot to be embedded on external websites</p>
+                </div>
+                <Switch checked={embedEnabled} onCheckedChange={setEmbedEnabled} />
+              </div>
+
+              {embedEnabled && (
+                <>
+                  <div>
+                    <Label>Allowed domains</Label>
+                    <p className="text-xs text-muted-foreground mb-1">One domain per line, e.g. mysite.com</p>
+                    <Textarea
+                      value={embedAllowedDomains}
+                      onChange={(e) => setEmbedAllowedDomains(e.target.value)}
+                      placeholder={"mysite.com\napp.mysite.com"}
+                      className="mt-1 font-mono text-sm"
+                      rows={3}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Embed code</Label>
+                    <div className="relative mt-1">
+                      <pre className="bg-muted p-3 rounded-lg text-xs overflow-x-auto font-mono whitespace-pre-wrap">
+{`<script src="https://1person.ai/widget.js"
+  data-company-id="${companyId}"
+  data-color="${primaryColor}">
+</script>`}
+                      </pre>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="absolute top-2 right-2 gap-1"
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+                            `<script src="https://1person.ai/widget.js" data-company-id="${companyId}" data-color="${primaryColor}"></script>`
+                          );
+                          setEmbedCopied(true);
+                          toast.success('Embed code copied!');
+                          setTimeout(() => setEmbedCopied(false), 2000);
+                        }}
+                      >
+                        {embedCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                        {embedCopied ? 'Copied' : 'Copy code'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground bg-amber-50 p-2 rounded border border-amber-200">
+                    The widget always runs in Public mode. Only documents you have marked as Public will be used.
+                  </p>
+                </>
+              )}
+
+              <Button onClick={handleSaveEmbed} disabled={isSavingEmbed} className="w-full gap-2">
+                {isSavingEmbed && <Loader2 className="w-4 h-4 animate-spin" />} Save Embed Settings
+              </Button>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* === CONVERSATIONS TAB === */}
@@ -396,6 +647,59 @@ export default function ChatbotPage() {
                       </div>
                     ))}
                   </CardContent>
+                </Card>
+              ) : <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin" /></div>}
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* === HANDOFF TAB === */}
+        <TabsContent value="handoff" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-muted-foreground mb-2">Waiting for staff ({handoffQueue.length})</p>
+              {handoffQueue.length === 0 ? (
+                <Card className="p-8 text-center"><PhoneForwarded className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" /><p className="text-sm text-muted-foreground">No conversations waiting</p></Card>
+              ) : handoffQueue.map((conv: any) => (
+                <Card key={conv.id} className={`cursor-pointer hover:bg-muted/50 ${handoffConvId === conv.id ? 'ring-2 ring-primary' : ''}`} onClick={() => handlePickup(conv.id)}>
+                  <CardContent className="p-3">
+                    <p className="text-sm font-medium truncate">{conv.visitorName || conv.visitorEmail || 'Visitor'}</p>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">{conv.lastMessage}</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">Waiting since {conv.handoffAt ? new Date(conv.handoffAt).toLocaleTimeString() : '...'}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <div className="lg:col-span-2">
+              {!handoffConvId ? (
+                <Card className="p-12 text-center"><PhoneForwarded className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" /><p className="text-sm text-muted-foreground">Click a conversation to pick it up</p></Card>
+              ) : handoffDetail ? (
+                <Card className="flex flex-col">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base">{handoffDetail.conversation.visitorName || 'Visitor'}</CardTitle>
+                      <Button variant="outline" size="sm" className="gap-1 text-red-500" onClick={handleCloseHandoff}><X className="w-3 h-3" /> Close</Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {handoffDetail.messages.map((msg: any) => (
+                      <div key={msg.id} className={`flex gap-2 ${msg.role === 'visitor' ? 'justify-end' : ''}`}>
+                        {msg.role !== 'visitor' && <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${msg.metadata?.staffReply ? 'bg-blue-100' : 'bg-primary/10'}`}>{msg.metadata?.staffReply ? <User className="w-3 h-3 text-blue-600" /> : <Bot className="w-3 h-3 text-primary" />}</div>}
+                        <div className={`rounded-lg px-3 py-2 max-w-[75%] text-sm ${msg.role === 'visitor' ? 'bg-primary text-primary-foreground' : msg.metadata?.staffReply ? 'bg-blue-50 border border-blue-200' : 'bg-muted'}`}>
+                          {msg.metadata?.staffReply && <p className="text-[10px] font-medium text-blue-600 mb-0.5">Staff</p>}
+                          {msg.content}
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                  <div className="p-3 border-t">
+                    <form onSubmit={(e) => { e.preventDefault(); handleStaffReply(); }} className="flex gap-2">
+                      <Input value={staffReply} onChange={(e) => setStaffReply(e.target.value)} placeholder="Type a reply as staff..." className="flex-1" />
+                      <Button type="submit" size="icon" disabled={isSendingStaff || !staffReply.trim()}>
+                        {isSendingStaff ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      </Button>
+                    </form>
+                  </div>
                 </Card>
               ) : <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin" /></div>}
             </div>
@@ -447,7 +751,10 @@ export default function ChatbotPage() {
       <Dialog open={createDialog} onOpenChange={setCreateDialog}>
         <DialogContent>
           <DialogHeader><DialogTitle>Create New Chatbot</DialogTitle></DialogHeader>
-          <div className="py-3"><Label>Chatbot Name</Label><Input value={newBotName} onChange={(e) => setNewBotName(e.target.value)} placeholder="e.g. Sales Bot, Support Bot" className="mt-1" /></div>
+          <div className="py-3 space-y-3">
+            <div><Label>Chatbot Name</Label><Input value={newBotName} onChange={(e) => setNewBotName(e.target.value)} placeholder="e.g. Sales Bot, Support Bot" className="mt-1" /></div>
+            <div><Label>Knowledge Tags</Label><Input value={newBotTags} onChange={(e) => setNewBotTags(e.target.value)} placeholder="faq, product, sales (comma-separated)" className="mt-1" /><p className="text-xs text-muted-foreground mt-1">Leave empty to use all knowledge. Tags filter which knowledge entries this bot can access.</p></div>
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateDialog(false)}>Cancel</Button>
             <Button onClick={handleCreateBot} disabled={!newBotName.trim()} className="gap-2"><Plus className="w-4 h-4" /> Create</Button>

@@ -112,6 +112,7 @@ export interface EmbeddingConfig {
   baseUrl?: string;
   model: string;
   dimensions: number;
+  apiKey?: string;
 }
 
 /** Configuration for TenantAI initialization */

@@ -21,7 +21,15 @@ import { join } from 'path';
 
 const landingPagesRouter = new Hono();
 
-// Apply auth to all routes
+// PUBLIC: approved page by subdomain (no auth, before authMiddleware)
+landingPagesRouter.get('/public/by-subdomain/:subdomain', async (c) => {
+  const page = await db.query.landingPages.findFirst({
+    where: and(eq(landingPages.subdomain, c.req.param('subdomain').toLowerCase()), eq(landingPages.publishApprovalStatus, 'approved')),
+    columns: { id: true, name: true, subdomain: true, content: true, seo: true, style: true, primaryColor: true, secondaryColor: true, fontFamily: true },
+  });
+  return page ? c.json(page) : c.json({ error: 'Page not found' }, 404);
+});
+// Auth for all routes below
 landingPagesRouter.use('*', authMiddleware);
 
 // =============================================================================
@@ -1095,6 +1103,30 @@ landingPagesRouter.post('/:id/unpublish', async (c) => {
   } catch (err) {
     return c.json({ success: false, error: 'Could not unpublish. Please try again.' }, 500);
   }
+});
+
+// SUBDOMAIN PUBLISH APPROVAL (doc 10 §L3 — Đợt 5)
+const submitPublishSchema = z.object({
+  subdomain: z.string().min(3).max(60).regex(/^[a-z0-9-]+$/, 'lowercase, digits, dash'),
+  seo: z.object({ metaTitle: z.string().min(1).max(200), metaDescription: z.string().min(1).max(500), metaKeywords: z.array(z.string()).optional() }),
+});
+
+landingPagesRouter.post('/:companyId/:pageId/submit-publish', zValidator('json', submitPublishSchema), async (c) => {
+  const { userId } = c.get('user') as { userId: string };
+  const { companyId, pageId } = c.req.param() as { companyId: string; pageId: string };
+  const body = c.req.valid('json');
+  const sub = body.subdomain.toLowerCase();
+  await checkCompanyOwnership(companyId, userId);
+  const page = await db.query.landingPages.findFirst({ where: and(eq(landingPages.id, pageId), eq(landingPages.companyId, companyId)) });
+  if (!page) throw new HTTPException(404, { message: 'Page not found' });
+  const taken = await db.query.landingPages.findFirst({ where: eq(landingPages.subdomain, sub), columns: { id: true } });
+  if (taken && taken.id !== pageId) return c.json({ error: `Subdomain "${sub}" is already taken` }, 409);
+  const mergedSeo = { ...(page.seo || {}), title: body.seo.metaTitle, description: body.seo.metaDescription, keywords: body.seo.metaKeywords || [] };
+  const [updated] = await db.update(landingPages).set({
+    subdomain: sub, seo: mergedSeo as any, publishApprovalStatus: 'pending_approval',
+    publishSubmittedAt: new Date(), publishRejectReason: null, updatedAt: new Date(),
+  }).where(eq(landingPages.id, pageId)).returning();
+  return c.json({ success: true, page: updated });
 });
 
 export { landingPagesRouter };

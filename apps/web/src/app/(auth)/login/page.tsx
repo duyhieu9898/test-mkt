@@ -36,8 +36,13 @@ export default function LoginPage() {
       const response = await loginMutation.mutateAsync(data);
       toast.success('Welcome back!');
 
-      // Redirect based on onboarding status
-      if (response.user.onboardingCompleted) {
+      // Redirect based on role + onboarding status:
+      // - Admins go straight to the admin CMS
+      // - New users (no onboarding yet) go to the welcome flow
+      // - Everyone else lands on their companies list
+      if (response.user.role === 'admin') {
+        router.push('/admin');
+      } else if (response.user.onboardingCompleted) {
         router.push('/companies');
       } else {
         router.push('/welcome');

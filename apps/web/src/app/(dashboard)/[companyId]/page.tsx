@@ -1,412 +1,269 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+/**
+ * CEO Dashboard — "What should I do today?"
+ *
+ * Growth Score widget + Daily Missions + System Progress + Quick Stats.
+ * Gamified but professional — CEO-worthy motivation engine.
+ */
+
 import { useParams, useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  Rocket,
-  FileText,
-  TrendingUp,
-  Users,
-  Loader2,
+  Megaphone,
+  Briefcase,
+  Target,
+  CalendarClock,
+  Coins,
+  Lightbulb,
+  Trophy,
   ArrowRight,
   Sparkles,
-  CheckCircle2,
-  Clock,
-  RefreshCw,
-  Globe,
-  Megaphone,
-  BarChart3,
-  Zap,
 } from 'lucide-react';
-import {
-  useGrowthDashboard,
-  useLandingPages,
-  useTasks,
-  useAgents,
-} from '@/lib/api/hooks';
-import { api } from '@/lib/api/client';
 import { useAuthStore } from '@/stores/auth-store';
-import { toast } from 'sonner';
-import { TrustBanner } from '@/components/trust-banner';
-import { SetupChecklist } from '@/components/setup-checklist';
+import { api } from '@/lib/api/client';
+import { cn } from '@/lib/utils';
+import {
+  useGrowthScore,
+  useDailyMissions,
+  useStreak,
+  useCompleteMission,
+  useSkipMission,
+} from '@/lib/api/hooks';
+import { GrowthScoreWidget } from '@/components/dashboard/growth-score-widget';
+import { TodaysFocus } from '@/components/dashboard/todays-focus';
+import { SystemProgressBars } from '@/components/dashboard/system-progress-bars';
+import { MilestoneToast } from '@/components/dashboard/milestone-toast';
+import { AchievementsPanel } from '@/components/dashboard/achievements-panel';
+import { useBrandIq } from '@/lib/api/brand-iq-hooks';
+import Link from 'next/link';
+
+// === Types (kept for backward compat with advisor brief query) ===
+
+interface BriefWin { what: string; detail?: string; }
+interface AdvisorBrief {
+  id: string;
+  generatedAt: string;
+  headline: string | null;
+  actions: Array<{ title: string; why: string; impact?: string; link?: string; severity?: string }>;
+  wins: BriefWin[];
+}
+interface Campaign { id: string }
+interface Deal { id: string }
+interface Competitor { id: string }
+interface Meeting { id: string; title?: string; createdAt?: string; meetingDate?: string }
+
+function relativeDate(iso?: string): string {
+  if (!iso) return '—';
+  const diff = Date.now() - new Date(iso).getTime();
+  const d = Math.floor(diff / 86_400_000);
+  if (d < 1) return 'today';
+  if (d === 1) return 'yesterday';
+  if (d < 7) return `${d}d ago`;
+  return `${Math.floor(d / 7)}w ago`;
+}
 
 export default function DashboardPage() {
   const params = useParams();
   const router = useRouter();
   const companyId = params.companyId as string;
-  const token = useAuthStore((state) => state.token);
-  const [isRunning, setIsRunning] = useState(false);
+  const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
 
-  const { data: growthData, isLoading } = useGrowthDashboard(companyId);
-  const { data: pages } = useLandingPages(companyId);
-  const { data: tasksData } = useTasks(companyId);
-  const { data: agents } = useAgents(companyId);
+  const auth = { token: token! };
+  const enabled = !!token;
 
-  const allPages = pages || [];
-  const allTasks = tasksData?.data || [];
-  const allAgents = agents || [];
+  // === Gamification hooks ===
+  const growthScoreQ = useGrowthScore(companyId);
+  const missionsQ = useDailyMissions(companyId);
+  const streakQ = useStreak(companyId);
+  const completeMutation = useCompleteMission(companyId);
+  const skipMutation = useSkipMission(companyId);
 
-  // Stats
-  const pagesCreated = allPages.length;
-  const pagesPublished = allPages.filter((p) => p.status === 'published').length;
-  const pagesDraft = allPages.filter((p) => p.status === 'draft' || p.status === 'ready').length;
-  const tasksCompleted = allTasks.filter((t) => t.status === 'completed').length;
-  const tasksRunning = allTasks.filter((t) => t.status === 'in_progress').length;
-  const tasksPending = allTasks.filter((t) => t.status === 'pending').length;
-  const tasksFailed = allTasks.filter((t) => t.status === 'failed').length;
-  const activeAgents = allAgents.length; // Total agents (ready + running)
+  // === Existing data hooks ===
+  const briefQ = useQuery({
+    queryKey: ['ceo-advisor', 'latest', companyId],
+    queryFn: () => api.get<{ brief: AdvisorBrief | null }>(`/insights/${companyId}/advisor/latest`, auth),
+    enabled,
+  });
+  const campaignsQ = useQuery({
+    queryKey: ['campaigns', companyId],
+    queryFn: () => api.get<{ data: Campaign[] }>(`/campaigns/${companyId}`, auth),
+    enabled,
+  });
+  const dealsQ = useQuery({
+    queryKey: ['sales', 'deals', companyId],
+    queryFn: () => api.get<{ data: Deal[] }>(`/sales/${companyId}/deals`, auth),
+    enabled,
+  });
+  const competitorsQ = useQuery({
+    queryKey: ['market', 'competitors', companyId],
+    queryFn: () => api.get<{ data: Competitor[] }>(`/market/${companyId}/competitors`, auth),
+    enabled,
+  });
+  const meetingsQ = useQuery({
+    queryKey: ['meetings', companyId],
+    queryFn: () => api.get<{ data: Meeting[] }>(`/meetings/company/${companyId}`, auth),
+    enabled,
+  });
 
-  // Determine next action
-  const getNextAction = () => {
-    if (pagesCreated === 0) {
-      return {
-        title: 'Create your first landing pages',
-        description: 'AI will generate SEO-optimized pages for your business automatically.',
-        cta: 'Generate Pages',
-        action: () => router.push(`/${companyId}/landing-pages?action=generate`),
-        icon: Sparkles,
-        color: 'from-purple-500 to-pink-500',
-      };
-    }
-    if (pagesDraft > 0 && pagesPublished === 0) {
-      return {
-        title: `${pagesDraft} pages ready to publish`,
-        description: 'Your pages have been created. Publish them to start getting traffic from Google.',
-        cta: 'Review & Publish',
-        action: () => router.push(`/${companyId}/landing-pages`),
-        icon: Globe,
-        color: 'from-green-500 to-emerald-500',
-      };
-    }
-    if (pagesPublished > 0 && tasksRunning > 0) {
-      return {
-        title: 'AI is working on your pages',
-        description: `${tasksRunning} task${tasksRunning > 1 ? 's' : ''} in progress right now.`,
-        cta: 'View Progress',
-        action: () => router.push(`/${companyId}/landing-pages`),
-        icon: TrendingUp,
-        color: 'from-blue-500 to-cyan-500',
-      };
-    }
-    if (tasksPending > 0) {
-      return {
-        title: `${tasksPending} tasks queued`,
-        description: `AI has ${tasksPending} pending tasks. They will run automatically.`,
-        cta: 'View Tasks',
-        action: () => router.push(`/${companyId}/landing-pages`),
-        icon: Clock,
-        color: 'from-amber-500 to-orange-500',
-      };
-    }
-    if (pagesPublished > 0) {
-      return {
-        title: 'Create more content to grow faster',
-        description: 'More pages = more keywords = more traffic. Generate additional pages to expand your reach.',
-        cta: 'Generate More Pages',
-        action: () => router.push(`/${companyId}/landing-pages?action=generate`),
-        icon: Rocket,
-        color: 'from-orange-500 to-red-500',
-      };
-    }
-    return {
-      title: 'Start growing your business',
-      description: 'AI will create content, optimize SEO, and drive traffic automatically.',
-      cta: 'Get Started',
-      action: () => router.push(`/${companyId}/landing-pages?action=generate`),
-      icon: Sparkles,
-      color: 'from-primary to-purple-500',
-    };
-  };
+  const firstWin = briefQ.data?.brief?.wins?.[0];
+  const campaignsCount = campaignsQ.data?.data?.length ?? 0;
+  const dealsCount = dealsQ.data?.data?.length ?? 0;
+  const competitorsCount = competitorsQ.data?.data?.length ?? 0;
+  const meetings = meetingsQ.data?.data ?? [];
+  const lastMeeting = meetings[0];
+  const lastMeetingLabel = relativeDate(lastMeeting?.meetingDate ?? lastMeeting?.createdAt);
 
-  // Run growth engine
-  const handleRunEngine = useCallback(async () => {
-    if (!token || isRunning) return;
-    setIsRunning(true);
-    try {
-      await api.post('/ftux/execute', {
-        companyId,
-        goal: 'Optimize existing pages, create new content, and improve search rankings',
-      }, { token });
-      toast.success('AI Growth Engine activated!');
-    } catch {
-      toast.error('Failed to start engine');
-    } finally {
-      setIsRunning(false);
-    }
-  }, [token, companyId, isRunning]);
+  const firstName = user?.name?.split(' ')[0] ?? 'there';
 
-  // Recent activity from tasks
-  const recentActivity = allTasks
-    .filter((t) => t.status === 'completed' || t.status === 'in_progress')
-    .slice(0, 5);
+  const stats = [
+    { icon: Megaphone, label: 'Campaigns', value: campaignsCount, link: `/${companyId}/campaigns`, tint: 'text-orange-600 bg-orange-50' },
+    { icon: Briefcase, label: 'Deals', value: dealsCount, link: `/${companyId}/sales`, tint: 'text-emerald-600 bg-emerald-50' },
+    { icon: Target, label: 'Competitors', value: competitorsCount, link: `/${companyId}/market`, tint: 'text-rose-600 bg-rose-50' },
+    { icon: CalendarClock, label: 'Last meeting', value: lastMeetingLabel, link: `/${companyId}/meetings`, tint: 'text-indigo-600 bg-indigo-50' },
+  ];
 
-  const nextAction = getNextAction();
-  const NextIcon = nextAction.icon;
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-3" />
-          <p className="text-muted-foreground">Loading your growth dashboard...</p>
-        </div>
-      </div>
-    );
-  }
+  const gamificationLoading = growthScoreQ.isLoading || missionsQ.isLoading;
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Hero: Growth Progress */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <div className="flex items-center justify-between mb-1">
-          <h1 className="text-2xl font-bold">Grow your business automatically</h1>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={handleRunEngine}
-            disabled={isRunning}
-          >
-            {isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            {isRunning ? 'Running...' : 'Run AI Engine'}
-          </Button>
-        </div>
-        <p className="text-muted-foreground mb-4">
-          {growthData?.companyName || 'Your business'} — AI is working for you
+    <div className="max-w-5xl mx-auto space-y-6">
+      {/* Greeting */}
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Chào {firstName}</h1>
+        <p className="text-sm text-slate-600 mt-1">
+          Here's what your AI thinks you should focus on today.
         </p>
+      </div>
 
-        {/* Stats Row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-50 rounded-lg">
-                  <FileText className="w-4 h-4 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{pagesCreated}</p>
-                  <p className="text-xs text-muted-foreground">Pages Created</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-green-50 rounded-lg">
-                  <Globe className="w-4 h-4 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{pagesPublished}</p>
-                  <p className="text-xs text-muted-foreground">Published</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-purple-50 rounded-lg">
-                  <TrendingUp className="w-4 h-4 text-purple-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{tasksCompleted}</p>
-                  <p className="text-xs text-muted-foreground">Tasks Done</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-50 rounded-lg">
-                  <Users className="w-4 h-4 text-amber-600" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{activeAgents}</p>
-                  <p className="text-xs text-muted-foreground">AI Workers</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+      <BrandIqSetupBanner companyId={companyId} />
+
+      {/* Growth Score + Today's Focus */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-1">
+          <GrowthScoreWidget
+            data={growthScoreQ.data}
+            loading={growthScoreQ.isLoading}
+          />
         </div>
-      </motion.div>
+        <div className="lg:col-span-2">
+          <TodaysFocus
+            missions={missionsQ.data}
+            streak={streakQ.data}
+            loading={missionsQ.isLoading}
+            onComplete={(id) => completeMutation.mutate(id)}
+            onSkip={(id) => skipMutation.mutate(id)}
+            companyId={companyId}
+          />
+        </div>
+      </div>
 
-      {/* Data Trust Banner */}
-      <TrustBanner variant="full" />
+      {/* System Progress Bars */}
+      <SystemProgressBars data={growthScoreQ.data} loading={growthScoreQ.isLoading} />
 
-      {/* Setup Progress Banner */}
-      <SetupChecklist variant="banner" />
+      {/* Achievements */}
+      <AchievementsPanel
+        growthScore={growthScoreQ.data}
+        streak={streakQ.data}
+        campaignsCount={campaignsCount}
+        competitorsCount={competitorsCount}
+        dealsCount={dealsCount}
+      />
 
-      {/* Next Action — THE most important card */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-      >
-        <Card className="overflow-hidden border-2 border-primary/20">
-          <CardContent className="p-0">
-            <div className="flex flex-col md:flex-row">
-              <div className="flex-1 p-6">
-                <Badge variant="secondary" className="mb-3 text-xs">Recommended Next Step</Badge>
-                <h2 className="text-xl font-semibold mb-2">{nextAction.title}</h2>
-                <p className="text-muted-foreground mb-4">{nextAction.description}</p>
-                <Button
-                  onClick={nextAction.action}
-                  className={`gap-2 bg-gradient-to-r ${nextAction.color} text-white border-0`}
-                  size="lg"
-                >
-                  <NextIcon className="w-5 h-5" />
-                  {nextAction.cta}
-                  <ArrowRight className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className={`w-full md:w-48 bg-gradient-to-br ${nextAction.color} flex items-center justify-center p-8 md:p-0`}>
-                <NextIcon className="w-16 h-16 text-white/30" />
-              </div>
+      {/* Quick Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {stats.map((s) => {
+          const Icon = s.icon;
+          return (
+            <Card
+              key={s.label}
+              className="cursor-pointer hover:border-indigo-200 hover:shadow-sm transition-all"
+              onClick={() => router.push(s.link)}
+            >
+              <CardContent className="p-4">
+                <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center mb-2', s.tint)}>
+                  <Icon className="w-4 h-4" />
+                </div>
+                <p className="text-2xl font-bold text-slate-900 leading-tight truncate">{s.value}</p>
+                <div className="flex items-center justify-between mt-1">
+                  <p className="text-xs text-slate-500">{s.label}</p>
+                  <span className="text-xs text-indigo-600 flex items-center gap-0.5">
+                    View <ArrowRight className="w-3 h-3" />
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Recent Win */}
+      {firstWin && (
+        <Card className="border-emerald-200 bg-emerald-50/60">
+          <CardContent className="p-4 flex items-start gap-3">
+            <Trophy className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
+                <Lightbulb className="w-3 h-3" /> AI tip — recent win
+              </p>
+              <p className="text-sm text-slate-800 mt-1 font-medium">{firstWin.what}</p>
+              {firstWin.detail && <p className="text-xs text-slate-600 mt-0.5">{firstWin.detail}</p>}
             </div>
           </CardContent>
         </Card>
-      </motion.div>
+      )}
 
-      {/* AI Activity Feed */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-      >
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold">AI Activity</h3>
-          <div className="flex gap-2">
-            {tasksRunning > 0 && (
-              <Badge variant="outline" className="gap-1 text-blue-600 border-blue-300">
-                <RefreshCw className="w-3 h-3 animate-spin" />
-                {tasksRunning} running
-              </Badge>
-            )}
-            {tasksPending > 0 && tasksRunning === 0 && (
-              <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300">
-                <Clock className="w-3 h-3" />
-                {tasksPending} queued
-              </Badge>
-            )}
-          </div>
-        </div>
-        <Card>
-          <CardContent className="p-0 divide-y">
-            {recentActivity.length > 0 ? (
-              recentActivity.map((task, i) => {
-                const nextAction = getTaskNextAction(task, companyId);
-                return (
-                  <div
-                    key={task.id}
-                    className={`flex items-center gap-3 p-4 ${nextAction && task.status === 'completed' ? 'cursor-pointer hover:bg-muted/50 transition-colors' : ''}`}
-                    onClick={nextAction && task.status === 'completed' ? () => router.push(nextAction.href) : undefined}
-                  >
-                    {task.status === 'completed' ? (
-                      <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4 text-blue-500 animate-spin shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{task.title}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {task.status === 'completed' ? 'Completed' : 'Working...'}
-                      </p>
-                    </div>
-                    {nextAction && task.status === 'completed' && (
-                      <span className="text-xs text-primary font-medium shrink-0 flex items-center gap-1">
-                        {nextAction.label} <ArrowRight className="w-3 h-3" />
-                      </span>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <div className="p-8 text-center">
-                <Clock className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">AI will show activity here once started</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
+      {/* CTA when no missions yet */}
+      {!gamificationLoading && (!missionsQ.data || missionsQ.data.missions.length === 0) && (
+        <Button
+          className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white w-full sm:w-auto"
+          onClick={() => router.push(`/${companyId}/insights`)}
+        >
+          <Sparkles className="w-4 h-4" />
+          Ask AI for personalized advice
+          <Badge className="ml-1 bg-indigo-500 text-white gap-1 hover:bg-indigo-500">
+            <Coins className="w-3 h-3" /> 10
+          </Badge>
+        </Button>
+      )}
 
-      {/* Quick Links */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-      >
-        <div className="grid grid-cols-3 gap-3">
-          <Card
-            className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => router.push(`/${companyId}/landing-pages`)}
-          >
-            <CardContent className="pt-5 pb-5 text-center">
-              <FileText className="w-6 h-6 text-blue-500 mx-auto mb-2" />
-              <p className="text-sm font-medium">My Pages</p>
-              <p className="text-xs text-muted-foreground">{pagesCreated} pages</p>
-            </CardContent>
-          </Card>
-          <Card
-            className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => router.push(`/${companyId}/marketing`)}
-          >
-            <CardContent className="pt-5 pb-5 text-center">
-              <Megaphone className="w-6 h-6 text-orange-500 mx-auto mb-2" />
-              <p className="text-sm font-medium">My Ads</p>
-              <p className="text-xs text-muted-foreground">Campaigns</p>
-            </CardContent>
-          </Card>
-          <Card
-            className="cursor-pointer hover:shadow-md transition-shadow"
-            onClick={() => router.push(`/${companyId}/analytics`)}
-          >
-            <CardContent className="pt-5 pb-5 text-center">
-              <BarChart3 className="w-6 h-6 text-green-500 mx-auto mb-2" />
-              <p className="text-sm font-medium">Analytics</p>
-              <p className="text-xs text-muted-foreground">Traffic & rankings</p>
-            </CardContent>
-          </Card>
-        </div>
-      </motion.div>
+      {/* Milestone notifications */}
+      <MilestoneToast
+        growthScore={growthScoreQ.data}
+        streak={streakQ.data}
+        missions={missionsQ.data}
+        campaignsCount={campaignsCount}
+      />
     </div>
   );
 }
 
-// Map task type → user-friendly next action
-function getTaskNextAction(task: any, companyId: string): { label: string; cta: string; href: string } | null {
-  const type = task.type || '';
-  const title = (task.title || '').toLowerCase();
-
-  if (type === 'generate_page_content' || type === 'create_landing_page' || title.includes('landing page') || title.includes('content'))
-    return { label: 'Review your page', cta: 'View', href: `/${companyId}/landing-pages` };
-
-  if (type === 'optimize_page_seo' || type === 'seo_audit' || title.includes('seo'))
-    return { label: 'Check SEO results', cta: 'View', href: `/${companyId}/analytics` };
-
-  if (type === 'publish_page' || title.includes('publish'))
-    return { label: 'See your live page', cta: 'View', href: `/${companyId}/landing-pages` };
-
-  if (title.includes('social') || title.includes('post') || type === 'create_social_post')
-    return { label: 'Review social posts', cta: 'View', href: `/${companyId}/marketing` };
-
-  if (title.includes('campaign') || title.includes('marketing') || title.includes('email'))
-    return { label: 'See your campaigns', cta: 'View', href: `/${companyId}/marketing` };
-
-  if (title.includes('keyword') || title.includes('research'))
-    return { label: 'View keywords', cta: 'View', href: `/${companyId}/analytics` };
-
-  if (title.includes('detect social') || title.includes('crawl'))
-    return { label: 'View what AI learned', cta: 'View', href: `/${companyId}/knowledge` };
-
-  return null;
+function BrandIqSetupBanner({ companyId }: { companyId: string }) {
+  const { data: profile, isLoading } = useBrandIq(companyId);
+  // Hide while loading or when profile already exists — only nudge first-time users.
+  if (isLoading || profile) return null;
+  return (
+    <Card className="border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50">
+      <CardContent className="p-4 flex items-center gap-4 flex-wrap">
+        <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+          <Sparkles className="w-5 h-5 text-amber-700" />
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <div className="font-semibold text-sm text-amber-900">Set up Brand IQ first</div>
+          <p className="text-xs text-amber-800/80 mt-0.5">
+            One-time, 30 seconds. After this, every blog / banner / ad / chat reply uses your real
+            voice and audience instead of generic AI tone. Most impactful single setup step.
+          </p>
+        </div>
+        <Link href={`/${companyId}/brand-iq`}>
+          <Button size="sm" className="gap-1 bg-amber-600 hover:bg-amber-700">
+            Set up now <ArrowRight className="w-3 h-3" />
+          </Button>
+        </Link>
+      </CardContent>
+    </Card>
+  );
 }

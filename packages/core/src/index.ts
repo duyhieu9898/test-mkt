@@ -1,6 +1,9 @@
 // Core package exports
 export * from './db';
 
+// Marketing knowledge layer (expert frameworks injected into agent prompts)
+export * from './knowledge';
+
 // Re-export commonly used types
 export type {
   UserPreferences,

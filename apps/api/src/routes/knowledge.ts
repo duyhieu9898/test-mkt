@@ -10,10 +10,11 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and, desc, ilike, or } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { documents, knowledgeBase } from '@1person/core/db';
+import { documents, knowledgeBase, companies } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { queueTaskExecution } from '../lib/queue';
 import { knowledgeExtractionService } from '../services/knowledge-extraction';
+import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
 
 const knowledgeRouter = new Hono();
 knowledgeRouter.use('*', authMiddleware);
@@ -91,6 +92,34 @@ knowledgeRouter.post('/company/:companyId/upload', async (c) => {
     fileSize: buffer.length,
     status: 'processing',
   }).returning();
+
+  // W0.1 — dual-write to the trust-grade @1person/ai-tenant pipeline.
+  // Non-fatal: the legacy `documents` table is still authoritative for
+  // Phase 0 so any failure here must not break the upload. Once Phase 1A
+  // lands (pgvector + multi-LLM) the trust pipeline becomes authoritative
+  // and this dual-write collapses into a single call.
+  (async () => {
+    try {
+      const company = await db.query.companies.findFirst({
+        where: eq(companies.id, companyId),
+        columns: { id: true, name: true },
+      });
+      if (!company) return;
+
+      const tenantId = await ensureTenantForCompany(company.id, company.name);
+      const ai = getTenantAI();
+      await ai.uploadDocument(
+        tenantId,
+        name,
+        buffer,
+        file.type || 'application/octet-stream',
+        'user:upload',
+      );
+    } catch (err) {
+      // Log only — legacy path already succeeded so the user is unaffected.
+      console.error('[W0.1 dual-write] TenantAI.uploadDocument failed:', err);
+    }
+  })();
 
   // For text/PDF: extract immediately (small enough)
   if (fileType === 'pdf' || fileType === 'text' || fileType === 'doc') {
@@ -269,6 +298,27 @@ knowledgeRouter.get('/company/:companyId/documents/:id', async (c) => {
   return c.json(doc);
 });
 
+// Update document metadata (visibility, name)
+knowledgeRouter.patch(
+  '/company/:companyId/documents/:docId',
+  zValidator('json', z.object({
+    visibility: z.enum(['public', 'internal', 'confidential']).optional(),
+    name: z.string().optional(),
+  })),
+  async (c) => {
+    const docId = c.req.param('docId');
+    const companyId = c.req.param('companyId');
+    const body = c.req.valid('json');
+    const [updated] = await db.update(documents).set({
+      ...(body.visibility ? { visibility: body.visibility as any } : {}),
+      ...(body.name ? { name: body.name } : {}),
+      updatedAt: new Date(),
+    }).where(and(eq(documents.id, docId), eq(documents.companyId, companyId))).returning();
+    if (!updated) return c.json({ error: 'Document not found' }, 404);
+    return c.json(updated);
+  }
+);
+
 // Approve document → save extracted knowledge to knowledge_base
 knowledgeRouter.patch('/company/:companyId/documents/:id/approve', async (c) => {
   const companyId = c.req.param('companyId');
@@ -302,6 +352,9 @@ knowledgeRouter.patch('/company/:companyId/documents/:id/approve', async (c) => 
         content: entry.content,
         source: `document:${docId}`,
         confidence: entry.confidence,
+        // B1 fix (doc 11 §7): copy document visibility so public docs
+        // produce public knowledge entries reachable by public chatbot widgets
+        visibility: (doc as any).visibility || 'internal',
       });
       saved++;
     } catch {}

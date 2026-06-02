@@ -74,6 +74,29 @@ ftuxRouter.post('/execute', zValidator('json', executeSchema), async (c) => {
 
   const executionGoal = goal || 'Analyze company, create marketing strategy, and start growth execution';
 
+  // Auto-extract Business Brain (brand voice, primary persona, products)
+  // from the crawled context BEFORE the orchestrator runs — this way the
+  // seed campaigns and banners that fire next already have a non-empty
+  // Brain to draw from. Idempotent: if brand voice already exists we skip.
+  (async () => {
+    try {
+      const { autoExtractBrainFromCompany } = await import('../services/brain-autoextract');
+      const { db: dbInstance } = await import('../lib/db');
+      const { companies } = await import('@1person/core/db');
+      const { eq } = await import('drizzle-orm');
+      const company = await dbInstance.query.companies.findFirst({
+        where: eq(companies.id, companyId),
+        columns: { id: true, name: true },
+      });
+      const result = await autoExtractBrainFromCompany(companyId, company?.name ?? 'Company');
+      console.log(
+        `[FTUX Execute] brain autoExtract — brandVoice=${result.brandVoice}, personas=${result.personas}, products=${result.products}${result.skipped ? ' (skipped, already exists)' : ''}`,
+      );
+    } catch (err) {
+      console.warn('[FTUX Execute] brain autoExtract failed:', err);
+    }
+  })();
+
   // Orchestrator uses AI (PlannerAgent) to decide what to run
   // No hardcoded engine sequence - AI decides based on context
   orchestrator.executeGoal(companyId, executionGoal, {
@@ -111,9 +134,33 @@ ftuxRouter.post('/execute', zValidator('json', executeSchema), async (c) => {
         },
       ];
 
+      // W1B.4 — emit step events via the shared event bus so these seed
+      // campaigns show up in the Live Workflow Panel like user-triggered
+      // ones. Without this, onboarding auto-campaigns appear fully-formed
+      // and the user never sees "AI working" realtime.
+      const { eventBus } = await import('../services/event-bus');
+
       for (const opportunity of campaigns) {
         try {
-          const campaignId = await marketingAutonomous.createAutonomousCampaign(companyId, opportunity);
+          const campaignId = await marketingAutonomous.createAutonomousCampaign(
+            companyId,
+            opportunity,
+            async (ev) => {
+              eventBus.publish({
+                type: 'system:broadcast',
+                companyId,
+                source: 'ftux-seed',
+                payload: {
+                  kind: 'campaign:step',
+                  // onStep fires before we know the campaignId; we rely on
+                  // the payload carrying the step + status + timestamp.
+                  // The progress panel uses a *latest* seed campaign fallback
+                  // when it subscribes before the row exists.
+                  ...ev,
+                },
+              });
+            },
+          );
           console.log(`[FTUX] Auto-created campaign: ${campaignId}`);
         } catch (err) {
           console.warn('[FTUX] Campaign creation failed:', err);

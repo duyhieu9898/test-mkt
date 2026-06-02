@@ -134,6 +134,14 @@ export const knowledgeBase = pgTable(
     confidence: real('confidence').default(1.0),
     verifiedByUserId: uuid('verified_by_user_id'),
 
+    // Access control — same enum as documents (imported from knowledge.ts)
+    // Default 'internal' = safe for team chatbot, not exposed to public widget
+    visibility: varchar('visibility', { length: 20 }).default('internal').notNull(),
+
+    // Tag-based scoping for multi-bot (doc 11 §2)
+    // e.g. ["faq", "product", "sales"]. Empty = accessible by all bots.
+    tags: jsonb('tags').$type<string[]>().default([]).notNull(),
+
     // Usage tracking
     usageCount: integer('usage_count').default(0),
     lastUsedAt: timestamp('last_used_at'),

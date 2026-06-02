@@ -25,6 +25,11 @@ import {
   type EmailConnection,
 } from '@1person/core/db';
 import Anthropic from '@anthropic-ai/sdk';
+import { renderSkillKnowledge } from '@1person/core';
+
+// Expert email playbooks injected into outreach generation (skill K15).
+const EMAILS_FRAMEWORK = renderSkillKnowledge('emails');
+const COLD_EMAIL_FRAMEWORK = renderSkillKnowledge('cold-email');
 
 const anthropic = new Anthropic();
 
@@ -819,6 +824,7 @@ Return ONLY valid JSON.`;
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1500,
+      system: [EMAILS_FRAMEWORK, COLD_EMAIL_FRAMEWORK].filter(Boolean).join('\n\n---\n\n') || undefined,
       messages: [{ role: 'user', content: prompt }],
     });
 

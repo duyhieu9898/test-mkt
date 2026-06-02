@@ -29,6 +29,24 @@ const generatePlanSchema = z.object({
   timeline: z.string().optional(),
 });
 
+/**
+ * Strip secrets from a company's `settings` before sending to the client.
+ * The WordPress Application Password (encrypted at rest) must never leave the
+ * server; expose only a boolean "connected" + the site URL.
+ */
+function sanitizeCompany<T extends { settings?: unknown }>(company: T): T {
+  const settings = (company.settings || {}) as Record<string, any>;
+  if (!settings.wordpress) return company;
+  const { appPassword, ...wpSafe } = settings.wordpress as Record<string, any>;
+  return {
+    ...company,
+    settings: {
+      ...settings,
+      wordpress: { ...wpSafe, connected: !!appPassword },
+    },
+  };
+}
+
 // List companies
 companiesRouter.get('/', async (c) => {
   const { userId } = c.get('user');
@@ -38,7 +56,7 @@ companiesRouter.get('/', async (c) => {
     orderBy: [desc(companies.createdAt)],
   });
 
-  return c.json({ data: userCompanies });
+  return c.json({ data: userCompanies.map(sanitizeCompany) });
 });
 
 // Create company
@@ -100,7 +118,7 @@ companiesRouter.get('/:id', async (c) => {
     throw new HTTPException(404, { message: 'Company not found' });
   }
 
-  return c.json(company);
+  return c.json(sanitizeCompany(company));
 });
 
 // Update company

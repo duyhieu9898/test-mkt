@@ -14,13 +14,40 @@
  */
 
 import { db } from '../lib/db';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, inArray, sql } from 'drizzle-orm';
 import {
   companies,
   knowledgeBase,
   brandIdentities,
   agentMemories,
 } from '@1person/core/db';
+import { getActiveBrandIq, renderBrandIqContext } from './brand-iq-extractor';
+
+/**
+ * Visibility filter level — controls which knowledge entries are included.
+ *
+ *   'public'   — only public docs (for customer-facing chatbot widget)
+ *   'internal' — public + internal (for logged-in team members)
+ *   'admin'    — all (for owner/admin)
+ *   'all'      — no filter (legacy behavior, same as admin)
+ */
+export type VisibilityLevel = 'public' | 'internal' | 'admin' | 'all';
+
+/**
+ * Map visibility level to allowed document visibility values.
+ * A chatbot in 'internal' mode can see both 'public' and 'internal' docs.
+ */
+function allowedVisibilities(level: VisibilityLevel): string[] {
+  switch (level) {
+    case 'public':
+      return ['public'];
+    case 'internal':
+      return ['public', 'internal'];
+    case 'admin':
+    case 'all':
+      return ['public', 'internal', 'confidential'];
+  }
+}
 
 export interface BusinessContext {
   companyName: string;
@@ -48,17 +75,35 @@ export interface BusinessContext {
   fullContext: string;
 }
 
-export async function buildBusinessContext(companyId: string): Promise<BusinessContext> {
+/**
+ * Build a business context snapshot for a company. Used by every
+ * content generator, chatbot, and agent in the system.
+ *
+ * @param visibilityFilter — Controls which knowledge entries are
+ *   included based on their visibility level. Default 'all' = no
+ *   filter (legacy behavior). Pass 'public' for the embed chatbot
+ *   widget so it never leaks internal/confidential data.
+ */
+export async function buildBusinessContext(
+  companyId: string,
+  visibilityFilter: VisibilityLevel = 'all',
+): Promise<BusinessContext> {
+  const allowed = allowedVisibilities(visibilityFilter);
+
   // 1. Company profile
   const company = await db.query.companies.findFirst({
     where: eq(companies.id, companyId),
   });
 
-  // 2. All knowledge entries (max 30)
+  // 2. Knowledge entries filtered by visibility (max 30)
   const knowledge = await db
     .select({ category: knowledgeBase.category, title: knowledgeBase.title, content: knowledgeBase.content })
     .from(knowledgeBase)
-    .where(eq(knowledgeBase.companyId, companyId))
+    .where(and(
+      eq(knowledgeBase.companyId, companyId),
+      // Filter by visibility — the column is varchar, so use sql`...IN (...)`
+      sql`${knowledgeBase.visibility} = ANY(${sql.raw(`ARRAY[${allowed.map((v) => `'${v}'`).join(',')}]`)})`,
+    ))
     .orderBy(desc(knowledgeBase.updatedAt))
     .limit(30);
 
@@ -104,6 +149,14 @@ export async function buildBusinessContext(companyId: string): Promise<BusinessC
 
   // Build comprehensive context string for LLM
   const contextParts: string[] = [];
+
+  // Brand IQ first — every agent reads this before anything else (Block 2).
+  // Falls back silently if the founder hasn't set one up yet.
+  const brandIq = await getActiveBrandIq(companyId).catch(() => null);
+  if (brandIq) {
+    contextParts.push(renderBrandIqContext(brandIq));
+    contextParts.push('');
+  }
 
   contextParts.push(`COMPANY: ${company?.name || 'Unknown'}`);
   contextParts.push(`INDUSTRY: ${company?.industry || 'Unknown'}`);

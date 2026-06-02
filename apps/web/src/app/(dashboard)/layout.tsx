@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth-store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
+import { CreditBadge } from '@/components/credit-badge';
 
 export default function DashboardLayout({
   children,
@@ -41,7 +42,10 @@ export default function DashboardLayout({
       <Sidebar />
       <div className="lg:pl-64">
         <Header />
-        <main className="p-6">{children}</main>
+        <main className="p-4 pt-16 sm:p-6 lg:pt-6">{children}</main>
+      </div>
+      <div className="fixed top-4 right-4 z-30">
+        <CreditBadge />
       </div>
     </div>
   );

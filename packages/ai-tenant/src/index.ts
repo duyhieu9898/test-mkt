@@ -52,6 +52,24 @@ import {
   getDefaultAgent as runtimeGetDefaultAgent,
   setDefaultAgent as runtimeSetDefaultAgent,
 } from './agent-runtime.js';
+import * as brain from './brain-store.js';
+import * as marketScan from './market-scan-store.js';
+import * as dealsStore from './deals-store.js';
+import * as ceoAdvisorStore from './ceo-advisor-store.js';
+import {
+  getDeploymentMode,
+  upsertDeploymentMode,
+  setByoApiKey,
+  getByoApiKey,
+  deleteByoApiKey,
+  listByoKeyProviders,
+  type DeploymentMode,
+  type DeploymentModeInput,
+  type DeploymentModeKind,
+  type ByoKeyProvider,
+} from './deployment-store.js';
+import * as config from './config-store.js';
+import * as credit from './credit-store.js';
 import type {
   TenantAIConfig,
   TenantConfig,
@@ -397,6 +415,286 @@ export class TenantAI {
   }
 
   // =========================================================================
+  // Business Brain (W0.2) — editable structured memory
+  // =========================================================================
+
+  /**
+   * Business Brain accessor. Every mutation is audit-logged on the
+   * chain-hashed trail. See brain-store.ts for the underlying
+   * implementation and docs 06 §6a / 07 §3 G2 for the design.
+   */
+  readonly brain = {
+    getSnapshot: (tenantId: string) => brain.getSnapshot(this.db, tenantId),
+
+    getBrandVoice: (tenantId: string) => brain.getBrandVoice(this.db, tenantId),
+    upsertBrandVoice: (
+      tenantId: string,
+      input: brain.BrandVoiceInput,
+      actor?: string,
+    ) => brain.upsertBrandVoice(this.db, tenantId, input, actor),
+
+    listPersonas: (tenantId: string) => brain.listPersonas(this.db, tenantId),
+    getPrimaryPersona: (tenantId: string) => brain.getPrimaryPersona(this.db, tenantId),
+    createPersona: (
+      tenantId: string,
+      input: brain.PersonaInput,
+      actor?: string,
+    ) => brain.createPersona(this.db, tenantId, input, actor),
+    updatePersona: (
+      tenantId: string,
+      personaId: string,
+      input: Partial<brain.PersonaInput>,
+      actor?: string,
+    ) => brain.updatePersona(this.db, tenantId, personaId, input, actor),
+    deletePersona: (tenantId: string, personaId: string, actor?: string) =>
+      brain.deletePersona(this.db, tenantId, personaId, actor),
+
+    listProducts: (tenantId: string) => brain.listProducts(this.db, tenantId),
+    createProduct: (
+      tenantId: string,
+      input: brain.ProductInput,
+      actor?: string,
+    ) => brain.createProduct(this.db, tenantId, input, actor),
+    updateProduct: (
+      tenantId: string,
+      productId: string,
+      input: Partial<brain.ProductInput>,
+      actor?: string,
+    ) => brain.updateProduct(this.db, tenantId, productId, input, actor),
+    deleteProduct: (tenantId: string, productId: string, actor?: string) =>
+      brain.deleteProduct(this.db, tenantId, productId, actor),
+
+    listLearnings: (tenantId: string, limit?: number) =>
+      brain.listLearnings(this.db, tenantId, limit),
+    appendLearning: (
+      tenantId: string,
+      input: brain.CampaignLearningInput,
+      actor?: string,
+    ) => brain.appendLearning(this.db, tenantId, input, actor),
+
+    // Market Position (doc 10 §4)
+    getMarketPosition: (tenantId: string) =>
+      brain.getMarketPosition(this.db, tenantId),
+    upsertMarketPosition: (
+      tenantId: string,
+      input: brain.MarketPositionInput,
+      actor?: string,
+    ) => brain.upsertMarketPosition(this.db, tenantId, input, actor),
+
+    // Sales Playbook (doc 10 §4)
+    getSalesPlaybook: (tenantId: string) =>
+      brain.getSalesPlaybook(this.db, tenantId),
+    upsertSalesPlaybook: (
+      tenantId: string,
+      input: brain.SalesPlaybookInput,
+      actor?: string,
+    ) => brain.upsertSalesPlaybook(this.db, tenantId, input, actor),
+
+    // Marketing Strategy (doc 10 §4)
+    getMarketingStrategy: (tenantId: string) =>
+      brain.getMarketingStrategy(this.db, tenantId),
+    upsertMarketingStrategy: (
+      tenantId: string,
+      input: brain.MarketingStrategyInput,
+      actor?: string,
+    ) => brain.upsertMarketingStrategy(this.db, tenantId, input, actor),
+  };
+
+  // =========================================================================
+  // Market & Competitors (doc 10 §5)
+  // =========================================================================
+  readonly market = {
+    listCompetitors: (tenantId: string) =>
+      marketScan.listCompetitors(this.db, tenantId),
+    getCompetitor: (tenantId: string, competitorId: string) =>
+      marketScan.getCompetitor(this.db, tenantId, competitorId),
+    createCompetitor: (
+      tenantId: string,
+      input: marketScan.CompetitorInput,
+      actor?: string,
+    ) => marketScan.createCompetitor(this.db, tenantId, input, actor),
+    updateCompetitor: (
+      tenantId: string,
+      competitorId: string,
+      input: Partial<marketScan.CompetitorInput>,
+      actor?: string,
+    ) => marketScan.updateCompetitor(this.db, tenantId, competitorId, input, actor),
+    deleteCompetitor: (tenantId: string, competitorId: string, actor?: string) =>
+      marketScan.deleteCompetitor(this.db, tenantId, competitorId, actor),
+
+    startScan: (tenantId: string, competitorId: string | null) =>
+      marketScan.startScan(this.db, tenantId, competitorId),
+    completeScan: (
+      scanId: string,
+      patch: Parameters<typeof marketScan.completeScan>[2],
+    ) => marketScan.completeScan(this.db, scanId, patch),
+    updateCompetitorAfterScan: (
+      competitorId: string,
+      signals: marketScan.Signal[],
+    ) => marketScan.updateCompetitorAfterScan(this.db, competitorId, signals),
+    listScans: (tenantId: string, limit?: number) =>
+      marketScan.listScans(this.db, tenantId, limit),
+  };
+
+  // =========================================================================
+  // Sales — Deals + Events (doc 10 §6)
+  // =========================================================================
+  readonly deals = {
+    list: (tenantId: string) => dealsStore.listDeals(this.db, tenantId),
+    get: (tenantId: string, dealId: string) =>
+      dealsStore.getDeal(this.db, tenantId, dealId),
+    create: (tenantId: string, input: dealsStore.DealInput, actor?: string) =>
+      dealsStore.createDeal(this.db, tenantId, input, actor),
+    update: (
+      tenantId: string,
+      dealId: string,
+      input: Partial<dealsStore.DealInput>,
+      actor?: string,
+    ) => dealsStore.updateDeal(this.db, tenantId, dealId, input, actor),
+    delete: (tenantId: string, dealId: string, actor?: string) =>
+      dealsStore.deleteDeal(this.db, tenantId, dealId, actor),
+
+    listEvents: (dealId: string, limit?: number) =>
+      dealsStore.listDealEvents(this.db, dealId, limit),
+    appendEvent: (dealId: string, input: dealsStore.DealEventInput) =>
+      dealsStore.appendDealEvent(this.db, dealId, input),
+  };
+
+  // =========================================================================
+  // CEO Advisor briefs (doc 10 §8)
+  // =========================================================================
+  readonly ceoAdvisor = {
+    latest: (tenantId: string) => ceoAdvisorStore.getLatestBrief(this.db, tenantId),
+    list: (tenantId: string, limit?: number) =>
+      ceoAdvisorStore.listBriefs(this.db, tenantId, limit),
+    append: (
+      tenantId: string,
+      input: ceoAdvisorStore.AdvisorBriefInput,
+      actor?: string,
+    ) => ceoAdvisorStore.appendBrief(this.db, tenantId, input, actor),
+  };
+
+  // =========================================================================
+  // Deployment mode (P0-A1) — cloud / private / on-premise routing
+  // =========================================================================
+
+  /**
+   * Deployment mode accessor. Lets apps/api decide per-tenant whether to
+   * use shared cloud infrastructure, bring-your-own keys, or an operator-
+   * supplied vLLM endpoint. Every mutation is audit-logged.
+   */
+  readonly deployment = {
+    getMode: (tenantId: string) => getDeploymentMode(this.db, tenantId),
+    upsertMode: (
+      tenantId: string,
+      input: DeploymentModeInput,
+      actor?: string,
+    ) => upsertDeploymentMode(this.db, tenantId, input, actor),
+
+    // Bring-your-own API key storage (P0-A2). Keys are encrypted at rest
+    // with AES-256-GCM using TRUSTAI_KEY_ENCRYPTION_KEY from env.
+    setByoKey: (
+      tenantId: string,
+      provider: ByoKeyProvider,
+      plaintextKey: string,
+      actor?: string,
+    ) => setByoApiKey(this.db, tenantId, provider, plaintextKey, actor),
+    getByoKey: (tenantId: string, provider: ByoKeyProvider) =>
+      getByoApiKey(this.db, tenantId, provider),
+    deleteByoKey: (
+      tenantId: string,
+      provider: ByoKeyProvider,
+      actor?: string,
+    ) => deleteByoApiKey(this.db, tenantId, provider, actor),
+    listByoKeys: (tenantId: string) => listByoKeyProviders(this.db, tenantId),
+  };
+
+  // =========================================================================
+  // System Config — admin-managed app-wide configuration
+  // =========================================================================
+  //
+  // Replaces .env for everything a non-technical operator should be
+  // able to change: LLM provider keys, per-feature LLM mapping, Stripe,
+  // Google OAuth, Meta Ads, Sentry, Langfuse. Secrets are encrypted
+  // with the same AES-256-GCM helpers as BYO keys.
+  //
+  // Two flavors of read:
+  //   - `get*` → returns decrypted secrets, server-only
+  //   - `get*Public` → returns MASKED secrets, safe for admin UI
+  //
+  readonly config = {
+    list: (category?: config.ConfigCategory) => config.listConfigs(this.db, category),
+    listPublic: (category?: config.ConfigCategory) => config.listConfigsPublic(this.db, category),
+    get: (category: config.ConfigCategory, key: string) =>
+      config.getConfig(this.db, category, key),
+    getPublic: (category: config.ConfigCategory, key: string) =>
+      config.getConfigPublic(this.db, category, key),
+    upsert: (input: config.SystemConfigInput, actor?: string) =>
+      config.upsertConfig(this.db, input, actor),
+    updateStatus: (
+      category: config.ConfigCategory,
+      key: string,
+      status: config.ConfigStatus,
+      message: string | null,
+    ) => config.updateStatus(this.db, category, key, status, message),
+    delete: (category: config.ConfigCategory, key: string, actor?: string) =>
+      config.deleteConfig(this.db, category, key, actor),
+    resolveProviderKey: (providerKey: string, envVarName: string) =>
+      config.resolveProviderKey(this.db, providerKey, envVarName),
+    resolveFeatureLLM: (featureKey: string) =>
+      config.resolveFeatureLLM(this.db, featureKey),
+    seedDefaults: (opts?: { overwriteFeatures?: boolean }) =>
+      config.seedDefaultConfigs(this.db, opts),
+  };
+
+  // =========================================================================
+  // Credits — per-tenant subscription state + atomic charge (Phase B)
+  // =========================================================================
+  //
+  // Every action that costs money (LLM call, image gen, agent run)
+  // should call `charge()` AFTER the call succeeds. Pre-check with
+  // `getBalance().totalAvailable` to avoid wasting LLM tokens on a
+  // tenant that's about to hit 402.
+  //
+  // Atomicity: charge() and addCredit() run inside a Postgres
+  // transaction with FOR UPDATE so concurrent requests can't
+  // double-spend or double-grant.
+  //
+  // See docs/architecture/09-pricing-and-credits.md for the model.
+  //
+  readonly credits = {
+    // Plans (admin)
+    listPlans: () => credit.listPlans(this.db),
+    getPlan: (key: string) => credit.getPlan(this.db, key),
+    upsertPlan: (plan: Parameters<typeof credit.upsertPlan>[1]) =>
+      credit.upsertPlan(this.db, plan),
+    seedDefaultPlans: () => credit.seedDefaultPlans(this.db),
+
+    // Tenant balance
+    getBalance: (tenantId: string) => credit.getBalance(this.db, tenantId),
+    getOrCreateBalance: (tenantId: string) => credit.getOrCreateBalance(this.db, tenantId),
+
+    // Atomic operations
+    charge: (tenantId: string, input: credit.ChargeInput) =>
+      credit.chargeCredit(this.db, tenantId, input),
+    addCredit: (
+      tenantId: string,
+      amount: number,
+      kind: 'grant' | 'topup' | 'refund' | 'rollover',
+      input?: Omit<credit.ChargeInput, 'amount'>,
+    ) => credit.addCredit(this.db, tenantId, amount, kind, input),
+    changePlan: (
+      tenantId: string,
+      planKey: string,
+      stripeIds?: { customerId?: string; subscriptionId?: string },
+    ) => credit.changePlan(this.db, tenantId, planKey, stripeIds),
+
+    // History
+    listTransactions: (tenantId: string, limit?: number, offset?: number) =>
+      credit.listTransactions(this.db, tenantId, limit, offset),
+  };
+
+  // =========================================================================
   // Lifecycle
   // =========================================================================
 
@@ -477,5 +775,110 @@ export type {
   DocumentProof,
 } from './types.js';
 
+export { snapshotToPromptBlock } from './brain-store.js';
+export type {
+  BrandVoice,
+  BrandVoiceInput,
+  Persona,
+  PersonaInput,
+  Product,
+  ProductInput,
+  CampaignLearning,
+  CampaignLearningInput,
+  BrainSnapshot,
+  MarketPosition,
+  MarketPositionInput,
+  SalesPlaybook,
+  SalesPlaybookInput,
+  MarketingStrategy,
+  MarketingStrategyInput,
+} from './brain-store.js';
+
+// Market & Competitors (doc 10 §5)
+export type {
+  Competitor,
+  CompetitorInput,
+  Signal,
+  ScanSource,
+  ScanRecord,
+} from './market-scan-store.js';
+
+// Sales — Deals + Events (doc 10 §6)
+export type {
+  Deal,
+  DealInput,
+  DealStage,
+  DealEvent,
+  DealEventInput,
+} from './deals-store.js';
+
+// CEO Advisor briefs (doc 10 §8)
+export type {
+  AdvisorBrief,
+  AdvisorBriefInput,
+  BriefAction,
+  BriefWin,
+  BriefAlert,
+} from './ceo-advisor-store.js';
+
 export { sha256, generateTraceId } from './audit-trail.js';
 export { chunkText } from './rag-pipeline.js';
+
+export {
+  getDeploymentMode,
+  upsertDeploymentMode,
+  setByoApiKey,
+  getByoApiKey,
+  deleteByoApiKey,
+  listByoKeyProviders,
+  encryptApiKey,
+  decryptApiKey,
+} from './deployment-store.js';
+export type {
+  DeploymentMode,
+  DeploymentModeInput,
+  DeploymentModeKind,
+  ByoKeyProvider,
+  EncryptedKey,
+} from './deployment-store.js';
+
+export {
+  getConfig,
+  listConfigs,
+  listConfigsPublic,
+  getConfigPublic,
+  upsertConfig,
+  updateStatus,
+  deleteConfig,
+  resolveProviderKey,
+  resolveFeatureLLM,
+  seedDefaultConfigs,
+} from './config-store.js';
+export type {
+  SystemConfig,
+  PublicSystemConfig,
+  SystemConfigInput,
+  ConfigCategory,
+  ConfigStatus,
+} from './config-store.js';
+
+export {
+  chargeCredit,
+  addCredit,
+  changePlan,
+  getBalance,
+  getOrCreateBalance,
+  listTransactions,
+  listPlans,
+  getPlan,
+  upsertPlan,
+  seedDefaultPlans,
+  OutOfCreditsError,
+} from './credit-store.js';
+export type {
+  CreditBalance,
+  CreditTransaction,
+  CreditTransactionKind,
+  CreditPlan,
+  ChargeInput,
+} from './credit-store.js';

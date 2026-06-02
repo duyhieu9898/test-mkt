@@ -27,6 +27,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCompany, useLandingPages } from '@/lib/api/hooks';
 import { BannerCard } from '@/components/marketing/banner-card';
+import { ImageTierPicker } from '@/components/marketing/image-tier-picker';
 
 export default function MarketingPage() {
   const params = useParams();
@@ -45,6 +46,10 @@ export default function MarketingPage() {
   const [imagePickerCallback, setImagePickerCallback] = useState<((url: string) => void) | null>(null);
   const [imagePickerUrl, setImagePickerUrl] = useState('');
   const [imagePickerTab, setImagePickerTab] = useState<'url' | 'library' | 'stock'>('library');
+
+  // Image quality tier picker (opens before generating background)
+  const [tierPickerOpen, setTierPickerOpen] = useState(false);
+  const [tierPickerBannerId, setTierPickerBannerId] = useState<string | null>(null);
   const [stockQuery, setStockQuery] = useState('');
   const [stockResults, setStockResults] = useState<any[]>([]);
   const [libraryAssets, setLibraryAssets] = useState<any[]>([]);
@@ -676,13 +681,9 @@ export default function MarketingPage() {
                                   toast.success('Banner updated');
                                 } catch { toast.error('Could not update banner'); }
                               }}
-                              onGenerateBackground={async (id) => {
-                                try {
-                                  toast.info('Generating background image...');
-                                  await api.post(`/marketing/company/${companyId}/banners/${id}/generate-background`, {}, { token: token! });
-                                  qc.invalidateQueries({ queryKey: ['marketing'] });
-                                  toast.success('Background generated!');
-                                } catch { toast.error('Could not generate background'); }
+                              onGenerateBackground={(id) => {
+                                setTierPickerBannerId(id);
+                                setTierPickerOpen(true);
                               }}
                               onPickImage={(bannerId, callback) => {
                                 setImagePickerCallback(() => callback);
@@ -1169,6 +1170,34 @@ export default function MarketingPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Image quality tier picker — opens when user clicks "Generate background" on a banner */}
+      <ImageTierPicker
+        open={tierPickerOpen}
+        onClose={() => {
+          setTierPickerOpen(false);
+          setTierPickerBannerId(null);
+        }}
+        onPick={async (providerKey, creditCost) => {
+          if (!tierPickerBannerId) return;
+          const id = tierPickerBannerId;
+          setTierPickerOpen(false);
+          setTierPickerBannerId(null);
+          try {
+            toast.info(`Generating with ${providerKey} (${creditCost} credits)…`);
+            await api.post(
+              `/marketing/company/${companyId}/banners/${id}/generate-background`,
+              { imageProviderKey: providerKey },
+              { token: token! },
+            );
+            qc.invalidateQueries({ queryKey: ['marketing'] });
+            toast.success('Background generated!');
+          } catch (err: any) {
+            const msg = err?.message || 'Could not generate background';
+            toast.error(msg);
+          }
+        }}
+      />
     </div>
   );
 }

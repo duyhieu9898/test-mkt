@@ -12,7 +12,7 @@ import companiesRouter from './routes/companies';
 import agentsRouter from './routes/agents';
 import tasksRouter from './routes/tasks';
 import commandsRouter from './routes/commands';
-import strategyRouter from './routes/strategy';
+// strategyRouter deleted — OKR surface retired in doc 10 IA restructure
 import inboxRouter from './routes/inbox';
 import budgetRouter from './routes/budget';
 import auditRouter from './routes/audit';
@@ -48,9 +48,38 @@ import chatbotRouter from './routes/chatbot';
 import meetingsRouter from './routes/meetings';
 import leadsRouter from './routes/leads';
 import tenantAIRouter from './routes/tenant-ai';
+import campaignsRouter from './routes/campaigns';
+import brainRouter from './routes/brain';
 import seoEngineRouter from './routes/seo-engine';
 import blogRouter from './routes/blog';
 import adminRouter from './routes/admin';
+import billingRouter from './routes/billing';
+import exportRouter from './routes/export';
+import deploymentModeRouter from './routes/deployment-mode';
+import adminConfigRouter from './routes/admin-config';
+import adminPublishRouter from './routes/admin-publish';
+import creditsRouter from './routes/credits';
+import adminCreditsRouter from './routes/admin-credits';
+import insightsRouter from './routes/insights';
+import imageProvidersRouter from './routes/image-providers';
+import marketRouter from './routes/market';
+import salesRouter from './routes/sales';
+import channelsRouter from './routes/channels';
+import webhooksRouter from './routes/webhooks';
+import omnichannelRouter, { messengerWebhookRouter } from './routes/omnichannel';
+import socialRouter from './routes/social';
+import gamificationRouter from './routes/gamification';
+import geoRouter from './routes/geo';
+import contentEditorRouter from './routes/content-editor';
+import adminSetupRouter from './routes/admin-setup';
+import brandIqRouter from './routes/brand-iq';
+import teamRouter from './routes/team';
+import launchesRouter from './routes/launches';
+import brainHubRouter from './routes/brain-hub';
+import analyticsRouter from './routes/analytics';
+import marketingSkillsRouter from './routes/marketing-skills';
+import visionRouter from './routes/vision-analyze';
+import autopilotRouter from './routes/autopilot';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -120,6 +149,11 @@ app.get('/pages/:companyId/:slug', async (c) => {
   return c.html(html);
 });
 
+// Public webhooks (no auth — platforms call these directly)
+app.route('/webhooks', webhooksRouter);
+// Block 6: Omnichannel webhooks (mounted at /webhooks/omnichannel/* — Meta calls these without auth)
+app.route('/webhooks/omnichannel', messengerWebhookRouter);
+
 // API routes
 const api = new Hono();
 api.route('/auth', authRouter);
@@ -127,7 +161,7 @@ api.route('/companies', companiesRouter);
 api.route('/agents', agentsRouter);
 api.route('/tasks', tasksRouter);
 api.route('/commands', commandsRouter);
-api.route('/strategy', strategyRouter);
+// /strategy route removed — see docs/architecture/10-venture-ceo-ia.md
 api.route('/inbox', inboxRouter);
 api.route('/budget', budgetRouter);
 api.route('/audit', auditRouter);
@@ -163,9 +197,37 @@ api.route('/chatbot', chatbotRouter);
 api.route('/meetings', meetingsRouter);
 api.route('/leads', leadsRouter);
 api.route('/tenant-ai', tenantAIRouter);
+api.route('/campaigns', campaignsRouter);
+api.route('/brain', brainRouter);
 api.route('/seo-engine', seoEngineRouter);
 api.route('/blog', blogRouter);
 api.route('/admin', adminRouter);
+api.route('/billing', billingRouter);
+api.route('/export', exportRouter);
+api.route('/deployment-mode', deploymentModeRouter);
+api.route('/admin/config', adminConfigRouter);
+api.route('/admin/publish', adminPublishRouter);
+api.route('/credits', creditsRouter);
+api.route('/image-providers', imageProvidersRouter);
+api.route('/market', marketRouter);
+api.route('/admin/credits', adminCreditsRouter);
+api.route('/insights', insightsRouter);
+api.route('/sales', salesRouter);
+api.route('/channels', channelsRouter);
+api.route('/omnichannel', omnichannelRouter);
+api.route('/social', socialRouter);
+api.route('/gamification', gamificationRouter);
+api.route('/geo', geoRouter);
+api.route('/content-editor', contentEditorRouter);
+api.route('/admin/setup', adminSetupRouter);
+api.route('/brand-iq', brandIqRouter);
+api.route('/team', teamRouter);
+api.route('/launches', launchesRouter);
+api.route('/brain-hub', brainHubRouter);
+api.route('/analytics', analyticsRouter);
+api.route('/marketing-skills', marketingSkillsRouter);
+api.route('/vision', visionRouter);
+api.route('/autopilot', autopilotRouter);
 
 // Mount API
 app.route('/api/v1', api);
@@ -214,3 +276,16 @@ import { feedbackCron } from './workers/feedback-cron';
 feedbackCron.start().catch((err) => {
   console.warn('⚠️  Feedback cron failed:', err.message);
 });
+
+// Content Autopilot scheduler — every 15 min, generate due posts for companies
+// that EXPLICITLY enabled autopilot (no-op for everyone else). Publishes WP
+// drafts for human approval. Founder-requested automation, not a silent refresh.
+import { runDueAutopilots } from './services/content-autopilot';
+const AUTOPILOT_TICK_MS = 15 * 60 * 1000;
+setInterval(() => {
+  runDueAutopilots()
+    .then((r) => {
+      if (r.triggered > 0) console.log(`[autopilot] generated ${r.triggered} post(s) this tick`);
+    })
+    .catch((err) => console.warn('⚠️  Autopilot tick failed:', err.message));
+}, AUTOPILOT_TICK_MS);

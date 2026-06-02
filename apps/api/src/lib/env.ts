@@ -20,6 +20,11 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
 
+  // Langfuse (W0.3 / ADR-01) — LLM observability
+  LANGFUSE_PUBLIC_KEY: z.string().default('pk-lf-dev-1person'),
+  LANGFUSE_SECRET_KEY: z.string().default('sk-lf-dev-1person'),
+  LANGFUSE_BASE_URL: z.string().default('http://localhost:5050'),
+
   // FTUX (First Time User Experience) AI Config
   FTUX_AI_PROVIDER: z.enum(['openai', 'anthropic']).default('openai'),
   FTUX_AI_MODEL: z.string().default('gpt-4o-mini'),
@@ -30,6 +35,11 @@ const envSchema = z.object({
   // Admin seed
   ADMIN_EMAIL: z.string().default('admin@1person.ai'),
   ADMIN_PASSWORD: z.string().default('Admin@1Person2025'),
+
+  // Sentry (P0-D3) — error tracking
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_ENVIRONMENT: z.string().default('development'),
+  SENTRY_TRACES_SAMPLE_RATE: z.string().default('0.1').transform(Number),
 });
 
 export const env = envSchema.parse(process.env);

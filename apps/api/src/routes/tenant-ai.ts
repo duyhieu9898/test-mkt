@@ -1,46 +1,104 @@
+/**
+ * Tenant AI API — document management, RAG queries, and transparency explorer.
+ *
+ * All business logic lives inside the @1person/ai-tenant package (backed by
+ * the `trustai_*` tables). This route file is a thin HTTP adapter on top of
+ * the `TenantAI` class — see `apps/api/src/lib/tenant-ai.ts` for the factory
+ * and `apps/api/src/routes/brain.ts` for the reference pattern.
+ *
+ * Routes:
+ *   PUBLIC (proof page):
+ *     GET  /public/proof/:companyId
+ *     GET  /public/proof/:companyId/verify
+ *
+ *   AUTHENTICATED (/ai-brain dashboard):
+ *     POST   /company/:companyId/init
+ *     POST   /company/:companyId/documents/upload
+ *     GET    /company/:companyId/documents
+ *     DELETE /company/:companyId/documents/:docId
+ *     POST   /company/:companyId/agents
+ *     GET    /company/:companyId/agents
+ *     PATCH  /company/:companyId/agents/:agentId
+ *     POST   /company/:companyId/query
+ *     GET    /company/:companyId/query-history
+ *     GET    /company/:companyId/audit-log
+ *     GET    /company/:companyId/verify-integrity
+ *     GET    /company/:companyId/documents/:docId/proof
+ */
+
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, desc, sql, count } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
+import { HTTPException } from 'hono/http-exception';
 import { db } from '../lib/db';
 import { companies } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
-import { HTTPException } from 'hono/http-exception';
-import { llmGenerate } from '../lib/llm';
-import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
+import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
 
 const tenantAIRouter = new Hono();
 
-// ─── PUBLIC ROUTES (no auth — for proof page) ────────────────────────
+// ─── helpers ────────────────────────────────────────────────────────
+
+async function verifyOwnershipAndGetTenantId(
+  companyId: string,
+  userId: string,
+): Promise<{ tenantId: string; companyName: string }> {
+  const company = await db.query.companies.findFirst({
+    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+    columns: { id: true, name: true, ownerId: true },
+  });
+  if (!company) {
+    throw new HTTPException(404, { message: 'Company not found' });
+  }
+  const tenantId = await ensureTenantForCompany(company.id, company.name);
+  return { tenantId, companyName: company.name };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PUBLIC ROUTES (no auth — for proof page)
+// ═══════════════════════════════════════════════════════════════════════
+
 tenantAIRouter.get('/public/proof/:companyId', async (c) => {
   const companyId = c.req.param('companyId');
 
-  try {
-    const company = await db.query.companies.findFirst({
-      where: eq(companies.id, companyId),
-    });
-    if (!company) return c.json({ error: 'Not found' }, 404);
+  const company = await db.query.companies.findFirst({
+    where: eq(companies.id, companyId),
+    columns: { id: true, name: true },
+  });
+  if (!company) {
+    return c.json({ error: 'Not found' }, 404);
+  }
 
-    // Count documents, queries, audit entries
-    const [docResult] = await db.execute(sql`SELECT COUNT(*)::int as count FROM ai_tenant_documents WHERE tenant_id = ${companyId}`);
-    const [queryResult] = await db.execute(sql`SELECT COUNT(*)::int as count FROM ai_tenant_queries WHERE tenant_id = ${companyId}`);
-    const [auditResult] = await db.execute(sql`SELECT COUNT(*)::int as count FROM ai_tenant_audit_log WHERE tenant_id = ${companyId}`);
+  const ai = getTenantAI();
+  const tenant = await ai.getTenant(company.id);
+
+  if (!tenant) {
+    // Tenant has never been initialized — return empty totals.
+    return c.json({
+      companyName: company.name,
+      documentCount: 0,
+      queryCount: 0,
+      auditEntryCount: 0,
+    });
+  }
+
+  try {
+    const [documents, queryEntries, allEntries] = await Promise.all([
+      ai.listDocuments(tenant.tenantId),
+      ai.getAuditLog(tenant.tenantId, { action: 'query', limit: 10000 }),
+      ai.getAuditLog(tenant.tenantId, { limit: 10000 }),
+    ]);
 
     return c.json({
       companyName: company.name,
-      documentCount: (docResult as any)?.count || 0,
-      queryCount: (queryResult as any)?.count || 0,
-      auditEntryCount: (auditResult as any)?.count || 0,
+      documentCount: documents.length,
+      queryCount: queryEntries.length,
+      auditEntryCount: allEntries.length,
     });
   } catch {
-    // Tables might not exist yet
-    const company = await db.query.companies.findFirst({
-      where: eq(companies.id, companyId),
-    });
     return c.json({
-      companyName: company?.name || 'Company',
+      companyName: company.name,
       documentCount: 0,
       queryCount: 0,
       auditEntryCount: 0,
@@ -51,218 +109,88 @@ tenantAIRouter.get('/public/proof/:companyId', async (c) => {
 tenantAIRouter.get('/public/proof/:companyId/verify', async (c) => {
   const companyId = c.req.param('companyId');
 
+  const company = await db.query.companies.findFirst({
+    where: eq(companies.id, companyId),
+    columns: { id: true, name: true },
+  });
+  if (!company) {
+    return c.json({ error: 'Not found' }, 404);
+  }
+
+  const ai = getTenantAI();
+  const tenant = await ai.getTenant(company.id);
+
+  if (!tenant) {
+    return c.json({
+      valid: true,
+      entriesChecked: 0,
+      documentsChecked: 0,
+      verifiedAt: new Date().toISOString(),
+    });
+  }
+
   try {
-    // Verify audit chain
-    const entries = await db.execute(
-      sql`SELECT id, data_hash, chain_hash, created_at FROM ai_tenant_audit_log WHERE tenant_id = ${companyId} ORDER BY created_at ASC`
-    );
-
-    let valid = true;
-    let entriesChecked = 0;
-
-    const rows = entries as any[];
-    for (let i = 1; i < rows.length; i++) {
-      entriesChecked++;
-      const prev = rows[i - 1];
-      const expectedHash = crypto.createHash('sha256')
-        .update(`${prev.id}${prev.data_hash || ''}${prev.created_at}`)
-        .digest('hex');
-      if (rows[i].chain_hash !== expectedHash) {
-        valid = false;
-        break;
-      }
-    }
-    if (rows.length > 0) entriesChecked = rows.length;
-
-    // Count documents
-    const [docResult] = await db.execute(sql`SELECT COUNT(*)::int as count FROM ai_tenant_documents WHERE tenant_id = ${companyId}`);
+    const [integrity, entries] = await Promise.all([
+      ai.verifyDataIntegrity(tenant.tenantId),
+      ai.getAuditLog(tenant.tenantId, { limit: 10000 }),
+    ]);
 
     return c.json({
-      valid,
-      entriesChecked,
-      documentsChecked: (docResult as any)?.count || 0,
+      valid: integrity.valid,
+      entriesChecked: entries.length,
+      documentsChecked: integrity.documentsChecked,
       verifiedAt: new Date().toISOString(),
     });
   } catch {
-    return c.json({ valid: true, entriesChecked: 0, documentsChecked: 0, verifiedAt: new Date().toISOString() });
+    return c.json({
+      valid: true,
+      entriesChecked: 0,
+      documentsChecked: 0,
+      verifiedAt: new Date().toISOString(),
+    });
   }
 });
 
-// ─── AUTHENTICATED ROUTES ────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// AUTHENTICATED ROUTES
+// ═══════════════════════════════════════════════════════════════════════
 tenantAIRouter.use('*', authMiddleware);
 
-// ─── Helper: Check company ownership ────────────────────────────────
-const checkCompanyOwnership = async (companyId: string, userId: string) => {
-  const company = await db.query.companies.findFirst({
-    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
-  });
-  if (!company) {
-    throw new HTTPException(404, { message: 'Company not found' });
-  }
-  return company;
-};
-
-// ─── Helper: Hash data for integrity chain ──────────────────────────
-function computeHash(data: string, previousHash?: string): string {
-  const input = previousHash ? `${previousHash}:${data}` : data;
-  return crypto.createHash('sha256').update(input).digest('hex');
-}
-
-// ─── Helper: Ensure tenant data directory exists ────────────────────
-function ensureTenantDir(companyId: string): string {
-  const tenantDir = path.join(process.cwd(), '..', '..', 'deploy', 'tenant-data', companyId);
-  fs.mkdirSync(tenantDir, { recursive: true });
-  return tenantDir;
-}
-
-// ─── Helper: Get last audit hash for chain ──────────────────────────
-async function getLastAuditHash(companyId: string): Promise<string | undefined> {
-  const result = await db.execute(sql`
-    SELECT chain_hash FROM ai_tenant_audit_log
-    WHERE company_id = ${companyId}
-    ORDER BY created_at DESC
-    LIMIT 1
-  `);
-  const rows = result.rows || result;
-  return (rows as any[])?.[0]?.chain_hash;
-}
-
-// ─── Helper: Log audit entry ────────────────────────────────────────
-async function logAudit(
-  companyId: string,
-  action: string,
-  details: string,
-  dataHash?: string,
-  metadata?: Record<string, any>
-) {
-  const previousHash = await getLastAuditHash(companyId);
-  const entryData = JSON.stringify({ companyId, action, details, dataHash, timestamp: new Date().toISOString() });
-  const chainHash = computeHash(entryData, previousHash);
-
-  await db.execute(sql`
-    INSERT INTO ai_tenant_audit_log (id, company_id, action, details, data_hash, chain_hash, metadata, created_at)
-    VALUES (
-      gen_random_uuid(),
-      ${companyId},
-      ${action},
-      ${details},
-      ${dataHash || null},
-      ${chainHash},
-      ${JSON.stringify(metadata || {})}::jsonb,
-      NOW()
-    )
-  `);
-}
-
-// ─── Ensure tables exist (MVP inline migration) ─────────────────────
-async function ensureTables() {
-  try {
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS ai_tenant_documents (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        company_id UUID NOT NULL,
-        name TEXT NOT NULL,
-        file_path TEXT,
-        file_size INTEGER DEFAULT 0,
-        mime_type TEXT,
-        content_hash TEXT,
-        status TEXT DEFAULT 'processing',
-        raw_content TEXT,
-        metadata JSONB DEFAULT '{}'::jsonb,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS ai_tenant_agents (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        company_id UUID NOT NULL,
-        name TEXT NOT NULL DEFAULT 'AI Assistant',
-        system_prompt TEXT DEFAULT 'You are a helpful AI assistant for this company. Answer questions based on the company''s documents and knowledge base. Be professional, accurate, and helpful.',
-        tone TEXT DEFAULT 'professional',
-        top_k INTEGER DEFAULT 5,
-        metadata JSONB DEFAULT '{}'::jsonb,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS ai_tenant_queries (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        company_id UUID NOT NULL,
-        question TEXT NOT NULL,
-        answer TEXT,
-        sources JSONB DEFAULT '[]'::jsonb,
-        trace_id TEXT,
-        metadata JSONB DEFAULT '{}'::jsonb,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS ai_tenant_audit_log (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        company_id UUID NOT NULL,
-        action TEXT NOT NULL,
-        details TEXT NOT NULL,
-        data_hash TEXT,
-        chain_hash TEXT NOT NULL,
-        metadata JSONB DEFAULT '{}'::jsonb,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-  } catch (e) {
-    // Tables may already exist
-  }
-}
-
-// Initialize on first load
-let tablesReady = false;
-async function ensureReady() {
-  if (!tablesReady) {
-    await ensureTables();
-    tablesReady = true;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// ENDPOINTS
-// ═══════════════════════════════════════════════════════════════════════
-
-// ─── POST /company/:companyId/init — Initialize tenant AI ───────────
+// ─── POST /company/:companyId/init ─────────────────────────────────
 tenantAIRouter.post('/company/:companyId/init', async (c) => {
   const { userId } = c.get('user');
-  const companyId = c.req.param('companyId');
-  await checkCompanyOwnership(companyId, userId);
-  await ensureReady();
+  const { tenantId } = await verifyOwnershipAndGetTenantId(
+    c.req.param('companyId'),
+    userId,
+  );
 
-  // Check if agent already exists
-  const existing = await db.execute(sql`
-    SELECT id FROM ai_tenant_agents WHERE company_id = ${companyId} LIMIT 1
-  `);
+  const ai = getTenantAI();
+  const existing = await ai.listAgents(tenantId);
 
-  if ((existing.rows || existing as any[]).length === 0) {
-    await db.execute(sql`
-      INSERT INTO ai_tenant_agents (id, company_id, name, system_prompt, tone, top_k)
-      VALUES (gen_random_uuid(), ${companyId}, 'AI Assistant',
-        'You are a helpful AI assistant for this company. Answer questions based on the company''s documents and knowledge base. Be professional, accurate, and helpful.',
-        'professional', 5)
-    `);
+  if (existing.length === 0) {
+    await ai.createAgent(
+      tenantId,
+      {
+        name: 'AI Assistant',
+        systemPrompt:
+          "You are a helpful AI assistant for this company. Answer questions based on the company's documents and knowledge base. Be professional, accurate, and helpful.",
+        tone: 'professional',
+        maxContextChunks: 5,
+      },
+      `user:${userId}`,
+    );
   }
-
-  await logAudit(companyId, 'tenant_initialized', 'AI system initialized for this company');
 
   return c.json({ success: true, message: 'AI system ready' });
 });
 
-// ─── POST /company/:companyId/documents/upload — Upload document ────
+// ─── POST /company/:companyId/documents/upload ─────────────────────
 tenantAIRouter.post('/company/:companyId/documents/upload', async (c) => {
   const { userId } = c.get('user');
-  const companyId = c.req.param('companyId');
-  await checkCompanyOwnership(companyId, userId);
-  await ensureReady();
+  const { tenantId } = await verifyOwnershipAndGetTenantId(
+    c.req.param('companyId'),
+    userId,
+  );
 
   const body = await c.req.parseBody();
   const file = body['file'] as File | undefined;
@@ -276,545 +204,279 @@ tenantAIRouter.post('/company/:companyId/documents/upload', async (c) => {
     throw new HTTPException(400, { message: 'File too large. Maximum is 10MB.' });
   }
 
-  const tenantDir = ensureTenantDir(companyId);
   const fileBuffer = Buffer.from(await file.arrayBuffer());
-  const contentHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
 
-  // Check for duplicate
-  const existingDoc = await db.execute(sql`
-    SELECT id FROM ai_tenant_documents
-    WHERE company_id = ${companyId} AND content_hash = ${contentHash}
-    LIMIT 1
-  `);
-
-  if ((existingDoc.rows || existingDoc as any[]).length > 0) {
-    return c.json({ message: 'This file was already uploaded', duplicate: true });
-  }
-
-  // Save file
-  const safeFileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-  const filePath = path.join(tenantDir, safeFileName);
-  const { writeFile } = await import('fs/promises');
-  await writeFile(filePath, fileBuffer);
-
-  // Extract text content for simple RAG
-  let rawContent = '';
-  if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-    rawContent = fileBuffer.toString('utf-8');
-  } else if (file.name.endsWith('.md')) {
-    rawContent = fileBuffer.toString('utf-8');
-  } else {
-    // For PDFs and other formats, store what we can
-    rawContent = fileBuffer.toString('utf-8').replace(/[^\x20-\x7E\n\r\t]/g, ' ').substring(0, 50000);
-  }
-
-  // Insert document
-  const result = await db.execute(sql`
-    INSERT INTO ai_tenant_documents (id, company_id, name, file_path, file_size, mime_type, content_hash, status, raw_content, metadata)
-    VALUES (
-      gen_random_uuid(),
-      ${companyId},
-      ${file.name},
-      ${filePath},
-      ${file.size},
-      ${file.type || 'application/octet-stream'},
-      ${contentHash},
-      'ready',
-      ${rawContent},
-      ${JSON.stringify({ uploadedBy: userId })}::jsonb
-    )
-    RETURNING id, name, file_size, content_hash, status, created_at
-  `);
-
-  const doc = (result.rows || result as any[])[0];
-
-  await logAudit(
-    companyId,
-    'document_uploaded',
-    `Document "${file.name}" uploaded (${Math.round(file.size / 1024)}KB)`,
-    contentHash,
-    { documentId: doc.id, fileName: file.name }
+  const ai = getTenantAI();
+  const doc = await ai.uploadDocument(
+    tenantId,
+    file.name,
+    fileBuffer,
+    file.type || 'application/octet-stream',
+    `user:${userId}`,
   );
 
   return c.json(doc, 201);
 });
 
-// ─── GET /company/:companyId/documents — List documents ─────────────
+// ─── GET /company/:companyId/documents ─────────────────────────────
 tenantAIRouter.get('/company/:companyId/documents', async (c) => {
   const { userId } = c.get('user');
-  const companyId = c.req.param('companyId');
-  await checkCompanyOwnership(companyId, userId);
-  await ensureReady();
+  const { tenantId } = await verifyOwnershipAndGetTenantId(
+    c.req.param('companyId'),
+    userId,
+  );
 
-  const result = await db.execute(sql`
-    SELECT id, name, file_size, mime_type, content_hash, status, metadata, created_at, updated_at
-    FROM ai_tenant_documents
-    WHERE company_id = ${companyId}
-    ORDER BY created_at DESC
-  `);
+  const ai = getTenantAI();
+  const docs = await ai.listDocuments(tenantId);
 
-  const docs = result.rows || result;
-
-  // Calculate total storage
-  const totalSize = (docs as any[]).reduce((sum: number, d: any) => sum + (d.file_size || 0), 0);
+  // TenantDocument does not expose fileSize — total storage is best-effort.
+  const totalStorageBytes = docs.reduce(
+    (sum, d) => sum + Number((d as unknown as { fileSize?: number }).fileSize ?? 0),
+    0,
+  );
 
   return c.json({
     data: docs,
-    totalDocuments: (docs as any[]).length,
-    totalStorageBytes: totalSize,
+    totalDocuments: docs.length,
+    totalStorageBytes,
   });
 });
 
-// ─── DELETE /company/:companyId/documents/:docId — Delete document ──
+// ─── DELETE /company/:companyId/documents/:docId ───────────────────
 tenantAIRouter.delete('/company/:companyId/documents/:docId', async (c) => {
   const { userId } = c.get('user');
-  const companyId = c.req.param('companyId');
-  const docId = c.req.param('docId');
-  await checkCompanyOwnership(companyId, userId);
-  await ensureReady();
-
-  // Get document to delete file
-  const docResult = await db.execute(sql`
-    SELECT id, name, file_path, content_hash FROM ai_tenant_documents
-    WHERE id = ${docId}::uuid AND company_id = ${companyId}
-    LIMIT 1
-  `);
-
-  const doc = (docResult.rows || docResult as any[])[0];
-  if (!doc) {
-    throw new HTTPException(404, { message: 'Document not found' });
-  }
-
-  // Delete file from disk
-  if (doc.file_path && fs.existsSync(doc.file_path)) {
-    fs.unlinkSync(doc.file_path);
-  }
-
-  // Delete from DB
-  await db.execute(sql`
-    DELETE FROM ai_tenant_documents WHERE id = ${docId}::uuid AND company_id = ${companyId}
-  `);
-
-  await logAudit(
-    companyId,
-    'document_deleted',
-    `Document "${doc.name}" removed`,
-    doc.content_hash as string,
-    { documentId: docId }
+  const { tenantId } = await verifyOwnershipAndGetTenantId(
+    c.req.param('companyId'),
+    userId,
   );
+  const docId = c.req.param('docId');
+
+  const ai = getTenantAI();
+  await ai.deleteDocument(tenantId, docId, `user:${userId}`);
 
   return c.json({ success: true });
 });
 
-// ─── POST /company/:companyId/agents — Create agent ─────────────────
+// ─── POST /company/:companyId/agents ───────────────────────────────
+const createAgentSchema = z.object({
+  name: z.string().min(1).max(100),
+  systemPrompt: z.string().optional(),
+  tone: z.enum(['professional', 'friendly', 'formal', 'casual']).optional(),
+  topK: z.number().min(3).max(10).optional(),
+});
+
 tenantAIRouter.post(
   '/company/:companyId/agents',
-  zValidator('json', z.object({
-    name: z.string().min(1).max(100),
-    systemPrompt: z.string().optional(),
-    tone: z.enum(['professional', 'friendly', 'formal', 'casual']).optional(),
-    topK: z.number().min(3).max(10).optional(),
-  })),
+  zValidator('json', createAgentSchema),
   async (c) => {
     const { userId } = c.get('user');
-    const companyId = c.req.param('companyId');
+    const { tenantId } = await verifyOwnershipAndGetTenantId(
+      c.req.param('companyId'),
+      userId,
+    );
     const data = c.req.valid('json');
-    await checkCompanyOwnership(companyId, userId);
-    await ensureReady();
 
-    const result = await db.execute(sql`
-      INSERT INTO ai_tenant_agents (id, company_id, name, system_prompt, tone, top_k)
-      VALUES (
-        gen_random_uuid(),
-        ${companyId},
-        ${data.name},
-        ${data.systemPrompt || 'You are a helpful AI assistant for this company. Answer questions based on the company\'s documents and knowledge base. Be professional, accurate, and helpful.'},
-        ${data.tone || 'professional'},
-        ${data.topK || 5}
-      )
-      RETURNING *
-    `);
-
-    const agent = (result.rows || result as any[])[0];
-
-    await logAudit(companyId, 'agent_created', `AI agent "${data.name}" created`, undefined, { agentId: agent.id });
+    const ai = getTenantAI();
+    const agent = await ai.createAgent(
+      tenantId,
+      {
+        name: data.name,
+        systemPrompt:
+          data.systemPrompt ||
+          "You are a helpful AI assistant for this company. Answer questions based on the company's documents and knowledge base. Be professional, accurate, and helpful.",
+        tone: data.tone ?? 'professional',
+        maxContextChunks: data.topK ?? 5,
+      },
+      `user:${userId}`,
+    );
 
     return c.json(agent, 201);
-  }
+  },
 );
 
-// ─── GET /company/:companyId/agents — List agents ───────────────────
+// ─── GET /company/:companyId/agents ────────────────────────────────
 tenantAIRouter.get('/company/:companyId/agents', async (c) => {
   const { userId } = c.get('user');
-  const companyId = c.req.param('companyId');
-  await checkCompanyOwnership(companyId, userId);
-  await ensureReady();
+  const { tenantId } = await verifyOwnershipAndGetTenantId(
+    c.req.param('companyId'),
+    userId,
+  );
 
-  const result = await db.execute(sql`
-    SELECT * FROM ai_tenant_agents
-    WHERE company_id = ${companyId}
-    ORDER BY created_at DESC
-  `);
-
-  return c.json({ data: result.rows || result });
+  const ai = getTenantAI();
+  const agents = await ai.listAgents(tenantId);
+  return c.json({ data: agents });
 });
 
-// ─── PATCH /company/:companyId/agents/:agentId — Update agent ───────
+// ─── PATCH /company/:companyId/agents/:agentId ─────────────────────
+const updateAgentSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  systemPrompt: z.string().optional(),
+  tone: z.enum(['professional', 'friendly', 'formal', 'casual']).optional(),
+  topK: z.number().min(3).max(10).optional(),
+});
+
 tenantAIRouter.patch(
   '/company/:companyId/agents/:agentId',
-  zValidator('json', z.object({
-    name: z.string().min(1).max(100).optional(),
-    systemPrompt: z.string().optional(),
-    tone: z.enum(['professional', 'friendly', 'formal', 'casual']).optional(),
-    topK: z.number().min(3).max(10).optional(),
-  })),
+  zValidator('json', updateAgentSchema),
   async (c) => {
     const { userId } = c.get('user');
-    const companyId = c.req.param('companyId');
+    const { tenantId } = await verifyOwnershipAndGetTenantId(
+      c.req.param('companyId'),
+      userId,
+    );
     const agentId = c.req.param('agentId');
     const data = c.req.valid('json');
-    await checkCompanyOwnership(companyId, userId);
-    await ensureReady();
 
-    // Build parameterized update — avoid sql.raw to prevent SQL injection
-    const updates: Record<string, any> = { updated_at: sql`NOW()` };
+    const updates: Record<string, unknown> = {};
     if (data.name !== undefined) updates.name = data.name;
-    if (data.systemPrompt !== undefined) updates.system_prompt = data.systemPrompt;
+    if (data.systemPrompt !== undefined) updates.systemPrompt = data.systemPrompt;
     if (data.tone !== undefined) updates.tone = data.tone;
-    if (data.topK !== undefined) updates.top_k = data.topK;
+    if (data.topK !== undefined) updates.maxContextChunks = data.topK;
 
-    // Build individual parameterized SET clauses
-    const setParts = [sql`updated_at = NOW()`];
-    if (data.name !== undefined) setParts.push(sql`name = ${data.name}`);
-    if (data.systemPrompt !== undefined) setParts.push(sql`system_prompt = ${data.systemPrompt}`);
-    if (data.tone !== undefined) setParts.push(sql`tone = ${data.tone}`);
-    if (data.topK !== undefined) setParts.push(sql`top_k = ${data.topK}`);
-
-    const setClause = sql.join(setParts, sql`, `);
-
-    const result = await db.execute(sql`
-      UPDATE ai_tenant_agents
-      SET ${setClause}
-      WHERE id = ${agentId}::uuid AND company_id = ${companyId}
-      RETURNING *
-    `);
-
-    const agent = (result.rows || result as any[])[0];
-    if (!agent) {
-      throw new HTTPException(404, { message: 'Agent not found' });
-    }
-
-    await logAudit(companyId, 'agent_updated', `AI agent settings updated`, undefined, { agentId, changes: Object.keys(data) });
+    const ai = getTenantAI();
+    const agent = await ai.updateAgent(tenantId, agentId, updates, `user:${userId}`);
 
     return c.json(agent);
-  }
+  },
 );
 
-// ─── POST /company/:companyId/query — RAG query ─────────────────────
+// ─── POST /company/:companyId/query ────────────────────────────────
 tenantAIRouter.post(
   '/company/:companyId/query',
-  zValidator('json', z.object({
-    question: z.string().min(1).max(2000),
-  })),
+  zValidator('json', z.object({ question: z.string().min(1).max(2000) })),
   async (c) => {
     const { userId } = c.get('user');
-    const companyId = c.req.param('companyId');
+    const { tenantId } = await verifyOwnershipAndGetTenantId(
+      c.req.param('companyId'),
+      userId,
+    );
     const { question } = c.req.valid('json');
-    await checkCompanyOwnership(companyId, userId);
-    await ensureReady();
 
-    const traceId = `trace_${crypto.randomBytes(8).toString('hex')}`;
-
-    // Get agent settings
-    const agentResult = await db.execute(sql`
-      SELECT * FROM ai_tenant_agents WHERE company_id = ${companyId} LIMIT 1
-    `);
-    const agent = (agentResult.rows || agentResult as any[])[0];
-    const topK = agent?.top_k || 5;
-    const systemPrompt = agent?.system_prompt || 'You are a helpful AI assistant.';
-    const tone = agent?.tone || 'professional';
-
-    // Simple keyword search across tenant documents (MVP — no embeddings)
-    const keywords = question.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
-    const searchPattern = keywords.length > 0
-      ? keywords.map((k: string) => k.replace(/[^a-z0-9]/g, '')).join('|')
-      : question;
-
-    const docsResult = await db.execute(sql`
-      SELECT id, name, raw_content, content_hash
-      FROM ai_tenant_documents
-      WHERE company_id = ${companyId}
-        AND status = 'ready'
-        AND raw_content IS NOT NULL
-        AND raw_content != ''
-      ORDER BY created_at DESC
-      LIMIT ${topK}
-    `);
-
-    const docs = (docsResult.rows || docsResult) as any[];
-
-    // Score and rank documents by keyword relevance
-    const scoredDocs = docs
-      .map((doc: any) => {
-        const content = (doc.raw_content || '').toLowerCase();
-        let score = 0;
-        for (const keyword of keywords) {
-          const regex = new RegExp(keyword.replace(/[^a-z0-9]/g, ''), 'gi');
-          const matches = content.match(regex);
-          score += matches ? matches.length : 0;
-        }
-        return { ...doc, score };
-      })
-      .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, topK);
-
-    // Build context from relevant documents
-    const contextParts = scoredDocs
-      .filter((d: any) => d.score > 0 || docs.length <= topK)
-      .map((d: any) => {
-        const content = (d.raw_content || '').substring(0, 3000);
-        return `[Document: ${d.name}]\n${content}`;
-      });
-
-    const context = contextParts.length > 0
-      ? contextParts.join('\n\n---\n\n')
-      : 'No relevant documents found.';
-
-    const sources = scoredDocs
-      .filter((d: any) => d.score > 0)
-      .map((d: any) => ({
-        documentId: d.id,
-        name: d.name,
-        relevanceScore: d.score,
-      }));
-
-    // Call LLM with context
-    const toneInstructions: Record<string, string> = {
-      professional: 'Respond in a professional, clear tone.',
-      friendly: 'Respond in a warm, friendly tone.',
-      formal: 'Respond in a formal, business-appropriate tone.',
-      casual: 'Respond in a casual, conversational tone.',
-    };
-
-    const response = await llmGenerate([
-      {
-        role: 'system',
-        content: `${systemPrompt}\n\n${toneInstructions[tone] || ''}\n\nIMPORTANT: Only answer based on the documents provided below. If the answer is not in the documents, say so honestly. Always cite which document(s) you used.\n\nCompany Documents:\n${context}`,
-      },
-      {
-        role: 'user',
-        content: question,
-      },
-    ], { maxTokens: 1500 });
-
-    // Save query
-    await db.execute(sql`
-      INSERT INTO ai_tenant_queries (id, company_id, question, answer, sources, trace_id, metadata)
-      VALUES (
-        gen_random_uuid(),
-        ${companyId},
-        ${question},
-        ${response.text},
-        ${JSON.stringify(sources)}::jsonb,
-        ${traceId},
-        ${JSON.stringify({ model: response.model, provider: response.provider, userId })}::jsonb
-      )
-    `);
-
-    await logAudit(companyId, 'query_made', `Question asked: "${question.substring(0, 80)}..."`, undefined, { traceId });
+    const ai = getTenantAI();
+    const response = await ai.query({ tenantId, question });
 
     return c.json({
-      answer: response.text,
-      sources,
-      traceId,
-      model: response.model,
+      answer: response.answer,
+      sources: response.sources,
+      traceId: response.traceId,
+      model: undefined as string | undefined,
     });
-  }
+  },
 );
 
-// ─── GET /company/:companyId/query-history — Query history ──────────
+// ─── GET /company/:companyId/query-history ─────────────────────────
+// The @1person/ai-tenant package does not (yet) expose a dedicated query
+// history getter, so we derive it from the audit log filtered by the
+// `query` action. Each entry's `details` carries the question/answer
+// payload logged by the RAG pipeline.
 tenantAIRouter.get('/company/:companyId/query-history', async (c) => {
   const { userId } = c.get('user');
-  const companyId = c.req.param('companyId');
-  await checkCompanyOwnership(companyId, userId);
-  await ensureReady();
+  const { tenantId } = await verifyOwnershipAndGetTenantId(
+    c.req.param('companyId'),
+    userId,
+  );
 
-  const limit = parseInt(c.req.query('limit') || '50');
-  const offset = parseInt(c.req.query('offset') || '0');
+  const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 500);
 
-  const result = await db.execute(sql`
-    SELECT id, question, answer, sources, trace_id, created_at
-    FROM ai_tenant_queries
-    WHERE company_id = ${companyId}
-    ORDER BY created_at DESC
-    LIMIT ${limit} OFFSET ${offset}
-  `);
+  const ai = getTenantAI();
+  const entries = await ai.getAuditLog(tenantId, { action: 'query', limit });
 
-  return c.json({ data: result.rows || result });
+  const data = entries.map((e) => {
+    const details = (e.details ?? {}) as Record<string, unknown>;
+    return {
+      id: e.id,
+      question: (details.question as string) ?? '',
+      answer: (details.answer as string) ?? '',
+      sources: (details.sources as unknown) ?? [],
+      trace_id: (details.traceId as string) ?? null,
+      created_at: e.timestamp,
+    };
+  });
+
+  return c.json({ data });
 });
 
-// ─── GET /company/:companyId/audit-log — Audit log ──────────────────
+// ─── GET /company/:companyId/audit-log ─────────────────────────────
 tenantAIRouter.get('/company/:companyId/audit-log', async (c) => {
   const { userId } = c.get('user');
-  const companyId = c.req.param('companyId');
-  await checkCompanyOwnership(companyId, userId);
-  await ensureReady();
+  const { tenantId } = await verifyOwnershipAndGetTenantId(
+    c.req.param('companyId'),
+    userId,
+  );
 
-  const actionFilter = c.req.query('action');
-  const limit = parseInt(c.req.query('limit') || '100');
-  const offset = parseInt(c.req.query('offset') || '0');
+  const actionFilter = c.req.query('action') || undefined;
+  const limit = Math.min(parseInt(c.req.query('limit') || '100', 10), 1000);
 
-  let query;
-  if (actionFilter) {
-    query = sql`
-      SELECT * FROM ai_tenant_audit_log
-      WHERE company_id = ${companyId} AND action = ${actionFilter}
-      ORDER BY created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
-  } else {
-    query = sql`
-      SELECT * FROM ai_tenant_audit_log
-      WHERE company_id = ${companyId}
-      ORDER BY created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `;
-  }
+  const ai = getTenantAI();
+  const entries = await ai.getAuditLog(tenantId, { action: actionFilter, limit });
 
-  const result = await db.execute(query);
-  return c.json({ data: result.rows || result });
+  return c.json({ data: entries });
 });
 
-// ─── GET /company/:companyId/verify-integrity — Verify chain ────────
+// ─── GET /company/:companyId/verify-integrity ──────────────────────
 tenantAIRouter.get('/company/:companyId/verify-integrity', async (c) => {
   const { userId } = c.get('user');
-  const companyId = c.req.param('companyId');
-  await checkCompanyOwnership(companyId, userId);
-  await ensureReady();
+  const { tenantId } = await verifyOwnershipAndGetTenantId(
+    c.req.param('companyId'),
+    userId,
+  );
 
-  // Get all audit entries in order
-  const result = await db.execute(sql`
-    SELECT * FROM ai_tenant_audit_log
-    WHERE company_id = ${companyId}
-    ORDER BY created_at ASC
-  `);
-
-  const entries = (result.rows || result) as any[];
-
-  if (entries.length === 0) {
-    return c.json({ valid: true, entriesChecked: 0, message: 'No audit entries yet' });
-  }
-
-  // Verify the chain
-  let valid = true;
-  let brokenAt: number | null = null;
-  let previousHash: string | undefined;
-
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    const entryData = JSON.stringify({
-      companyId: entry.company_id,
-      action: entry.action,
-      details: entry.details,
-      dataHash: entry.data_hash,
-      timestamp: new Date(entry.created_at).toISOString(),
-    });
-    const expectedHash = computeHash(entryData, previousHash);
-
-    if (expectedHash !== entry.chain_hash) {
-      valid = false;
-      brokenAt = i;
-      break;
-    }
-    previousHash = entry.chain_hash;
-  }
-
-  // Also verify documents haven't been modified
-  const docsResult = await db.execute(sql`
-    SELECT id, name, file_path, content_hash FROM ai_tenant_documents
-    WHERE company_id = ${companyId}
-  `);
-  const docs = (docsResult.rows || docsResult) as any[];
-
-  let documentsValid = true;
-  const modifiedDocs: string[] = [];
-
-  for (const doc of docs) {
-    if (doc.file_path && fs.existsSync(doc.file_path)) {
-      const fileBuffer = fs.readFileSync(doc.file_path);
-      const currentHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-      if (currentHash !== doc.content_hash) {
-        documentsValid = false;
-        modifiedDocs.push(doc.name);
-      }
-    }
-  }
+  const ai = getTenantAI();
+  const [integrity, entries] = await Promise.all([
+    ai.verifyDataIntegrity(tenantId),
+    ai.getAuditLog(tenantId, { limit: 10000 }),
+  ]);
 
   return c.json({
-    valid: valid && documentsValid,
-    auditChainValid: valid,
-    documentsValid,
+    valid: integrity.valid,
+    auditChainValid: integrity.valid,
+    documentsValid: integrity.issues.length === 0,
     entriesChecked: entries.length,
-    documentsChecked: docs.length,
-    ...(brokenAt !== null ? { brokenAtEntry: brokenAt } : {}),
-    ...(modifiedDocs.length > 0 ? { modifiedDocuments: modifiedDocs } : {}),
+    documentsChecked: integrity.documentsChecked,
+    issues: integrity.issues,
     verifiedAt: new Date().toISOString(),
   });
 });
 
-// ─── GET /company/:companyId/documents/:docId/proof — Document proof ─
+// ─── GET /company/:companyId/documents/:docId/proof ────────────────
 tenantAIRouter.get('/company/:companyId/documents/:docId/proof', async (c) => {
   const { userId } = c.get('user');
-  const companyId = c.req.param('companyId');
+  const { tenantId } = await verifyOwnershipAndGetTenantId(
+    c.req.param('companyId'),
+    userId,
+  );
   const docId = c.req.param('docId');
-  await checkCompanyOwnership(companyId, userId);
-  await ensureReady();
 
-  const docResult = await db.execute(sql`
-    SELECT id, name, file_size, content_hash, status, created_at, updated_at
-    FROM ai_tenant_documents
-    WHERE id = ${docId}::uuid AND company_id = ${companyId}
-    LIMIT 1
-  `);
-
-  const doc = (docResult.rows || docResult as any[])[0];
+  const ai = getTenantAI();
+  const doc = await ai.getDocument(tenantId, docId);
   if (!doc) {
     throw new HTTPException(404, { message: 'Document not found' });
   }
 
-  // Check if file still matches its hash
-  let fileIntact = false;
-  const filePath = (doc as any).file_path;
-  if (filePath && fs.existsSync(filePath)) {
-    const fileBuffer = fs.readFileSync(filePath);
-    const currentHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-    fileIntact = currentHash === doc.content_hash;
-  }
+  const proof = await ai.getDocumentProof(tenantId, docId);
 
-  // Get related audit entries
-  const auditResult = await db.execute(sql`
-    SELECT action, details, data_hash, chain_hash, created_at
-    FROM ai_tenant_audit_log
-    WHERE company_id = ${companyId}
-      AND metadata::text LIKE ${'%' + docId + '%'}
-    ORDER BY created_at DESC
-  `);
+  // Related audit entries — best-effort scan over recent audit entries.
+  const allEntries = await ai.getAuditLog(tenantId, { limit: 1000 });
+  const auditTrail = allEntries.filter((e) => {
+    const details = (e.details ?? {}) as Record<string, unknown>;
+    return details.documentId === docId;
+  });
 
   return c.json({
     document: {
       id: doc.id,
       name: doc.name,
-      fileSize: doc.file_size,
-      verificationCode: doc.content_hash,
+      fileSize: (doc as unknown as { fileSize?: number }).fileSize ?? 0,
+      verificationCode: doc.fileHash,
       status: doc.status,
-      uploadedAt: doc.created_at,
-      lastModified: doc.updated_at,
+      uploadedAt: doc.createdAt,
+      lastModified: doc.createdAt,
     },
     integrity: {
-      fileIntact,
+      fileIntact: proof.currentHashMatch,
       verifiedAt: new Date().toISOString(),
     },
-    auditTrail: auditResult.rows || auditResult,
+    auditTrail,
   });
 });
 
