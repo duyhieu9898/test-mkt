@@ -30,6 +30,7 @@ COPY --from=deps /app/packages/workflow/node_modules ./packages/workflow/node_mo
 COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 
 COPY . .
+RUN pnpm install --frozen-lockfile --prod=false
 
 # Build-time env
 ARG NEXT_PUBLIC_API_URL
