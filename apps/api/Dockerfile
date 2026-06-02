@@ -35,7 +35,10 @@ COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY --from=deps /app/packages/ai-tenant/node_modules ./packages/ai-tenant/node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 
+
 COPY . .
+
+RUN pnpm install --frozen-lockfile --prod=false
 
 # Build shared packages first
 
