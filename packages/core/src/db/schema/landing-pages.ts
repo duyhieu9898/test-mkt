@@ -269,10 +269,10 @@ export const landingPageBlogPosts = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (table) => ({
-    pageIdx: index('blog_posts_page_idx').on(table.landingPageId),
-    companyIdx: index('blog_posts_company_idx').on(table.companyId),
-    slugIdx: index('blog_posts_slug_idx').on(table.landingPageId, table.slug),
-    statusIdx: index('blog_posts_status_idx').on(table.status),
+    pageIdx: index('landing_blog_posts_page_idx').on(table.landingPageId),
+    companyIdx: index('landing_blog_posts_company_idx').on(table.companyId),
+    slugIdx: index('landing_blog_posts_slug_idx').on(table.landingPageId, table.slug),
+    statusIdx: index('landing_blog_posts_status_idx').on(table.status),
   })
 );
 
