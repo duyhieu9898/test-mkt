@@ -41,6 +41,8 @@ import {
   Users,
   CreditCard,
   Lightbulb,
+  Bell,
+  TrendingUp,
 } from 'lucide-react';
 
 type FeatureStatus = 'live' | 'partial' | 'soon';
@@ -110,7 +112,7 @@ const SECTIONS = (companyId: string): Section[] => [
         icon: Sparkles,
         block: 'Block 2',
         whatItDoes:
-          'Single source of truth for voice + audience + style + visuals + OKRs. Every blog, banner, ad, social post, chat reply, landing page automatically reads it — no per-agent setup needed.',
+          'Single source of truth for voice + audience + positioning + style + visuals + OKRs. Now also extracts product-marketing depth: why customers switch (JTBD Four Forces), their verbatim language, who is NOT a fit, and objection handling. Every blog, banner, ad, social post, chat reply, landing page automatically reads it — no per-agent setup needed.',
       },
     ],
   },
@@ -142,10 +144,23 @@ const SECTIONS = (companyId: string): Section[] => [
       },
       {
         name: 'Social Media',
-        description: 'Draft, schedule, and publish to Facebook + Instagram + LinkedIn from one queue.',
+        description: 'Draft, schedule, and publish from one queue. Facebook Page publishing is live; Instagram + LinkedIn are draft-only for now.',
         href: `/${companyId}/social`,
         status: 'live',
         icon: Share2,
+        block: 'P5',
+        whatItDoes:
+          'Connect a Facebook Page in Channels, then hit "Publish now" — the post goes straight to your Page feed via the Graph API (needs the pages_manage_posts permission). Instagram + LinkedIn stay as drafts until their connectors ship.',
+      },
+      {
+        name: 'Content Autopilot (1-2 blogs/day, automatic)',
+        description: 'Add your topics once → the platform writes 1-2 SEO/GEO blog posts a day and publishes WordPress drafts for your approval. No daily effort.',
+        href: `/${companyId}/autopilot`,
+        status: 'live',
+        icon: Rocket,
+        block: 'P8',
+        whatItDoes:
+          'The unattended version of Campaign Launcher. Set posts/day + a queue of topics; a scheduler generates each post in your Brand IQ voice, publishes a WordPress draft (you approve in WP), seeds GEO tracking, and rotates to the next topic. Use "Run one now" to test instantly. Perfect for a WordPress site (e.g. a blockchain agency) that needs a steady stream of SEO content to get found + recommended by AI search.',
       },
       {
         name: 'Campaign Launcher (one-click multi-channel)',
@@ -267,11 +282,41 @@ const SECTIONS = (companyId: string): Section[] => [
         icon: Sparkles,
       },
       {
+        name: 'Real analytics (Google Analytics 4)',
+        description: 'Connect Google once → see real sessions, users, conversions, top pages and traffic channels from GA4.',
+        href: `/${companyId}/analytics`,
+        status: 'live',
+        icon: TrendingUp,
+        block: 'P4',
+        whatItDoes:
+          'Reuses the same Google connection as Search Console (one consent covers both). Paste your GA4 Property ID once; the Analytics page then pulls live numbers on demand — no background polling.',
+      },
+      {
+        name: 'Analyze a screenshot (no connection needed)',
+        description: 'Too technical to connect a platform? Drop a screenshot of Facebook Ads Manager, GA4, or any report and the AI reads the numbers and tells you what to do.',
+        href: `/${companyId}/analytics`,
+        status: 'live',
+        icon: Sparkles,
+        block: 'C1',
+        whatItDoes:
+          'Zero setup — no OAuth, no tokens. Open any dashboard, screenshot it, drop or paste it on the Analytics page, optionally ask a question, and Claude reads the chart/numbers and returns findings + prioritized actions in your brand context.',
+      },
+      {
         name: 'Growth Score & Daily Missions',
         description: '0-100 score across 4 areas + daily quests with streaks and rewards.',
         href: `/${companyId}`,
         status: 'live',
         icon: Flame,
+      },
+      {
+        name: 'Marketing Playbooks (41 expert frameworks)',
+        description: 'Run any of 41 senior-practitioner playbooks — SEO audit, CRO, copywriting, pricing, churn, launch, and more — on demand.',
+        href: `/${companyId}/playbooks`,
+        status: 'live',
+        icon: BookOpen,
+        block: 'P6',
+        whatItDoes:
+          'Pick a playbook, describe what you need ("write a 5-email welcome sequence", "audit my pricing page"), and get a deliverable written with that expert framework — automatically grounded in your Brand IQ voice, audience, and positioning.',
       },
       {
         name: 'AI Employees with personalities',
@@ -281,7 +326,7 @@ const SECTIONS = (companyId: string): Section[] => [
         icon: Users,
         block: 'Block 3',
         whatItDoes:
-          'Each employee replies in their own voice, reads your Brand IQ, and runs semantic search across your knowledge base + blog posts + GEO mentions before answering. Open any card to chat — every answer cites the memory snippets it leaned on.',
+          'Each employee now carries expert marketing playbooks for their domain (e.g. Seomi → SEO audit + site architecture; Cleo → pricing, GTM launch, marketing psychology; Cassie → churn prevention + referrals). They reply in their own voice, read your Brand IQ, apply their playbooks, and run semantic search across your knowledge base + blog posts + GEO mentions before answering. Open any card to see their specialties and chat — every answer cites the memory snippets it leaned on.',
       },
       {
         name: 'Agent evolution loop (auto-improving prompts)',
@@ -290,6 +335,51 @@ const SECTIONS = (companyId: string): Section[] => [
         status: 'soon',
         icon: Brain,
         block: 'Block 5',
+      },
+    ],
+  },
+  {
+    title: '6 · Brain Hub — what reacts to your business in real time',
+    subtitle: 'A source-agnostic intelligence layer. Every chatbot message, FB inbound, lead, and uploaded file flows in; watchers detect patterns; reactions draft the response.',
+    icon: Brain,
+    features: [
+      {
+        name: 'Brain Hub — Sources & Event Stream',
+        description: 'One place for every signal — chatbot conversations, FB Messenger inbox, lead captures, plus any PDF/CSV/text you upload or paste.',
+        href: `/${companyId}/brain-hub`,
+        status: 'live',
+        icon: Inbox,
+        block: 'Brain Hub Phase A',
+        whatItDoes:
+          'Internal taps (chatbot + omnichannel + leads) wire automatically — you don\'t need to configure anything. Upload PDFs/CSVs, paste FAQs in bulk, semantic-search across everything from one bar. Every event gets auto-tagged with topic + sentiment.',
+      },
+      {
+        name: 'Watchers — pattern detection',
+        description: '7 default watchers ship enabled: recurring questions, sales-objection clusters, praise candidates, lead spikes, churn-risk language, ICP signals, competitor mentions.',
+        href: `/${companyId}/brain-hub?tab=watchers`,
+        status: 'live',
+        icon: Search,
+        block: 'Brain Hub Phase B',
+        whatItDoes:
+          'Watchers re-evaluate automatically every time a new event arrives — no background polling, no extra cost. Each one has a cooldown so you never get spammed with duplicates. Pause / enable / tune cooldown per watcher from the UI.',
+      },
+      {
+        name: "Today's Reactions — proactive drafts",
+        description: 'When a watcher fires, the Brain composes a draft (chatbot FAQ, comparison blog brief, or a "heads up" notification) for one-click review.',
+        href: `/${companyId}/brain-hub?tab=reactions`,
+        status: 'live',
+        icon: Bell,
+        block: 'Brain Hub Phase B',
+        whatItDoes:
+          'Approve a chatbot-FAQ draft → it lands in your knowledge base and the chatbot answers in seconds. Approve a blog draft → Campaign Launcher kicks in with the keyword + brief pre-filled. Dismiss anything you don\'t want.',
+      },
+      {
+        name: 'External signals (Google Trends, Reddit, OAuth apps)',
+        description: 'Polled trend feeds + OAuth connectors (Stripe / Fireflies / Intercom / HubSpot) so the Brain reacts to market shifts too.',
+        href: null,
+        status: 'soon',
+        icon: TrendingUp,
+        block: 'Brain Hub Phase C',
       },
     ],
   },
@@ -394,6 +484,63 @@ export default function WalkthroughPage() {
             <p className="text-xs text-muted-foreground">
               See the full roadmap at <code className="bg-white px-1 py-0.5 rounded">docs/strategy/build-now-plan.md</code>.
             </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Expert frameworks — the knowledge layer powering generations */}
+      <Card className="border-amber-200 bg-gradient-to-br from-amber-50/70 to-orange-50/40">
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-600" /> Powered by expert marketing frameworks
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Your AI now writes using senior-practitioner playbooks — not generic prompts. Every
+            generation below silently applies a battle-tested framework, then adapts it to your
+            Brand IQ voice. <strong>4 of 41 expert frameworks are live</strong>; more roll out each release.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {[
+              { fw: 'Copywriting', powers: 'Blog posts & long-form content', icon: FileEdit, href: `/${companyId}/editor` },
+              { fw: 'CRO', powers: 'Landing page hero & value-prop copy', icon: FileEdit, href: `/${companyId}/landing-pages` },
+              { fw: 'Ad creative', powers: 'Ads — headlines, primary text, CTAs', icon: Megaphone, href: `/${companyId}/campaigns` },
+              { fw: 'Email & Cold-email', powers: 'Outreach sequences & nurture emails', icon: Megaphone, href: `/${companyId}/sales` },
+            ].map((item) => {
+              const I = item.icon;
+              return (
+                <Link
+                  key={item.fw}
+                  href={item.href}
+                  className="flex items-center gap-3 border rounded-lg p-3 bg-white/60 hover:shadow-sm transition-shadow"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                    <I className="w-4 h-4 text-amber-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium flex items-center gap-1.5">
+                      {item.fw}
+                      <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-200 gap-1">
+                        <CheckCircle2 className="w-2.5 h-2.5" /> Live
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate">Powers: {item.powers}</p>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-[11px] text-muted-foreground">
+              Knowledge adapted from the open-source{' '}
+              <span className="font-mono">marketingskills</span> library (MIT).
+            </p>
+            <Link href={`/${companyId}/playbooks`}>
+              <Button size="sm" variant="outline" className="gap-1">
+                <BookOpen className="w-3 h-3" /> Browse all 41 playbooks <ArrowRight className="w-3 h-3" />
+              </Button>
+            </Link>
           </div>
         </CardContent>
       </Card>

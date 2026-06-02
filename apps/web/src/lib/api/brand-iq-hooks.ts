@@ -56,6 +56,29 @@ export interface QuarterlyOkr {
   quarter: string;
 }
 
+// P2 — product-marketing depth.
+export interface JtbdForces {
+  push: string[];
+  pull: string[];
+  habit: string[];
+  anxiety: string[];
+}
+export interface CustomerLanguage {
+  problemPhrases: string[];
+  solutionPhrases: string[];
+  wordsToUse: string[];
+  wordsToAvoid: string[];
+  glossary: { term: string; definition: string }[];
+}
+export interface AntiPersona {
+  name: string;
+  whyNotFit: string;
+}
+export interface Objection {
+  objection: string;
+  response: string;
+}
+
 export interface BrandIqProfile {
   id: string;
   companyId: string;
@@ -68,6 +91,10 @@ export interface BrandIqProfile {
   styleGuide: StyleGuide;
   visualIdentity: VisualIdentity;
   okrs: QuarterlyOkr[];
+  jtbdForces: JtbdForces | null;
+  customerLanguage: CustomerLanguage | null;
+  antiPersonas: AntiPersona[];
+  objections: Objection[];
   tagline: string | null;
   generatedBy: 'ai' | 'manual';
   createdAt: string;
@@ -104,6 +131,10 @@ export function useUpdateBrandIq(companyId: string) {
       styleGuide: StyleGuide;
       visualIdentity: VisualIdentity;
       okrs: QuarterlyOkr[];
+      jtbdForces: JtbdForces | null;
+      customerLanguage: CustomerLanguage | null;
+      antiPersonas: AntiPersona[];
+      objections: Objection[];
       tagline: string | null;
     }>) =>
       api.put<{ data: BrandIqProfile }>(`/brand-iq/${companyId}/active`, patch, { token: token! }),

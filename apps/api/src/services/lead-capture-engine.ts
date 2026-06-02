@@ -195,6 +195,34 @@ export class LeadCaptureEngine {
     // Auto-enroll in sequence if configured
     await this.autoEnrollInSequence(input.companyId, outreachLeadId, input.source);
 
+    // Brain Hub internal tap — every captured lead becomes an event so
+    // watchers (Phase B) can detect ICP signals and spike anomalies.
+    void import('./brain-hub/event-service').then(({ ingestInternalTap }) =>
+      ingestInternalTap({
+        companyId: input.companyId,
+        subtype: 'lead_capture',
+        type: 'lead',
+        subject: `Lead · ${input.email}${input.company ? ` (${input.company})` : ''}`,
+        content: [
+          input.firstName && `Name: ${input.firstName}${input.lastName ? ' ' + input.lastName : ''}`,
+          input.jobTitle && `Title: ${input.jobTitle}`,
+          input.company && `Company: ${input.company}`,
+          input.message && `Message: ${input.message}`,
+          input.source && `Source: ${input.source}`,
+        ].filter(Boolean).join('\n'),
+        payload: {
+          email: input.email,
+          source: input.source,
+          score,
+          isNew,
+          utmSource: input.utmSource,
+          utmCampaign: input.utmCampaign,
+          jobTitle: input.jobTitle,
+          company: input.company,
+        },
+      }),
+    );
+
     return {
       leadId: outreachLeadId,
       isNew,

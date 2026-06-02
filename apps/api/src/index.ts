@@ -75,6 +75,11 @@ import adminSetupRouter from './routes/admin-setup';
 import brandIqRouter from './routes/brand-iq';
 import teamRouter from './routes/team';
 import launchesRouter from './routes/launches';
+import brainHubRouter from './routes/brain-hub';
+import analyticsRouter from './routes/analytics';
+import marketingSkillsRouter from './routes/marketing-skills';
+import visionRouter from './routes/vision-analyze';
+import autopilotRouter from './routes/autopilot';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -218,6 +223,11 @@ api.route('/admin/setup', adminSetupRouter);
 api.route('/brand-iq', brandIqRouter);
 api.route('/team', teamRouter);
 api.route('/launches', launchesRouter);
+api.route('/brain-hub', brainHubRouter);
+api.route('/analytics', analyticsRouter);
+api.route('/marketing-skills', marketingSkillsRouter);
+api.route('/vision', visionRouter);
+api.route('/autopilot', autopilotRouter);
 
 // Mount API
 app.route('/api/v1', api);
@@ -266,3 +276,16 @@ import { feedbackCron } from './workers/feedback-cron';
 feedbackCron.start().catch((err) => {
   console.warn('⚠️  Feedback cron failed:', err.message);
 });
+
+// Content Autopilot scheduler — every 15 min, generate due posts for companies
+// that EXPLICITLY enabled autopilot (no-op for everyone else). Publishes WP
+// drafts for human approval. Founder-requested automation, not a silent refresh.
+import { runDueAutopilots } from './services/content-autopilot';
+const AUTOPILOT_TICK_MS = 15 * 60 * 1000;
+setInterval(() => {
+  runDueAutopilots()
+    .then((r) => {
+      if (r.triggered > 0) console.log(`[autopilot] generated ${r.triggered} post(s) this tick`);
+    })
+    .catch((err) => console.warn('⚠️  Autopilot tick failed:', err.message));
+}, AUTOPILOT_TICK_MS);

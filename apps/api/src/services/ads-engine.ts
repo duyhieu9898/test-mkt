@@ -25,6 +25,10 @@ import {
 import Anthropic from '@anthropic-ai/sdk';
 import { platformRegistry } from './platforms';
 import type { PlatformConnection } from './platforms';
+import { renderSkillKnowledge } from '@1person/core';
+
+// Expert ad-creative playbook injected into creative generation (skill K02).
+const ADS_FRAMEWORK = renderSkillKnowledge('ad-creative');
 
 const anthropic = new Anthropic();
 
@@ -615,6 +619,7 @@ Return ONLY valid JSON.`;
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1500,
+      system: ADS_FRAMEWORK || undefined,
       messages: [{ role: 'user', content: prompt }],
     });
 

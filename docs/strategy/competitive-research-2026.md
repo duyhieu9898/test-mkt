@@ -1,8 +1,10 @@
 # Competitive Research — Marketing/SEO/Agentic AI Landscape (May 2026)
 
-> Version: 1.0 — 2026-05-16
+> Version: 1.1 — 2026-05-18 (added Appendix A: research-flow UX audit of 13 tools)
 > Research method: WebSearch + WebFetch across primary sources + competitor sites.
 > Re-run quarterly. Update version + date when refreshing.
+>
+> **2026-05-18 update**: v1.0 covered features and pricing but UNDER-COVERED the **research-flow UX patterns** these tools share. See **Appendix A** at the bottom — deep audit of how each of the 13 tools handles multi-source ingestion, user steering, iteration, provenance, approval, and handoff. The synthesis there directly informs `docs/strategy/research-hub-design.md`.
 
 ---
 
@@ -179,3 +181,197 @@ Source: ["We Tested 13 Best AI SEO Content Optimization Tools — 2026"](https:/
 - [MarTech — Rise of Vibe Marketing](https://martech.org/the-rise-of-vibe-marketing-and-what-it-means-for-marketers/)
 - [Get Ryze — AI Agent for Programmatic SEO at Scale](https://www.get-ryze.ai/blog/ai-agent-programmatic-seo-content-quality-at-scale)
 - [Averi — AI Agent Marketing Vaporware vs Real 2026](https://www.averi.ai/how-to/ai-agent-marketing-how-autonomous-ai-is-changing-content-ops-in-2026)
+
+---
+
+# Appendix A — Research-flow UX audit of all 13 tools (2026-05-18)
+
+> Triggered by founder feedback: Rankability's Researcher screen lets the user pick topics + country + toggle data sources (KB + GSC), while 1Person's Brand IQ is one-shot. We audited the actual research/discovery UX of each tool — not just features — to inform a Research Hub redesign.
+
+## Per-tool findings
+
+### 1. Rankability (Researcher)
+- **Surface**: "Researcher" with 5 sibling tabs — Discover keywords / Analyze keywords / Explore domain / Find keyword gaps / Manage lists
+- **Inputs**: seed topics (multi-tag), country (required), optional city ("Austin, TX"), bulk paste/upload, up to 3 competitors for gap
+- **Toggleable sources**: Google SERP / PAA / YouTube / Reddit / trending / AI expansion + optional "Knowledge Base" + "Google Search Console"
+- **Stages**: Discover → Evaluate & prioritize (KO Score) → Convert to execution (lists, exports, brief handoff)
+- **Editing**: keywords save-to-list / exclude / re-cluster; per-suggestion regenerate unconfirmed
+- **Iteration**: research history per session; named lists per project/client; CSV+Sheets export
+- **Provenance**: per-keyword source attribution (Google / PAA / YouTube / Reddit / AI)
+- **Approval**: **shareable client-review link with per-keyword approve / reject / comment** — strongest in the set
+- **Handoff**: one-click into content creation; CSV/Sheets for external teams
+- **Best idea to steal**: the 5-tab IA that turns one "research" verb into five distinct mental models
+
+### 2. Surfer SEO (Content Editor)
+- **Surface**: Content Editor + right-rail Guidelines + Workflow tab + Outline tab
+- **Inputs**: target keyword(s), country/locale, language, optional secondary keywords, word-count target
+- **Toggleable sources**: top-10 (loadable to top-20) competitor URLs (include/exclude each), Google PAA, Surfer DB; **term blacklist that persists across all future drafts**
+- **Stages**: 2 named — "Research & Create Outline" → "Write & Optimize"
+- **Editing**: per-term hover include/exclude/add-to-headings/blacklist; AI outline one-click insert + fully editable
+- **Iteration**: docs persist; re-run with different competitor selection without losing draft
+- **Provenance**: source bucket per term (Competitors / PAA / Surfer DB)
+- **Approval**: doc sharing exists; dedicated client approval unconfirmed
+- **Handoff**: WordPress / Google Docs / Jasper push
+- **Best idea**: **persistent term-blacklist** primitive — long-lived negative-feedback corpus
+
+### 3. Frase
+- **Surface**: Frase document with 4 tabs — Research / Outline / Write / Brief (SERP tab too)
+- **Inputs**: query/keyword, country, language, optional competitor URLs, brief metadata (title, word count, audience)
+- **Sources**: top-20 SERP (each toggleable), PAA, related searches, "Info Gain" panel; GSC/file-upload not native
+- **Stages**: 4 explicit — Research → Outline → Brief → Write
+- **Editing**: outlines/titles/topics individually add/remove/reorder; templated brief sections independently editable
+- **Iteration**: docs named + persistent; re-run vs fresh SERP; templates standardize re-runs
+- **Provenance**: every topic/question traceable to source SERP URL
+- **Approval**: **public read-only link / editable link (free Frase account) / threaded comments / free-user comments** — best-in-class
+- **Handoff**: HTML / PDF / .txt export; share to writers
+- **Best idea**: **free-account-only commenting on shared brief** — crushes hand-off friction for VAs/freelancers
+
+### 4. Clearscope
+- **Surface**: Content Report (research) + Editor (write) with a Research tab inside the report
+- **Inputs**: searcher intent / keyword, search locale (5 lang), optional **city-level local SEO targeting**
+- **Sources**: top-ranking SERP per locale, AI Overview / PAA-equivalent recommended questions; brand voice/GSC/upload unconfirmed
+- **Stages**: 2 — Report → Editor
+- **Editing**: terms list ignore-per-term; live grade re-computes
+- **Iteration**: reports persistent with custom labels for workflow status
+- **Provenance**: terms come with example sentences from ranking pages
+- **Approval**: Shareable Draft link (no recipient account needed) — Google-Docs-style
+- **Handoff**: **Google Docs add-on** pulls Terms/Grade/WordCount live into Docs as you write; WP plugin
+- **Best idea**: **live-sync into the writer's existing tool** (Google Docs) instead of forcing them into your editor
+
+### 5. MarketMuse
+- **Surface**: 4 named applications — Research / Compete / Optimize / Plan + Content Inventory
+- **Inputs**: topic, primary keyword, optional URL, domain set once at onboarding (drives Personalized Difficulty)
+- **Sources**: auto-crawled first-party content inventory + competitor SERP pages + MarketMuse topic model + internal-linking data
+- **Stages**: 4-app pipeline — Plan → Research → Compete → Optimize
+- **Editing**: in-line term recs update live; per-suggestion reject mechanics unconfirmed
+- **Iteration**: **Saved Views** in Topics Inventory re-runnable repeatedly — closest to "saved research session" with diff-able re-runs; inventory auto-refreshes on schedule
+- **Provenance**: SERP X-Ray + Heatmap show which competitor covers which subtopic (visual provenance grid)
+- **Approval**: team assignment + due dates; explicit client link unconfirmed
+- **Handoff**: Excel / Word / Google Docs / CMS exports; in-app task assignment
+- **Best idea**: **Personalized Difficulty against YOUR domain's authority** — research output is contextual to *you*, not abstract market
+
+### 6. NeuronWriter
+- **Surface**: Query (research session) + editor with 4 sidebar tabs (Terms / Outline / AI Writing / Media) + Ideas + YT + Meta
+- **Inputs**: keyword, country, language, engine; Advanced Settings field for **up to 5 custom competitor URLs** beyond top-30
+- **Sources**: top-30 SERP + 5 user-supplied URLs + YouTube transcripts + HTML import / URL auto-parse; brand voice unconfirmed
+- **Stages**: Query → Outline → Draft → Optimize
+- **Editing**: NLP term sidebar accept/dismiss; Autoinsert weaves terms; outline H1/H2/H3 individually insertable
+- **Iteration**: each Query saved + re-runnable
+- **Provenance**: Terms tab competitor-coverage; Ideas attribute headings to specific top-ranking pages
+- **Approval**: workspace project sharing; no public client review
+- **Handoff**: one-click WordPress publishing, HTML export, API
+- **Best idea**: **"add up to 5 custom competitor URLs"** — inject niche reference material AI's auto-scrape would miss
+
+### 7. Outranking
+- **Surface**: workflow-stage IA — Research → Brief → First Draft → Optimize, each a screen tied to a document
+- **Inputs**: target keyword, country, language, audience, tone, brand voice/style guide ref, optional **unbounded** "add any number of pages to collect research"
+- **Sources**: auto-collected ranking pages (configurable) + user-added URLs (unbounded — only tool with no cap) + brand style guide + internal links repo
+- **Stages**: Most explicit — Research → Brief → First Draft → Optimize → Publish, with per-stage task management
+- **Editing**: auto-optimize titles/headings/NLP/related/desc/internal-links accept/reject individually; "factually accurate first draft" regenerable by swapping research sources
+- **Iteration**: docs persist by stage; re-run research with new URLs
+- **Provenance**: claims source-grounded drafts; inline-citation depth unconfirmed
+- **Approval**: built-in workflow stages with team assignment
+- **Handoff**: CMS publishing + internal-link insertion into optimized draft
+- **Best idea**: **unbounded user-supplied research URLs + auto-regenerate** — layer in proprietary docs as URLs, AI grounds next draft on them
+
+### 8. ContentShake AI (Semrush)
+- **Surface**: chat-driven workspace with 5 named tools — Topic Finder / SEO Brief Generator / AI Article Generator / Content Optimizer / Brand Voice
+- **Inputs**: topic, audience, country/language, tone, brand-voice profile selection, **writing sample upload** for brand voice
+- **Sources**: live Semrush SERP & keyword data + top-ranking competitors + **up to 50 stored brand voices** based on uploaded samples; no native GSC in ContentShake itself
+- **Stages**: 5 chat-driven — Idea → Brief → Draft → Optimize → Publish
+- **Editing**: brief sections add/remove/reorder; chat lets user iterate; Optimizer click-to-apply
+- **Iteration**: workspace persists pieces; brand voices persist + reusable
+- **Provenance**: SERP-based underlies suggestions; per-suggestion source linking unconfirmed
+- **Approval**: team plans; explicit client-review link unconfirmed
+- **Handoff**: direct WP publish, send to Google Docs
+- **Best idea**: **store 50 distinct brand voices, switch per content piece** — voice as a first-class, switchable, persistent asset, not a dropdown
+
+### 9. Writesonic
+- **Surface**: now an "AI Search Visibility Platform" — **Action Center** as triage/research + AI Article Writer + SEO Checker + Chatsonic + Botsonic
+- **Inputs**: brand / topic / industry, 50+ geographic markets, specific prompts to track across AI engines (ChatGPT, Perplexity, etc.)
+- **Sources**: **Google Analytics + Google Search Console + WordPress + generic APIs + MCP (Model Context Protocol — rare)**; Botsonic trains on website/docs/help; customizable Brand Voice
+- **Stages**: 4-stage loop — Track → Prioritize → Act → Govern (agent-driven: Content Agent, Outreach Agent, Reddit Agent)
+- **Editing**: agents auto-rewrite pages; explicit human-override UI thin per public copy — unconfirmed
+- **Iteration**: automated re-runs (agents trigger refreshes) rather than user-named sessions
+- **Provenance**: "Sources earned by your agent fleet" — attributes each won citation to the responsible agent (unique frame)
+- **Approval**: not publicly detailed — unconfirmed
+- **Handoff**: pages on the user's site + Reddit + YouTube distribution
+- **Best idea**: **MCP + GSC + GA as first-class toggleable data sources** — underused by everyone else, directly relevant for 1Person Research Hub
+
+### 10. GrowthBar
+- **Surface**: "2-Minute Blog Builder" research-to-draft + separate Keyword Research view + Chrome extension
+- **Inputs**: target keyword, audience hint, tone, competitor domain (Site Inspector)
+- **Sources**: 7B-keyword DB + SERP scan + competitor domain + **custom AI model trained on user-uploaded best-performing content** (brand voice)
+- **Stages**: single speed-first flow — keyword → AI outline → drag-and-drop blog draft → optimize
+- **Editing**: drag-and-drop outline reorder; per-section regenerate; manual editor
+- **Iteration**: docs saved per project; custom brand-voice model persists
+- **Provenance**: light — SERP-derived, no per-suggestion source links
+- **Approval**: team seats; no public client review surfaced
+- **Handoff**: WP publish; Chrome extension lets users write inside Google search & WP directly
+- **Best idea**: **"upload your best-performing content; we train a custom voice model"** — voice training framed as user-driven data ingestion
+
+### 11. SE Ranking AI Writer / Content Editor
+- **Surface**: Content Marketing Module — Content Idea Finder + Content Editor (4 tabs: Optimization / Quality / Outline / AI Writer)
+- **Inputs**: keyword, country, language, **tone (13 options)**, audience, optional brief structure
+- **Sources**: top-ranking SERP + competitor headings (one-click "use top competing articles' headings") + SE Ranking's keyword/SERP DB
+- **Stages**: step-by-step wizard OR one-click full article, then optimize/edit
+- **Editing**: Outline tab manual heading add/edit/reorder; Optimization tab live missing terms; per-section regenerate via AI Writer
+- **Iteration**: briefs persistent + re-shareable; collaborative edits
+- **Provenance**: competitor headings imported with origin URL
+- **Approval**: **shareable link so writers collaborate without an SE Ranking account** — best low-friction handoff after Frase/Clearscope
+- **Handoff**: export + shared link; CMS via wider SE Ranking suite
+- **Best idea**: **13-option tone-of-voice dropdown** — more granular voice control without requiring sample upload
+
+### 12. RankIQ
+- **Surface**: Keyword Library (curated, niche-specific) → AI SEO Report → Content Optimizer — linear 3-step
+- **Inputs**: pick from pre-built library OR paste keyword, or click into one of **500+ blog niches (incl. 93 food sub-niches)**
+- **Sources**: top-30 ranking pages analyzed via IBM Watson NLP + the hand-curated library itself (no user-side source toggling)
+- **Stages**: 3 — Keyword Library → AI SEO Report → Content Optimizer (paste draft, grade F → A++)
+- **Editing**: paste content into optimizer; suggestions surface missing topics/headings — accept or ignore; no regenerate-with-different-sources
+- **Iteration**: reports persistent; library state (used/unused) tracked; separate Title optimizer
+- **Provenance**: topics derived from top-30 SERP via Watson, no per-source attribution shown
+- **Approval**: not a focus — blogger-first single-user tool
+- **Handoff**: manual paste into WP / Ghost; Title optimizer surfaces preferred patterns
+- **Best idea**: **pre-curated, niche-specific opportunity libraries** — instead of asking the user to articulate a topic, give them a domain-tuned starting menu
+
+### 13. Positional
+- **Surface**: multiple product tabs — Topic Explorer / Optimize / Editorial Calendar / Internal Linking / Analytics
+- **Inputs**: target keyword (or cluster), country/locale, optional competitor URLs; Optimize accepts URL or paste-in
+- **Sources**: SERP results, related keywords, competitor performance signals; Editorial Calendar overlays planning data; brand voice/upload unconfirmed
+- **Stages**: 5 connected products — Topic Explorer (research) → Editorial Calendar (plan) → Optimize (write) → Internal Linking → Analytics (measure) — most end-to-end pipeline in the set
+- **Editing**: per-recommendation accept/reject in Optimize; "unlimited articles, no credits"
+- **Iteration**: Editorial Calendar persists planned items; Optimize docs persist
+- **Provenance**: Topic Explorer surfaces gaps with competitor-source attribution
+- **Approval**: team-oriented; explicit client link unconfirmed
+- **Handoff**: briefs → writer instructions → Optimize → Internal Linking → Analytics (closed loop)
+- **Best idea**: **Research → Calendar → Optimize → Internal Linking → Analytics as five sibling products under one IA** — research visibly flows into a calendar (not just "export CSV")
+
+## Synthesis
+
+### 5 patterns common across all 13 (table stakes)
+1. **Keyword + country/locale as universal input doublet**. Locale never absent. Several add city-level.
+2. **Top-N SERP scrape as default data source**. None lets user replace search engine as first-class toggle.
+3. **Live content score / grade as dominant feedback loop**.
+4. **Brief → editor as dominant handoff**.
+5. **One-click WordPress / Google Docs export**.
+
+### 3 differentiator patterns (only 1-2 tools)
+1. **Per-item client approve/reject/comment on shareable link** — only Rankability has item-level (Frase has doc-level only).
+2. **Persistent negative-feedback corpus shaping future drafts** — only Surfer (term blacklist).
+3. **Multiple stored, switchable, trainable brand voices** — only ContentShake (50) and GrowthBar (custom model).
+
+Plus rare-but-notable:
+- Personalized Difficulty against your own domain authority — only MarketMuse
+- MCP + GSC + GA as native research data sources — only Writesonic
+- Curated niche-specific keyword libraries — only RankIQ
+- Unbounded user-supplied research URLs feeding draft generation — only Outranking (NeuronWriter cap at 5)
+
+### Biggest UX failure mode
+**One-shot generation with no override**. Worst offenders: GrowthBar 2-Minute Blog Builder, RankIQ paste-and-grade, Writesonic agent auto-rewrites, SE Ranking one-click mode.
+
+Best avoiders share a pattern: **research decomposed into named stages, each producing a persistent named object, user can re-enter any stage with new inputs without losing downstream work** (Outranking, Surfer, Frase, Rankability, MarketMuse).
+
+### Recommended Research Hub composition for 1Person AI
+See [research-hub-design.md](./research-hub-design.md) for the full spec.
+
+Short version: 5-tab IA (Discover / Analyze / Compare / Brief / Library) with multi-source toggles (URL / GSC / KB / competitor URLs / uploaded docs / past sessions / vector RAG), brand voice as first-class multi-instance trainable asset, per-item client-approval link, provenance-tagged suggestions, stage-level regeneration.

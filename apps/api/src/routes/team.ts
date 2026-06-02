@@ -19,6 +19,7 @@ import {
   resolveEmployeeKpis,
   sendMessageToEmployee,
   getThread,
+  getEmployeeSpecialties,
 } from '../services/team-service';
 import { countChunks } from '../services/embedding-service';
 
@@ -54,6 +55,7 @@ teamRouter.get('/:companyId', async (c) => {
       avatarEmoji: e.avatarEmoji,
       accentColor: e.accentColor,
       intro: e.intro,
+      specialties: getEmployeeSpecialties(e.slug),
       kpis: await resolveEmployeeKpis(companyId, e),
     })),
   );
@@ -84,6 +86,7 @@ teamRouter.get('/:companyId/:slug', async (c) => {
       avatarEmoji: employee.avatarEmoji,
       accentColor: employee.accentColor,
       intro: employee.intro,
+      specialties: getEmployeeSpecialties(employee.slug),
       kpis,
       thread,
     },

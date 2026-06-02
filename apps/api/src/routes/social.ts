@@ -1,6 +1,7 @@
 /**
  * Social Media Management — CRUD + AI-draft for scheduled posts.
- * Platform publish stubbed behind SOCIAL_PUBLISH_ENABLED flag.
+ * Facebook organic publish is LIVE (T04) when a Page is connected via Channels;
+ * Instagram / LinkedIn remain draft-only until their connectors ship.
  */
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
@@ -10,10 +11,10 @@ import { db } from '../lib/db';
 import { authMiddleware } from '../middleware/auth';
 import { llmGenerate } from '../lib/llm';
 import { buildBusinessContext } from '../services/business-context';
+import { findActiveFbConnection, publishPagePost } from '../services/channels/fb-messenger';
 
 const socialRouter = new Hono();
 socialRouter.use('*', authMiddleware);
-const PUBLISH_ENABLED = process.env.SOCIAL_PUBLISH_ENABLED === 'true';
 const platformEnum = z.enum(['facebook', 'instagram', 'linkedin']);
 
 socialRouter.get('/:companyId/posts', async (c) => {
@@ -78,14 +79,51 @@ socialRouter.post('/:companyId/posts/:id/schedule', zValidator('json', z.object(
 
 socialRouter.post('/:companyId/posts/:id/publish-now', async (c) => {
   const { companyId, id } = c.req.param() as { companyId: string; id: string };
-  if (PUBLISH_ENABLED) console.log(`[social] Would publish post ${id} to platform APIs`);
-  const rows: any = await db.execute(sql`
-    UPDATE social_posts_scheduled SET status = 'published', published_at = now(), updated_at = now()
-    WHERE id = ${id} AND company_id = ${companyId} RETURNING *`);
-  const post = (rows.rows ?? rows)[0];
+
+  // Load the post first.
+  const found: any = await db.execute(sql`
+    SELECT * FROM social_posts_scheduled WHERE id = ${id} AND company_id = ${companyId} LIMIT 1`);
+  const post = (found.rows ?? found)[0];
   if (!post) return c.json({ error: 'Post not found' }, 404);
-  if (!PUBLISH_ENABLED) console.log(`[social] Stub-published ${id} to ${JSON.stringify(post.platforms)}`);
-  return c.json({ post });
+
+  const platforms: string[] = Array.isArray(post.platforms)
+    ? post.platforms
+    : JSON.parse(post.platforms ?? '[]');
+  const link = Array.isArray(post.media_urls) ? undefined : undefined; // media handling = fast-follow
+
+  // Per-platform publish results surfaced back to the founder.
+  const results: Array<{ platform: string; ok: boolean; externalId?: string; error?: string }> = [];
+
+  for (const platform of platforms) {
+    if (platform === 'facebook') {
+      const conn = await findActiveFbConnection(companyId);
+      if (!conn) {
+        results.push({ platform, ok: false, error: 'No Facebook Page connected — connect one in Channels.' });
+        continue;
+      }
+      try {
+        const { externalId } = await publishPagePost(conn, post.content, link);
+        results.push({ platform, ok: true, externalId });
+      } catch (e) {
+        results.push({ platform, ok: false, error: (e as Error).message });
+      }
+    } else {
+      // instagram / linkedin connectors not shipped yet.
+      results.push({ platform, ok: false, error: `${platform} publishing is not connected yet.` });
+    }
+  }
+
+  const anyLivePublished = results.some((r) => r.ok);
+  // Mark published if anything went live; otherwise keep it as a draft and report why.
+  const newStatus = anyLivePublished ? 'published' : post.status;
+  const updated: any = await db.execute(sql`
+    UPDATE social_posts_scheduled
+    SET status = ${newStatus},
+        published_at = ${anyLivePublished ? sql`now()` : sql`published_at`},
+        updated_at = now()
+    WHERE id = ${id} AND company_id = ${companyId} RETURNING *`);
+
+  return c.json({ post: (updated.rows ?? updated)[0], results, published: anyLivePublished });
 });
 
 socialRouter.post('/:companyId/posts/ai-draft', zValidator('json', z.object({

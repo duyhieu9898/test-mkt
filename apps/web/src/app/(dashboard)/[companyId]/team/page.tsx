@@ -79,6 +79,24 @@ export default function TeamPage() {
 
               <p className="text-xs text-muted-foreground line-clamp-3">{e.intro}</p>
 
+              {e.specialties && e.specialties.length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                    Expert playbooks
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {e.specialties.map((s) => (
+                      <span
+                        key={s}
+                        className="text-[10px] rounded-full border px-1.5 py-0.5 bg-muted/40 text-muted-foreground"
+                      >
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {e.kpis.length > 0 && (
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   {e.kpis.map((k) => (

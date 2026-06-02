@@ -15,6 +15,8 @@ import {
   jsonb,
   timestamp,
   index,
+  boolean,
+  integer,
 } from 'drizzle-orm/pg-core';
 import { companies } from './companies';
 
@@ -55,6 +57,9 @@ export const campaignLaunches = pgTable(
     status: varchar('status', { length: 20 }).$type<LaunchOverallStatus>().default('queued').notNull(),
     steps: jsonb('steps').$type<LaunchStep[]>().default([]).notNull(),
 
+    /** Who triggered this launch — manual one-click vs the daily autopilot. */
+    source: varchar('source', { length: 16 }).$type<'manual' | 'autopilot'>().default('manual').notNull(),
+
     /** Convenience pointers — the actual data lives on related tables. */
     blogPostId: uuid('blog_post_id'),
     heroImageUrl: text('hero_image_url'),
@@ -70,3 +75,49 @@ export const campaignLaunches = pgTable(
 
 export type CampaignLaunch = typeof campaignLaunches.$inferSelect;
 export type NewCampaignLaunch = typeof campaignLaunches.$inferInsert;
+
+/* ─── Content Autopilot (P8) ─────────────────────────────────────── */
+/**
+ * One row per company. When `enabled`, a scheduler generates `postsPerDay`
+ * blog posts (via the Campaign Launcher) on a daily cadence, drawing keywords
+ * from `keywordQueue` and rotating used ones into `usedKeywords`.
+ * Default mode publishes WordPress DRAFTS — the founder approves in WP
+ * (human-in-the-loop). Only enabled companies are ever touched by the scheduler.
+ */
+export interface AutopilotTargets {
+  wordpress: boolean;
+  facebook: boolean;
+  linkedin: boolean;
+  instagram: boolean;
+}
+
+export const contentAutopilot = pgTable(
+  'content_autopilot',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }).unique(),
+
+    enabled: boolean('enabled').default(false).notNull(),
+    postsPerDay: integer('posts_per_day').default(1).notNull(),
+    targets: jsonb('targets').$type<AutopilotTargets>().default({ wordpress: true, facebook: false, linkedin: false, instagram: false }).notNull(),
+    /** 'draft' = WP draft for approval (default, human-in-the-loop). 'autopublish' reserved for later. */
+    mode: varchar('mode', { length: 16 }).$type<'draft' | 'autopublish'>().default('draft').notNull(),
+
+    /** Queue of topics/keywords still to write, and the ones already used. */
+    keywordQueue: jsonb('keyword_queue').$type<string[]>().default([]).notNull(),
+    usedKeywords: jsonb('used_keywords').$type<string[]>().default([]).notNull(),
+
+    lastRunAt: timestamp('last_run_at'),
+    nextRunAt: timestamp('next_run_at'),
+
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    companyIdx: index('content_autopilot_company_idx').on(t.companyId),
+    dueIdx: index('content_autopilot_due_idx').on(t.enabled, t.nextRunAt),
+  }),
+);
+
+export type ContentAutopilot = typeof contentAutopilot.$inferSelect;
+export type NewContentAutopilot = typeof contentAutopilot.$inferInsert;

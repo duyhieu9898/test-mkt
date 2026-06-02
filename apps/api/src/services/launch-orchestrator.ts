@@ -32,6 +32,7 @@ import { BlogGenerator } from './blog-generator';
 import { generateBlogImages, readGeneratedImage } from './blog-image-variations';
 import { CMSIntegration } from './cms-integration';
 import { embedBlogPost } from './embedding-service';
+import { decryptMaybe } from '../lib/crypto';
 
 export interface LaunchTargets {
   wordpress: boolean;
@@ -45,6 +46,8 @@ export interface StartLaunchArgs {
   keyword: string;
   brief?: string;
   targets: LaunchTargets;
+  /** Who triggered this — defaults to manual one-click. */
+  source?: 'manual' | 'autopilot';
 }
 
 const ALL_STEP_KEYS = [
@@ -127,6 +130,7 @@ export async function startLaunch(args: StartLaunchArgs): Promise<{ launchId: st
       keyword: args.keyword,
       brief: args.brief ?? null,
       targets: args.targets,
+      source: args.source ?? 'manual',
       status: 'queued',
       steps: initSteps(args.targets),
     })
@@ -248,6 +252,7 @@ async function runLaunch(launchId: string): Promise<void> {
       if (!wp?.siteUrl || !wp?.username || !wp?.appPassword) {
         await markSkip(launchId, 'wordpress', 'No WordPress credentials configured for this company');
       } else {
+        const wpPassword = decryptMaybe(wp.appPassword);
         const cms = new CMSIntegration();
         let featuredMediaId: number | undefined;
         if (imageBundle.hero?.url) {
@@ -257,7 +262,7 @@ async function runLaunch(launchId: string): Promise<void> {
               const m = await cms.uploadMedia(
                 wp.siteUrl,
                 wp.username,
-                wp.appPassword,
+                wpPassword,
                 bytes,
                 `${savedBlog.slug}-hero.png`,
                 'image/png',
@@ -269,7 +274,7 @@ async function runLaunch(launchId: string): Promise<void> {
             }
           }
         }
-        const wpResult = await cms.publishPost(wp.siteUrl, wp.username, wp.appPassword, {
+        const wpResult = await cms.publishPost(wp.siteUrl, wp.username, wpPassword, {
           title: savedBlog.title,
           content: savedBlog.content,
           excerpt: savedBlog.excerpt ?? undefined,

@@ -74,6 +74,37 @@ export interface QuarterlyOkr {
   quarter: string; // "2026-Q2"
 }
 
+/* ─── Product-marketing depth (P2 — adapted from the product-marketing skill) ── */
+
+/** JTBD "Four Forces" of switching — why a customer moves (or doesn't). */
+export interface JtbdForces {
+  push: string[]; // frustrations driving them AWAY from their current solution
+  pull: string[]; // what attracts them TO us
+  habit: string[]; // inertia keeping them on the current approach
+  anxiety: string[]; // worries about switching to us
+}
+
+/** Verbatim customer language — exact phrases beat polished descriptions. */
+export interface CustomerLanguage {
+  problemPhrases: string[]; // how customers describe the problem, in their words
+  solutionPhrases: string[]; // how they describe the desired outcome / our solution
+  wordsToUse: string[]; // resonant terms to mirror in copy
+  wordsToAvoid: string[]; // jargon/terms that fall flat or alienate
+  glossary: { term: string; definition: string }[]; // product-specific terms
+}
+
+/** Who is explicitly NOT a good fit — keeps targeting + messaging honest. */
+export interface AntiPersona {
+  name: string;
+  whyNotFit: string;
+}
+
+/** A recurring sales/marketing objection and the proven response. */
+export interface Objection {
+  objection: string;
+  response: string;
+}
+
 /* ─── The table ──────────────────────────────────────────────────── */
 
 export const brandIqProfiles = pgTable(
@@ -97,6 +128,12 @@ export const brandIqProfiles = pgTable(
     styleGuide: jsonb('style_guide').$type<StyleGuide>().notNull(),
     visualIdentity: jsonb('visual_identity').$type<VisualIdentity>().notNull(),
     okrs: jsonb('okrs').$type<QuarterlyOkr[]>().default([]).notNull(),
+
+    /** P2 — product-marketing depth. Nullable for rows generated before P2. */
+    jtbdForces: jsonb('jtbd_forces').$type<JtbdForces>(),
+    customerLanguage: jsonb('customer_language').$type<CustomerLanguage>(),
+    antiPersonas: jsonb('anti_personas').$type<AntiPersona[]>().default([]).notNull(),
+    objections: jsonb('objections').$type<Objection[]>().default([]).notNull(),
 
     /** Optional founder-supplied tagline. */
     tagline: text('tagline'),

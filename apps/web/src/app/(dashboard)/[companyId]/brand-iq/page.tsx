@@ -507,6 +507,119 @@ function OkrsCard({ profile, companyId }: { profile: BrandIqProfile; companyId: 
   );
 }
 
+function PositioningCard({ profile }: { profile: BrandIqProfile }) {
+  const j = profile.jtbdForces;
+  const cl = profile.customerLanguage;
+  const hasJtbd = !!j && (j.push.length || j.pull.length || j.habit.length || j.anxiety.length);
+  const hasCl = !!cl && (cl.problemPhrases.length || cl.solutionPhrases.length || cl.wordsToUse.length);
+  const hasAnti = profile.antiPersonas.length > 0;
+  const hasObj = profile.objections.length > 0;
+
+  if (!hasJtbd && !hasCl && !hasAnti && !hasObj) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Target className="w-4 h-4 text-primary" /> Positioning &amp; messaging
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground italic text-xs">
+            Not extracted yet. Regenerate with a richer source (an About page + a sales/FAQ doc) to
+            capture why customers switch, their verbatim language, who is not a fit, and objections.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Target className="w-4 h-4 text-primary" /> Positioning &amp; messaging
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Every agent reads this — why customers switch, their words, who is not a fit, and how to
+          handle objections.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4 text-sm">
+        {hasJtbd && j && (
+          <div>
+            <div className="text-xs font-semibold text-muted-foreground mb-1.5">Why customers switch (JTBD forces)</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {[
+                { label: 'Push (away from old)', items: j.push },
+                { label: 'Pull (toward us)', items: j.pull },
+                { label: 'Habit (inertia)', items: j.habit },
+                { label: 'Anxiety (switching fear)', items: j.anxiety },
+              ]
+                .filter((b) => b.items.length > 0)
+                .map((b) => (
+                  <div key={b.label} className="border rounded-lg p-2.5">
+                    <div className="text-[11px] font-medium text-primary mb-1">{b.label}</div>
+                    <ul className="text-xs list-disc list-inside text-muted-foreground space-y-0.5">
+                      {b.items.map((it, i) => <li key={i}>{it}</li>)}
+                    </ul>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {hasCl && cl && (
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-muted-foreground">Customer language (mirrored verbatim)</div>
+            {cl.problemPhrases.length > 0 && (
+              <div><span className="text-xs text-muted-foreground">Problem (their words): </span><ChipList items={cl.problemPhrases} /></div>
+            )}
+            {cl.solutionPhrases.length > 0 && (
+              <div><span className="text-xs text-muted-foreground">Outcome (their words): </span><ChipList items={cl.solutionPhrases} /></div>
+            )}
+            {cl.wordsToUse.length > 0 && (
+              <div><span className="text-xs text-muted-foreground">Words to use: </span><ChipList items={cl.wordsToUse} /></div>
+            )}
+            {cl.wordsToAvoid.length > 0 && (
+              <div><span className="text-xs text-muted-foreground">Words to avoid: </span><ChipList items={cl.wordsToAvoid} /></div>
+            )}
+            {cl.glossary.length > 0 && (
+              <ul className="text-xs text-muted-foreground list-disc list-inside">
+                {cl.glossary.map((g, i) => <li key={i}><strong>{g.term}</strong>: {g.definition}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {hasAnti && (
+          <div>
+            <div className="text-xs font-semibold text-muted-foreground mb-1.5">Not a fit (won&apos;t be targeted)</div>
+            <ul className="text-xs space-y-1">
+              {profile.antiPersonas.map((a, i) => (
+                <li key={i} className="border rounded-lg p-2"><strong>{a.name}</strong> — <span className="text-muted-foreground">{a.whyNotFit}</span></li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {hasObj && (
+          <div>
+            <div className="text-xs font-semibold text-muted-foreground mb-1.5">Objections → response</div>
+            <ul className="text-xs space-y-1">
+              {profile.objections.map((o, i) => (
+                <li key={i} className="border rounded-lg p-2">
+                  <div className="font-medium">“{o.objection}”</div>
+                  <div className="text-muted-foreground mt-0.5">→ {o.response}</div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /* ─── Page entry ─────────────────────────────────────────────────── */
 
 export default function BrandIqPage() {
@@ -529,8 +642,9 @@ export default function BrandIqPage() {
           <Sparkles className="w-6 h-6 text-primary" /> Brand IQ
         </h1>
         <p className="text-muted-foreground text-sm">
-          One source of truth for voice, audience, style, visual identity, and OKRs. Every agent
-          reads this before writing anything for you.
+          One source of truth for voice, audience, positioning, style, visual identity, and OKRs.
+          Now captures why customers switch (JTBD), their verbatim language, who is not a fit, and
+          objection handling — every agent reads this before writing anything for you.
         </p>
       </div>
 
@@ -575,6 +689,7 @@ export default function BrandIqPage() {
 
           <VoiceCard profile={profile} companyId={companyId} />
           <PersonasCard profile={profile} />
+          <PositioningCard profile={profile} />
           <StyleCard profile={profile} />
           <VisualCard profile={profile} />
           <OkrsCard profile={profile} companyId={companyId} />

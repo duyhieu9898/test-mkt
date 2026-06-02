@@ -121,6 +121,52 @@ export async function sendMessage(
   return { externalMessageId: payload?.message_id };
 }
 
+/** Find the active FB Page connection for a company (for organic publishing). */
+export async function findActiveFbConnection(companyId: string): Promise<ChannelConnection | null> {
+  const rows = await db
+    .select()
+    .from(channelConnections)
+    .where(
+      and(
+        eq(channelConnections.companyId, companyId),
+        eq(channelConnections.channel, 'fb_messenger'),
+        eq(channelConnections.status, 'active'),
+      ),
+    );
+  return rows[0] ?? null;
+}
+
+/**
+ * Publish an organic post to the connected Facebook Page feed (T04).
+ * Reuses the page access token stored for Messenger. Requires the token to
+ * carry `pages_manage_posts`; if it doesn't, Graph returns a clear error we surface.
+ */
+export async function publishPagePost(
+  connection: ChannelConnection,
+  text: string,
+  link?: string,
+): Promise<{ externalId: string }> {
+  const data = connection.connectionData as Record<string, unknown>;
+  const pageId = data?.pageId as string | undefined;
+  const encrypted = data?.encryptedPageAccessToken as string | undefined;
+  if (!pageId || !encrypted) throw new Error('Facebook Page connection is incomplete');
+  const accessToken = decryptSecret(encrypted);
+
+  const body: Record<string, string> = { message: text.slice(0, 5000), access_token: accessToken };
+  if (link) body.link = link;
+
+  const res = await fetch(`${GRAPH_API_BASE}/${encodeURIComponent(pageId)}/feed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) {
+    throw new Error(`FB page publish failed (${res.status}): ${payload?.error?.message ?? 'unknown'}`);
+  }
+  return { externalId: payload?.id ?? '' };
+}
+
 /** Persist inbound + (optionally) generate & send an AI reply. */
 export async function handleInboundMessage(
   companyId: string,
@@ -146,6 +192,25 @@ export async function handleInboundMessage(
   await db.update(channelConnections)
     .set({ lastMessageAt: new Date() })
     .where(eq(channelConnections.id, connection.id));
+
+  // 1b) Brain Hub internal tap — fire-and-forget. Watchers (Phase B)
+  // detect recurring DM topics from this stream.
+  void import('../brain-hub/event-service').then(({ ingestInternalTap }) =>
+    ingestInternalTap({
+      companyId,
+      subtype: 'omnichannel_message',
+      type: 'message',
+      subject: `FB Messenger · ${normalized.senderName ?? normalized.senderId}`,
+      content: normalized.text,
+      payload: {
+        channel: 'fb_messenger',
+        threadId: normalized.threadId,
+        senderId: normalized.senderId,
+        senderName: normalized.senderName,
+      },
+      occurredAt: normalized.receivedAt,
+    }),
+  );
 
   // 2) Optional AI auto-reply (opt-in per connection — default off).
   if (!connection.aiAutoReply || !inbound) return;

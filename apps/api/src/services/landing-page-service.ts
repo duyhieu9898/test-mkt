@@ -28,6 +28,10 @@ import {
   type SEOData,
   type PageContent,
 } from '@1person/core/db';
+import { renderSkillKnowledge } from '@1person/core';
+
+// Expert CRO playbook injected into the highest-leverage section copy (skill K06).
+const CRO_FRAMEWORK = renderSkillKnowledge('cro');
 
 // =============================================================================
 // TYPES
@@ -503,6 +507,7 @@ Return ONLY valid JSON, no other text.`,
     const response = await this.anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 512,
+      system: CRO_FRAMEWORK || undefined,
       messages: [
         {
           role: 'user',

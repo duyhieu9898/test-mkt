@@ -45,6 +45,11 @@ import { useCompanies, useStreak, useGrowthScore } from '@/lib/api/hooks';
 // Progressive unlock: items with `unlockLevel` require that Growth Score
 // level before they become fully clickable. Lower levels show the item
 // grayed out with a lock tooltip.
+// TESTING: unlock every nav item regardless of Growth Score level so the founder
+// can test the full feature set in one pass. Flip to `false` to restore the
+// gamified progressive unlock (the per-item `unlockLevel` values below stay intact).
+const TESTING_UNLOCK_ALL = true;
+
 const navigation = [
   { name: 'Dashboard', href: '', icon: LayoutDashboard, unlockLevel: 1 },
   { name: 'Walkthrough', href: '/walkthrough', icon: Compass, unlockLevel: 1 },
@@ -52,12 +57,16 @@ const navigation = [
   { name: 'Knowledge', href: '/knowledge', icon: BookOpen, unlockLevel: 1 },
   { name: 'Brand IQ', href: '/brand-iq', icon: Sparkles, unlockLevel: 1 },
   { name: 'Your AI Team', href: '/team', icon: Users, unlockLevel: 1 },
+  { name: 'Marketing Playbooks', href: '/playbooks', icon: BookOpen, unlockLevel: 1 },
   { name: 'Campaigns', href: '/campaigns', icon: Rocket, unlockLevel: 2 },
   { name: 'Campaign Launcher', href: '/launch', icon: Rocket, unlockLevel: 2 },
+  { name: 'Content Autopilot', href: '/autopilot', icon: Rocket, unlockLevel: 2 },
   { name: 'Market & Competitors', href: '/market', icon: Globe, unlockLevel: 2 },
   { name: 'AI Visibility (GEO)', href: '/geo', icon: Search, unlockLevel: 2 },
   { name: 'Content Editor', href: '/editor', icon: FileEdit, unlockLevel: 2 },
+  { name: 'Analytics', href: '/analytics', icon: BarChart3, unlockLevel: 1 },
   { name: 'Brain', href: '/brain', icon: Brain, unlockLevel: 2 },
+  { name: 'Brain Hub', href: '/brain-hub', icon: Brain, unlockLevel: 1 },
   { name: 'Sales', href: '/sales', icon: Briefcase, unlockLevel: 3 },
   { name: 'Chatbot', href: '/chatbot', icon: MessageSquare, unlockLevel: 2 },
   { name: 'Channels', href: '/channels', icon: Link2, unlockLevel: 2 },
@@ -73,7 +82,6 @@ const moreNavigation = [
   { name: 'Settings', href: '/settings', icon: Settings },
   { name: 'Landing Pages', href: '/landing-pages', icon: FileText },
   { name: 'Assets', href: '/assets', icon: Image },
-  { name: 'Analytics', href: '/analytics', icon: BarChart3 },
 ];
 
 export function Sidebar() {
@@ -150,7 +158,7 @@ export function Sidebar() {
           {navigation.map((item) => {
             const href = hasCompany ? `/${companyId}${item.href}` : '#';
             const active = isActive(item.href);
-            const locked = hasCompany && item.unlockLevel > currentLevel;
+            const locked = !TESTING_UNLOCK_ALL && hasCompany && item.unlockLevel > currentLevel;
 
             if (!hasCompany) {
               return (

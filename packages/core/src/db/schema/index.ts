@@ -77,3 +77,6 @@ export * from './team';
 
 // Campaign Launches (Block 8 — orchestrate blog + images + WP + social)
 export * from './launches';
+
+// Brain Hub Phase A — source-agnostic data plane (sources + events)
+export * from './brain-hub';

@@ -105,16 +105,39 @@ export default function SocialPage() {
         await api.patch(`/social/${companyId}/posts/${editId}`, { content, platforms, scheduledAt: scheduleAt || null }, { token: token! });
       } else {
         const res = await api.post<{ post: SocialPost }>(`/social/${companyId}/posts`, { content, platforms, mediaUrls: [], scheduledAt: scheduleAt || null }, { token: token! });
-        if (publishNow && res.post?.id) await api.post(`/social/${companyId}/posts/${res.post.id}/publish-now`, {}, { token: token! });
+        if (publishNow && res.post?.id) {
+          const pub = await api.post<{ published?: boolean; results?: Array<{ platform: string; ok: boolean; error?: string }> }>(`/social/${companyId}/posts/${res.post.id}/publish-now`, {}, { token: token! });
+          reportPublish(pub);
+        } else {
+          toast.success(scheduleAt ? 'Post scheduled!' : 'Draft saved!');
+        }
       }
-      toast.success(publishNow ? 'Post published!' : scheduleAt ? 'Post scheduled!' : 'Draft saved!');
+      if (editId) toast.success(scheduleAt ? 'Post scheduled!' : 'Saved!');
       reset(); setComposeOpen(false); refresh();
     } catch (e: any) { toast.error(e.message || 'Failed to save'); }
     setSaving(false);
   };
 
   const handleDelete = async (id: string) => { await api.delete(`/social/${companyId}/posts/${id}`, { token: token! }); toast.success('Deleted'); refresh(); };
-  const handlePublish = async (id: string) => { await api.post(`/social/${companyId}/posts/${id}/publish-now`, {}, { token: token! }); toast.success('Published!'); refresh(); };
+
+  // Surface real per-platform publish outcomes (FB is live; IG/LinkedIn not yet connected).
+  type PublishResp = { published?: boolean; results?: Array<{ platform: string; ok: boolean; error?: string }> };
+  const reportPublish = (res: PublishResp) => {
+    const ok = (res.results ?? []).filter((r) => r.ok).map((r) => r.platform);
+    const failed = (res.results ?? []).filter((r) => !r.ok);
+    if (ok.length) toast.success(`Published to ${ok.join(', ')}`);
+    for (const f of failed) toast.error(`${f.platform}: ${f.error ?? 'not published'}`);
+    if (!ok.length && !failed.length) toast.success('Saved');
+  };
+  const handlePublish = async (id: string) => {
+    try {
+      const res = await api.post<PublishResp>(`/social/${companyId}/posts/${id}/publish-now`, {}, { token: token! });
+      reportPublish(res);
+    } catch (e: any) {
+      toast.error(e.message || 'Publish failed');
+    }
+    refresh();
+  };
 
   const handleAiDraft = async () => {
     setDrafting(true);

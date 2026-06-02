@@ -113,12 +113,35 @@ const okrSchema = z.object({
   quarter: z.string().regex(/^\d{4}-Q[1-4]$/),
 });
 
+// P2 — product-marketing depth.
+const jtbdSchema = z.object({
+  push: z.array(z.string()).max(6),
+  pull: z.array(z.string()).max(6),
+  habit: z.array(z.string()).max(6),
+  anxiety: z.array(z.string()).max(6),
+});
+
+const customerLanguageSchema = z.object({
+  problemPhrases: z.array(z.string()).max(8),
+  solutionPhrases: z.array(z.string()).max(8),
+  wordsToUse: z.array(z.string()).max(10),
+  wordsToAvoid: z.array(z.string()).max(10),
+  glossary: z.array(z.object({ term: z.string().max(80), definition: z.string().max(300) })).max(10),
+});
+
+const antiPersonaSchema = z.object({ name: z.string().min(1).max(120), whyNotFit: z.string().max(300) });
+const objectionSchema = z.object({ objection: z.string().min(1).max(300), response: z.string().max(500) });
+
 const patchSchema = z.object({
   voice: voiceSchema.optional(),
   audiencePersonas: z.array(personaSchema).max(8).optional(),
   styleGuide: styleSchema.optional(),
   visualIdentity: visualSchema.optional(),
   okrs: z.array(okrSchema).max(8).optional(),
+  jtbdForces: jtbdSchema.nullable().optional(),
+  customerLanguage: customerLanguageSchema.nullable().optional(),
+  antiPersonas: z.array(antiPersonaSchema).max(5).optional(),
+  objections: z.array(objectionSchema).max(6).optional(),
   tagline: z.string().max(120).nullable().optional(),
 });
 

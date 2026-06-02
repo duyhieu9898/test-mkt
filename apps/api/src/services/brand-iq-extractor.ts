@@ -25,10 +25,21 @@ import {
   type StyleGuide,
   type VisualIdentity,
   type QuarterlyOkr,
+  type JtbdForces,
+  type CustomerLanguage,
+  type AntiPersona,
+  type Objection,
   type BrandIqProfile,
 } from '@1person/core/db';
+import { renderSkillKnowledgeBundle } from '@1person/core';
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { embedBrandIqProfile } from './embedding-service';
+
+// P2: ground the extraction in the product-marketing + customer-research playbooks
+// (skills K41/K27). Bounded so the prompt stays lean.
+const PMM_FRAMEWORK = renderSkillKnowledgeBundle(['product-marketing', 'customer-research'], {
+  maxCharsEach: 4500,
+});
 
 /* ─── Public types ───────────────────────────────────────────────── */
 
@@ -174,7 +185,13 @@ function buildPrompt(companyName: string, src: ExtractedSource | null, samples: 
     samples.length > 0
       ? samples.map((s, i) => `SAMPLE ${i + 1}:\n"""${s.slice(0, 1500)}"""`).join('\n\n')
       : '(no writing samples provided)';
-  return `You are a senior brand strategist. Analyze the company's existing public surface and extract a structured Brand IQ.
+  return `You are a senior brand + product-marketing strategist. Analyze the company's existing public surface and extract a structured Brand IQ.
+
+Apply the playbooks below (product-marketing positioning + customer-research). Do NOT ask questions — infer from the material provided, and where evidence is thin, make a clearly reasonable best guess rather than leaving fields empty.
+
+${PMM_FRAMEWORK}
+
+---
 
 COMPANY NAME: ${companyName}
 
@@ -211,10 +228,25 @@ Respond ONLY with a single valid JSON object matching this schema (no markdown, 
     "ctaRules": ["rule 1", ...], // 2-4 items
     "formattingPreferences": ["pref 1", ...]
   },
-  "tagline": "5-9 word brand tagline if you can derive one, else null"
+  "tagline": "5-9 word brand tagline if you can derive one, else null",
+  "jtbdForces": {
+    "push": ["frustration driving them away from their current solution", ...], // 2-4
+    "pull": ["what attracts them to this product", ...], // 2-4
+    "habit": ["inertia keeping them on the old way", ...], // 1-3
+    "anxiety": ["worry about switching to this product", ...] // 1-3
+  },
+  "customerLanguage": {
+    "problemPhrases": ["verbatim phrase customers use for the problem", ...], // 2-5
+    "solutionPhrases": ["verbatim phrase for the desired outcome", ...], // 2-5
+    "wordsToUse": ["resonant term to mirror in copy", ...], // 2-6
+    "wordsToAvoid": ["jargon that falls flat", ...], // 0-5
+    "glossary": [ { "term": "product-specific term", "definition": "short plain-English meaning" } ] // 0-5
+  },
+  "antiPersonas": [ { "name": "who is NOT a fit", "whyNotFit": "why they won't get value" } ], // 1-3
+  "objections": [ { "objection": "top objection heard", "response": "how to address it" } ] // 2-4
 }
 
-Be specific. Pull concrete signature phrases from the samples when possible. Personas must be distinct (not just "ICP variants").`;
+Be specific. Pull concrete signature phrases and verbatim customer language from the samples when possible. Personas must be distinct (not just "ICP variants"). For JTBD forces, think about the moment of switching.`;
 }
 
 function coerceVoice(v: any): BrandIqVoice {
@@ -248,6 +280,58 @@ function coerceStyle(s: any): StyleGuide {
     ctaRules: Array.isArray(s?.ctaRules) ? s.ctaRules.slice(0, 6).map(String) : DEFAULT_STYLE.ctaRules,
     formattingPreferences: Array.isArray(s?.formattingPreferences) ? s.formattingPreferences.slice(0, 6).map(String) : DEFAULT_STYLE.formattingPreferences,
   };
+}
+
+function strArr(v: any, max = 6): string[] {
+  return Array.isArray(v) ? v.slice(0, max).map(String).filter((s) => s.trim().length > 0) : [];
+}
+
+function coerceJtbd(j: any): JtbdForces | null {
+  if (!j || typeof j !== 'object') return null;
+  const out: JtbdForces = {
+    push: strArr(j.push, 5),
+    pull: strArr(j.pull, 5),
+    habit: strArr(j.habit, 5),
+    anxiety: strArr(j.anxiety, 5),
+  };
+  // Only persist if at least one force was found.
+  return out.push.length || out.pull.length || out.habit.length || out.anxiety.length ? out : null;
+}
+
+function coerceCustomerLanguage(c: any): CustomerLanguage | null {
+  if (!c || typeof c !== 'object') return null;
+  const glossary = Array.isArray(c.glossary)
+    ? c.glossary
+        .slice(0, 8)
+        .map((g: any) => ({ term: String(g?.term ?? ''), definition: String(g?.definition ?? '') }))
+        .filter((g: { term: string }) => g.term.trim().length > 0)
+    : [];
+  const out: CustomerLanguage = {
+    problemPhrases: strArr(c.problemPhrases, 6),
+    solutionPhrases: strArr(c.solutionPhrases, 6),
+    wordsToUse: strArr(c.wordsToUse, 8),
+    wordsToAvoid: strArr(c.wordsToAvoid, 8),
+    glossary,
+  };
+  return out.problemPhrases.length || out.solutionPhrases.length || out.wordsToUse.length
+    ? out
+    : null;
+}
+
+function coerceAntiPersonas(a: any): AntiPersona[] {
+  if (!Array.isArray(a)) return [];
+  return a
+    .slice(0, 5)
+    .map((it: any) => ({ name: String(it?.name ?? ''), whyNotFit: String(it?.whyNotFit ?? '') }))
+    .filter((it: AntiPersona) => it.name.trim().length > 0);
+}
+
+function coerceObjections(o: any): Objection[] {
+  if (!Array.isArray(o)) return [];
+  return o
+    .slice(0, 6)
+    .map((it: any) => ({ objection: String(it?.objection ?? ''), response: String(it?.response ?? '') }))
+    .filter((it: Objection) => it.objection.trim().length > 0);
 }
 
 function visualFromSource(src: ExtractedSource | null): VisualIdentity {
@@ -315,6 +399,10 @@ export async function generateBrandIq(companyId: string, input: BrandIqInput): P
   const style = coerceStyle(parsed.styleGuide);
   const visual = visualFromSource(src);
   const tagline = typeof parsed.tagline === 'string' && parsed.tagline.length <= 120 ? parsed.tagline : null;
+  const jtbdForces = coerceJtbd(parsed.jtbdForces);
+  const customerLanguage = coerceCustomerLanguage(parsed.customerLanguage);
+  const antiPersonas = coerceAntiPersonas(parsed.antiPersonas);
+  const objections = coerceObjections(parsed.objections);
 
   // 3. Mark previous active rows inactive, insert new version
   const previous = await db
@@ -343,6 +431,10 @@ export async function generateBrandIq(companyId: string, input: BrandIqInput): P
       styleGuide: style,
       visualIdentity: visual,
       okrs: [],
+      jtbdForces,
+      customerLanguage,
+      antiPersonas,
+      objections,
       tagline,
       generatedBy: 'ai',
     })
@@ -375,6 +467,10 @@ export async function updateBrandIqFacet(
     styleGuide: StyleGuide;
     visualIdentity: VisualIdentity;
     okrs: QuarterlyOkr[];
+    jtbdForces: JtbdForces | null;
+    customerLanguage: CustomerLanguage | null;
+    antiPersonas: AntiPersona[];
+    objections: Objection[];
     tagline: string | null;
   }>,
 ): Promise<BrandIqProfile> {
@@ -422,6 +518,33 @@ export function renderBrandIqContext(p: BrandIqProfile): string {
     lines.push('CURRENT OKRs:');
     for (const o of p.okrs) lines.push(`- [${o.quarter}] ${o.objective} (KRs: ${o.keyResults.join('; ')})`);
   }
+
+  // P2 — product-marketing depth. Grounds every agent in positioning + verbatim language.
+  const j = p.jtbdForces;
+  if (j && (j.push.length || j.pull.length || j.habit.length || j.anxiety.length)) {
+    lines.push('WHY CUSTOMERS SWITCH (JTBD forces):');
+    if (j.push.length) lines.push(`  Push (away from old): ${j.push.join('; ')}`);
+    if (j.pull.length) lines.push(`  Pull (toward us): ${j.pull.join('; ')}`);
+    if (j.habit.length) lines.push(`  Habit (inertia): ${j.habit.join('; ')}`);
+    if (j.anxiety.length) lines.push(`  Anxiety (switching fear): ${j.anxiety.join('; ')}`);
+  }
+  const cl = p.customerLanguage;
+  if (cl && (cl.problemPhrases.length || cl.solutionPhrases.length || cl.wordsToUse.length)) {
+    lines.push('CUSTOMER LANGUAGE (mirror these verbatim):');
+    if (cl.problemPhrases.length) lines.push(`  Problem (their words): ${cl.problemPhrases.join(' · ')}`);
+    if (cl.solutionPhrases.length) lines.push(`  Outcome (their words): ${cl.solutionPhrases.join(' · ')}`);
+    if (cl.wordsToUse.length) lines.push(`  Words to use: ${cl.wordsToUse.join(', ')}`);
+    if (cl.wordsToAvoid.length) lines.push(`  Words to avoid: ${cl.wordsToAvoid.join(', ')}`);
+    if (cl.glossary.length) lines.push(`  Glossary: ${cl.glossary.map((g) => `${g.term}=${g.definition}`).join(' · ')}`);
+  }
+  if (p.antiPersonas.length > 0) {
+    lines.push(`NOT A FIT (don't target): ${p.antiPersonas.map((a) => `${a.name} (${a.whyNotFit})`).join(' · ')}`);
+  }
+  if (p.objections.length > 0) {
+    lines.push('COMMON OBJECTIONS → RESPONSE:');
+    for (const o of p.objections) lines.push(`  - "${o.objection}" → ${o.response}`);
+  }
+
   lines.push('=== END BRAND IQ ===');
   return lines.join('\n');
 }

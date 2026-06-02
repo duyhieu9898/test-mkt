@@ -37,6 +37,20 @@ export function decryptSecret(payload: string): string {
   return dec.toString('utf8');
 }
 
+/**
+ * Decrypt a value that MAY be encrypted (`v1:` prefix) or legacy plaintext.
+ * Lets us migrate stored secrets to encryption without breaking old rows.
+ */
+export function decryptMaybe(value: string | null | undefined): string {
+  if (!value) return '';
+  if (!value.startsWith('v1:')) return value; // legacy plaintext
+  try {
+    return decryptSecret(value);
+  } catch {
+    return value;
+  }
+}
+
 /** Return a UI-safe preview ("ABC…XYZ") of an opaque secret. */
 export function maskSecret(plaintext: string): string {
   if (!plaintext) return '';

@@ -20,6 +20,7 @@ export interface EmployeeCard {
   avatarEmoji: string;
   accentColor: string;
   intro: string;
+  specialties?: string[];
   kpis: EmployeeKpi[];
 }
 

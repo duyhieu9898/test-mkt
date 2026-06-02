@@ -455,6 +455,20 @@ async function handleChat(
     content: message,
   });
 
+  // 2b. Brain Hub internal tap — every visitor message flows into the
+  // event stream so watchers (Phase B) can detect recurring questions.
+  // Fire-and-forget; never blocks the chatbot reply path.
+  void import('../services/brain-hub/event-service').then(({ ingestInternalTap }) =>
+    ingestInternalTap({
+      companyId,
+      subtype: 'chatbot_message',
+      type: 'message',
+      subject: `Chatbot · ${visitorName ?? visitorEmail ?? 'visitor'}`,
+      content: message,
+      payload: { conversationId, channel, visitorId, visitorEmail, visitorName },
+    }),
+  );
+
   // 3. Load business context filtered by chatbot access level.
   // Public widget → only 'public' knowledge (never leak internal data).
   // Logged-in dashboard → 'internal' (public + internal).

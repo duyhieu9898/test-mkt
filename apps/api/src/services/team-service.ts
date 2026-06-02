@@ -33,6 +33,7 @@ import {
 } from '@1person/core/db';
 import { llmGenerate } from '../lib/llm';
 import { buildBusinessContext } from './business-context';
+import { renderSkillKnowledgeBundle } from '@1person/core';
 import { semanticSearch } from './embedding-service';
 import { getActiveBrandIq, renderBrandIqContext } from './brand-iq-extractor';
 
@@ -151,6 +152,39 @@ export const DEFAULT_EMPLOYEES: PersonalityDef[] = [
     ],
   },
 ];
+
+/* ─── P3: per-employee expert skill bundles ──────────────────────── */
+
+/**
+ * Each employee carries a bundle of expert marketing frameworks (skill slugs
+ * in the @1person/core knowledge layer, adapted from coreyhaines31/marketingskills,
+ * MIT). The first 3 are injected into the employee's chat system prompt so replies
+ * follow a senior practitioner's playbook — not generic advice.
+ */
+export const EMPLOYEE_SKILLS: Record<string, string[]> = {
+  cleo: ['marketing-ideas', 'pricing', 'launch', 'marketing-psychology', 'revops'],
+  cassie: ['churn-prevention', 'onboarding', 'referrals'],
+  soshie: ['social', 'ad-creative', 'community-marketing'],
+  seomi: ['seo-audit', 'site-architecture', 'content-strategy', 'schema'],
+  geoffrey: ['ai-seo'],
+  penn: ['copywriting', 'copy-editing', 'emails', 'cold-email'],
+  vio: ['video', 'image'],
+};
+
+/** Human-readable specialty labels surfaced on the /team UI. */
+export const EMPLOYEE_SPECIALTIES: Record<string, string[]> = {
+  cleo: ['Strategy & ideas', 'Pricing', 'GTM launch', 'Marketing psychology', 'RevOps'],
+  cassie: ['Churn prevention', 'Onboarding', 'Referrals'],
+  soshie: ['Social', 'Ad creative', 'Community'],
+  seomi: ['SEO audit', 'Site architecture', 'Content strategy', 'Schema'],
+  geoffrey: ['AI search (GEO)'],
+  penn: ['Copywriting', 'Copy editing', 'Email & cold email'],
+  vio: ['Video', 'Image'],
+};
+
+export function getEmployeeSpecialties(slug: string): string[] {
+  return EMPLOYEE_SPECIALTIES[slug] ?? [];
+}
 
 /* ─── Seeding ────────────────────────────────────────────────────── */
 
@@ -326,6 +360,13 @@ export async function sendMessageToEmployee(
           .join('\n\n')
       : '(no relevant snippets found in company memory yet)';
 
+  // P3: inject the employee's full expert-playbook bundle (the same set shown as
+  // "specialties" on the /team UI). Per-skill cap keeps chat token cost bounded.
+  const skillBundle = EMPLOYEE_SKILLS[employee.slug] ?? [];
+  const expertiseBlock = skillBundle.length
+    ? renderSkillKnowledgeBundle(skillBundle, { maxCharsEach: 1800 })
+    : '';
+
   const systemPrompt = `${employee.personaPrompt}
 
 === COMPANY CONTEXT ===
@@ -334,8 +375,8 @@ ${businessBlock}
 ${brandBlock ? brandBlock + '\n\n' : ''}=== RELEVANT MEMORY (semantic search) ===
 ${ragBlock}
 
-=== INSTRUCTIONS ===
-You are ${employee.name}, ${employee.roleTitle}. Stay in this role. If the founder asks about something outside your speciality, briefly say which teammate is better suited and suggest they DM that teammate.`;
+${expertiseBlock ? `=== YOUR EXPERT PLAYBOOKS (apply these) ===\n${expertiseBlock}\n\n` : ''}=== INSTRUCTIONS ===
+You are ${employee.name}, ${employee.roleTitle}. Stay in this role and apply your expert playbooks above. If the founder asks about something outside your speciality, briefly say which teammate is better suited and suggest they DM that teammate.`;
 
   const messages = [
     { role: 'system' as const, content: systemPrompt },
