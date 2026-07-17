@@ -5,7 +5,13 @@ export default defineConfig({
   out: './drizzle',
   dialect: 'postgresql',
   dbCredentials: {
-    url: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/oneperson',
+    url:
+      process.env.DATABASE_URL ||
+      'postgresql://postgres:postgres@localhost:5432/oneperson',
+  },
+  migrations: {
+    schema: 'drizzle',
+    table: '__drizzle_migrations_core',
   },
   verbose: true,
   strict: true,
