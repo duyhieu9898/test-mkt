@@ -1,324 +1,412 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useParams } from 'next/navigation';
-import { cn } from '@/lib/utils';
+import { useParams, usePathname, useRouter } from 'next/navigation';
+import type { LucideIcon } from 'lucide-react';
 import {
-  LayoutDashboard,
-  FileText,
-  Megaphone,
   BarChart3,
-  Settings,
-  Sparkles,
-  Building2,
-  Rocket,
-  ChevronRight,
   BookOpen,
-  MessageSquare,
-  Mic,
-  Users,
   Brain,
-  Image,
-  Shield,
-  Search,
-  Menu,
-  X,
-  Wallet,
-  Globe,
   Briefcase,
-  Share2,
-  Flame,
-  Lock,
-  FileEdit,
-  Inbox,
-  Link2,
+  Building2,
+  ChevronRight,
   Compass,
+  Database,
+  FileEdit,
+  FileText,
+  Flame,
+  Globe,
+  Image,
+  Inbox,
+  LayoutDashboard,
+  Link2,
+  Lock,
+  Megaphone,
+  Menu,
+  MessageSquare,
+  Palette,
+  Rocket,
+  Search,
+  Settings,
+  Share2,
+  Shield,
+  Sparkles,
+  Star,
+  Users,
+  Wallet,
+  X,
 } from 'lucide-react';
-import { useCompanies, useStreak, useGrowthScore } from '@/lib/api/hooks';
+import { cn } from '@/lib/utils';
+import { useCompanies, useGrowthScore, useStreak } from '@/lib/api/hooks';
 
-// Venture-CEO IA — see docs/architecture/10-venture-ceo-ia.md §3.
-// 8-item core rail mapped 1:1 to the CEO needs. Marketing / SEO /
-// Leads are folded into Campaigns / Sales / Knowledge respectively,
-// power-user deep pages still live under More.
-//
-// Progressive unlock: items with `unlockLevel` require that Growth Score
-// level before they become fully clickable. Lower levels show the item
-// grayed out with a lock tooltip.
-// TESTING: unlock every nav item regardless of Growth Score level so the founder
-// can test the full feature set in one pass. Flip to `false` to restore the
-// gamified progressive unlock (the per-item `unlockLevel` values below stay intact).
 const TESTING_UNLOCK_ALL = true;
 
-const navigation = [
-  { name: 'Dashboard', href: '', icon: LayoutDashboard, unlockLevel: 1 },
-  { name: 'Walkthrough', href: '/walkthrough', icon: Compass, unlockLevel: 1 },
-  { name: 'CEO Advisor', href: '/insights', icon: Sparkles, unlockLevel: 1 },
-  { name: 'Knowledge', href: '/knowledge', icon: BookOpen, unlockLevel: 1 },
-  { name: 'Brand IQ', href: '/brand-iq', icon: Sparkles, unlockLevel: 1 },
-  { name: 'Your AI Team', href: '/team', icon: Users, unlockLevel: 1 },
-  { name: 'Marketing Playbooks', href: '/playbooks', icon: BookOpen, unlockLevel: 1 },
-  { name: 'Campaigns', href: '/campaigns', icon: Rocket, unlockLevel: 2 },
-  { name: 'Campaign Launcher', href: '/launch', icon: Rocket, unlockLevel: 2 },
-  { name: 'Content Autopilot', href: '/autopilot', icon: Rocket, unlockLevel: 2 },
-  { name: 'Market & Competitors', href: '/market', icon: Globe, unlockLevel: 2 },
-  { name: 'AI Visibility (GEO)', href: '/geo', icon: Search, unlockLevel: 2 },
-  { name: 'Content Editor', href: '/editor', icon: FileEdit, unlockLevel: 2 },
-  { name: 'Analytics', href: '/analytics', icon: BarChart3, unlockLevel: 1 },
-  { name: 'Brain', href: '/brain', icon: Brain, unlockLevel: 2 },
-  { name: 'Brain Hub', href: '/brain-hub', icon: Brain, unlockLevel: 1 },
-  { name: 'Sales', href: '/sales', icon: Briefcase, unlockLevel: 3 },
-  { name: 'Chatbot', href: '/chatbot', icon: MessageSquare, unlockLevel: 2 },
-  { name: 'Channels', href: '/channels', icon: Link2, unlockLevel: 2 },
-  { name: 'Inbox · Messages', href: '/inbox/messages', icon: Inbox, unlockLevel: 2 },
-  { name: 'Social Media', href: '/social', icon: Share2, unlockLevel: 3 },
-];
+interface NavigationItem {
+  name: string;
+  href: string;
+  icon: LucideIcon;
+  unlockLevel?: number;
+  global?: boolean;
+  exact?: boolean;
+  tourId?: string;
+}
 
-// Power-user surfaces — collapsed under "More". Deep pages still
-// reachable by URL for migration safety.
-const moreNavigation = [
-  { name: 'Trust', href: '/ai-brain', icon: Shield },
-  { name: 'Credits & Billing', href: '/settings/credits', icon: Wallet },
-  { name: 'Settings', href: '/settings', icon: Settings },
-  { name: 'Landing Pages', href: '/landing-pages', icon: FileText },
-  { name: 'Assets', href: '/assets', icon: Image },
+interface NavigationGroup {
+  title: string;
+  items: NavigationItem[];
+  containerClass: string;
+  titleClass: string;
+  activeClass: string;
+}
+
+const navigationGroups: NavigationGroup[] = [
+  {
+    title: 'Business Strategy',
+    containerClass: 'bg-violet-50/70',
+    titleClass: 'text-violet-700',
+    activeClass: 'bg-violet-600 text-white shadow-sm',
+    items: [
+      { name: 'Growth Plan', href: '/growth-plan', icon: Star, unlockLevel: 1 },
+      { name: 'Brand IQ', href: '/brand-iq', icon: Palette, unlockLevel: 1 },
+      { name: 'CEO Advisor', href: '/insights', icon: Sparkles, unlockLevel: 1, tourId: 'ceo-advisor-menu' },
+      { name: 'Walkthrough', href: '/walkthrough', icon: Compass, unlockLevel: 1, tourId: 'walkthrough-menu' },
+    ],
+  },
+  {
+    title: 'AI Team',
+    containerClass: 'bg-blue-50/70',
+    titleClass: 'text-blue-700',
+    activeClass: 'bg-blue-600 text-white shadow-sm',
+    items: [
+      { name: 'Your AI Team', href: '/team', icon: Users, unlockLevel: 1 },
+      { name: 'Knowledge Hub', href: '/knowledge', icon: BookOpen, unlockLevel: 1, tourId: 'knowledge-menu' },
+      { name: 'Brain Hub', href: '/brain-hub', icon: Database, unlockLevel: 1, tourId: 'brain-hub-menu' },
+    ],
+  },
+  {
+    title: 'Execution',
+    containerClass: 'bg-emerald-50/60',
+    titleClass: 'text-emerald-700',
+    activeClass: 'bg-emerald-600 text-white shadow-sm',
+    items: [
+      { name: 'Campaigns', href: '/campaigns', icon: Megaphone, unlockLevel: 2 },
+      { name: 'Campaign Launcher', href: '/launch', icon: Rocket, unlockLevel: 2, tourId: 'campaign-launcher-menu' },
+      { name: 'Landing Pages', href: '/landing-pages', icon: FileText, unlockLevel: 2, tourId: 'landing-pages-menu' },
+      { name: 'Content Autopilot', href: '/autopilot', icon: Sparkles, unlockLevel: 2 },
+      { name: 'Content Editor', href: '/editor', icon: FileEdit, unlockLevel: 2 },
+      { name: 'AI Visibility (GEO)', href: '/geo', icon: Search, unlockLevel: 2 },
+      { name: 'Market & Competitors', href: '/market', icon: Globe, unlockLevel: 2, tourId: 'market-menu' },
+      { name: 'Marketing Playbooks', href: '/playbooks', icon: BookOpen, unlockLevel: 1 },
+      { name: 'Sales', href: '/sales', icon: Briefcase, unlockLevel: 3 },
+      { name: 'Social Media', href: '/social', icon: Share2, unlockLevel: 3 },
+      { name: 'Channels', href: '/channels', icon: Link2, unlockLevel: 2 },
+      { name: 'Inbox & Messages', href: '/inbox/messages', icon: Inbox, unlockLevel: 2 },
+      { name: 'Chatbot', href: '/chatbot', icon: MessageSquare, unlockLevel: 2 },
+      { name: 'Assets', href: '/assets', icon: Image, unlockLevel: 1 },
+    ],
+  },
+  {
+    title: 'Analytics',
+    containerClass: 'bg-amber-50/70',
+    titleClass: 'text-amber-700',
+    activeClass: 'bg-amber-600 text-white shadow-sm',
+    items: [
+      { name: 'Analytics', href: '/analytics', icon: BarChart3, unlockLevel: 1, tourId: 'analytics-menu' },
+    ],
+  },
+  {
+    title: 'System',
+    containerClass: 'bg-slate-100/70',
+    titleClass: 'text-slate-600',
+    activeClass: 'bg-slate-700 text-white shadow-sm',
+    items: [
+      { name: 'Brain', href: '/brain', icon: Brain, unlockLevel: 2 },
+      { name: 'Trust', href: '/ai-brain', icon: Shield, unlockLevel: 1 },
+      { name: 'Credits & Billing', href: '/settings/credits', icon: Wallet, unlockLevel: 1 },
+      { name: 'Settings', href: '/settings', icon: Settings, unlockLevel: 1, exact: true },
+      { name: 'Admin', href: '/admin', icon: Shield, global: true, unlockLevel: 1 },
+    ],
+  },
 ];
 
 export function Sidebar() {
+  const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
   const companyIdFromParams = params.companyId as string | undefined;
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Close drawer on route change
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
 
-  // Lock body scroll while drawer is open
   useEffect(() => {
-    if (mobileOpen) {
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = '';
-      };
-    }
+    if (!mobileOpen) return;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
   }, [mobileOpen]);
+
+  useEffect(() => {
+    const openForTour = () => setMobileOpen(true);
+    const closeForTour = () => setMobileOpen(false);
+    window.addEventListener('guided-tour:open-sidebar', openForTour);
+    window.addEventListener('guided-tour:close-sidebar', closeForTour);
+    return () => {
+      window.removeEventListener('guided-tour:open-sidebar', openForTour);
+      window.removeEventListener('guided-tour:close-sidebar', closeForTour);
+    };
+  }, []);
 
   const { data: companies } = useCompanies();
   const firstCompanyId = companies?.[0]?.id;
   const companyId = companyIdFromParams || firstCompanyId;
-  const hasCompany = !!companyId;
-
-  const currentCompany = companies?.find((c) => c.id === companyId);
+  const hasCompany = Boolean(companyId);
+  const currentCompany = companies?.find((company) => company.id === companyId);
   const companyName = currentCompany?.name || companies?.[0]?.name || 'My Business';
 
-  // Gamification data for streak badge + progressive unlock
   const { data: streakData } = useStreak(companyId ?? '');
   const { data: growthScoreData } = useGrowthScore(companyId ?? '');
   const currentLevel = growthScoreData?.level ?? 1;
   const streakDays = streakData?.currentStreak ?? 0;
 
-  const isActive = (href: string) => {
-    if (!companyId) return false;
-    if (href === '') return pathname === `/${companyId}`;
-    return pathname.startsWith(`/${companyId}${href}`);
+  const itemHref = (item: NavigationItem) => {
+    if (item.global) return item.href;
+    return hasCompany ? `/${companyId}${item.href}` : '#';
+  };
+
+  const prefetchHref = useCallback((href: string) => {
+    if (!href || href === '#' || href === pathname) return;
+    router.prefetch(href);
+  }, [pathname, router]);
+
+  const priorityPrefetchHrefs = useMemo(() => {
+    if (!hasCompany || !companyId) return ['/companies'];
+    const highTrafficPaths = [
+      '',
+      '/growth-plan',
+      '/brand-iq',
+      '/insights',
+      '/walkthrough',
+      '/team',
+      '/knowledge',
+      '/brain-hub',
+      '/campaigns',
+      '/launch',
+      '/landing-pages',
+      '/market',
+      '/analytics',
+      '/settings',
+    ];
+    return [
+      '/companies',
+      ...highTrafficPaths.map((path) => `/${companyId}${path}`),
+    ];
+  }, [companyId, hasCompany]);
+
+  useEffect(() => {
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    const uniqueHrefs = Array.from(new Set(priorityPrefetchHrefs))
+      .filter((href) => href && href !== pathname);
+
+    uniqueHrefs.forEach((href, index) => {
+      timers.push(setTimeout(() => {
+        router.prefetch(href);
+      }, 450 + index * 180));
+    });
+
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+    };
+  }, [pathname, priorityPrefetchHrefs, router]);
+
+  const isItemActive = (item: NavigationItem) => {
+    const href = itemHref(item);
+    if (href === '#') return false;
+    if (item.exact) return pathname === href;
+    return pathname === href || pathname.startsWith(`${href}/`);
+  };
+
+  const renderItem = (item: NavigationItem, group: NavigationGroup) => {
+    const href = itemHref(item);
+    const active = isItemActive(item);
+    const locked = !TESTING_UNLOCK_ALL
+      && hasCompany
+      && (item.unlockLevel ?? 1) > currentLevel;
+    const disabled = !item.global && !hasCompany;
+
+    if (locked || disabled) {
+      return (
+        <span
+          key={item.name}
+          className="flex h-9 cursor-not-allowed items-center gap-2.5 rounded-lg px-2.5 text-sm text-slate-400"
+          title={locked ? `Unlocks at Level ${item.unlockLevel}` : 'Create a company first'}
+        >
+          <item.icon className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{item.name}</span>
+          {locked && <Lock className="h-3 w-3" />}
+        </span>
+      );
+    }
+
+    return (
+      <Link
+        key={item.name}
+        href={href}
+        data-guided-tour={item.tourId}
+        prefetch
+        onMouseEnter={() => prefetchHref(href)}
+        onFocus={() => prefetchHref(href)}
+        className={cn(
+          'flex min-h-9 items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors',
+          active
+            ? group.activeClass
+            : 'text-slate-600 hover:bg-white/80 hover:text-slate-950',
+        )}
+      >
+        <item.icon className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{item.name}</span>
+      </Link>
+    );
   };
 
   const sidebarInner = (
     <div className="flex h-full flex-col">
-        {/* Logo */}
-        <div className="flex h-14 items-center gap-2 border-b px-5">
-          <Link href={hasCompany ? `/${companyId}` : '/companies'} className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-purple-500 flex items-center justify-center">
-              <Rocket className="w-4 h-4 text-white" />
-            </div>
-            <span className="text-lg font-bold">1Person</span>
-          </Link>
-        </div>
-
-        {/* Company */}
-        <div className="p-3 border-b">
-          <Link href="/companies">
-            <div className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-muted transition-colors cursor-pointer group">
-              <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Building2 className="w-4 h-4 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm truncate">{companyName}</p>
-                <p className="text-xs text-muted-foreground">Active</p>
-              </div>
-              <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-          </Link>
-        </div>
-
-        {/* Navigation — core surfaces + "More" for power users */}
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {navigation.map((item) => {
-            const href = hasCompany ? `/${companyId}${item.href}` : '#';
-            const active = isActive(item.href);
-            const locked = !TESTING_UNLOCK_ALL && hasCompany && item.unlockLevel > currentLevel;
-
-            if (!hasCompany) {
-              return (
-                <span
-                  key={item.name}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-muted-foreground/40 cursor-not-allowed"
-                >
-                  <item.icon className="w-5 h-5" />
-                  <span>{item.name}</span>
-                </span>
-              );
-            }
-
-            // Locked items — visible but grayed out with lock icon
-            if (locked) {
-              return (
-                <span
-                  key={item.name}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-muted-foreground/40 cursor-not-allowed"
-                  title={`Unlocks at Level ${item.unlockLevel}`}
-                >
-                  <item.icon className="w-5 h-5" />
-                  <span className="flex-1">{item.name}</span>
-                  <Lock className="w-3 h-3" />
-                </span>
-              );
-            }
-
-            const isDashboard = item.href === '';
-
-            return (
-              <Link
-                key={item.name}
-                href={href}
-                className={cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
-                  active
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                )}
-              >
-                <item.icon className="w-5 h-5" />
-                <span className="flex-1">{item.name}</span>
-                {/* Streak badge on Dashboard */}
-                {isDashboard && streakDays > 0 && (
-                  <span className={cn(
-                    'flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full',
-                    active
-                      ? 'bg-white/20 text-white'
-                      : 'bg-orange-100 text-orange-600'
-                  )}>
-                    <Flame className="w-2.5 h-2.5" />
-                    {streakDays}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
-
-          {hasCompany && (
-            <details className="pt-3 group">
-              <summary className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-semibold text-muted-foreground/70 uppercase tracking-wider cursor-pointer hover:text-foreground">
-                <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
-                More
-              </summary>
-              <div className="mt-1 space-y-1">
-                {moreNavigation.map((item) => {
-                  const href = `/${companyId}${item.href}`;
-                  const active = isActive(item.href);
-                  return (
-                    <Link
-                      key={item.name}
-                      href={href}
-                      className={cn(
-                        'flex items-center gap-3 px-3 py-2 rounded-lg text-xs transition-all',
-                        active
-                          ? 'bg-primary/10 text-primary font-medium'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                      )}
-                    >
-                      <item.icon className="w-4 h-4" />
-                      <span>{item.name}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            </details>
-          )}
-        </nav>
-
-        {/* Admin Link */}
-        <div className="px-3 pb-1">
-          <Link
-            href="/admin"
-            className={cn(
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
-              pathname === '/admin'
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-            )}
-          >
-            <Shield className="w-5 h-5" />
-            <span>Admin</span>
-          </Link>
-        </div>
-
-        {/* Bottom CTA */}
-        <div className="p-3 border-t">
-          {hasCompany ? (
-            <Link href={`/${companyId}/landing-pages?action=generate`}>
-              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-gradient-to-r from-primary/10 to-purple-500/10 hover:from-primary/20 hover:to-purple-500/20 transition-colors cursor-pointer">
-                <Sparkles className="w-4 h-4 text-primary" />
-                <span className="text-sm font-medium text-primary">Create New Page</span>
-              </div>
-            </Link>
-          ) : (
-            <Link href="/welcome">
-              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-primary text-primary-foreground cursor-pointer">
-                <Rocket className="w-4 h-4" />
-                <span className="text-sm font-medium">Get Started</span>
-              </div>
-            </Link>
-          )}
-        </div>
+      <div className="flex h-14 items-center gap-2 border-b px-4">
+        <Link
+          href={hasCompany ? `/${companyId}` : '/companies'}
+          prefetch
+          onMouseEnter={() => prefetchHref(hasCompany ? `/${companyId}` : '/companies')}
+          onFocus={() => prefetchHref(hasCompany ? `/${companyId}` : '/companies')}
+          className="flex items-center gap-2"
+        >
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-purple-500">
+            <Rocket className="h-4 w-4 text-white" />
+          </div>
+          <span className="text-lg font-bold">1Person</span>
+        </Link>
       </div>
+
+      <div className="border-b p-3">
+        <Link
+          href="/companies"
+          prefetch
+          onMouseEnter={() => prefetchHref('/companies')}
+          onFocus={() => prefetchHref('/companies')}
+          className="group flex items-center gap-3 rounded-lg p-2 hover:bg-slate-50"
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-50">
+            <Building2 className="h-4 w-4 text-violet-600" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{companyName}</p>
+            <p className="text-xs font-medium text-emerald-600">Active</p>
+          </div>
+          <ChevronRight className="h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5" />
+        </Link>
+      </div>
+
+      <nav className="flex-1 space-y-3 overflow-y-auto p-3">
+        <Link
+          href={hasCompany ? `/${companyId}` : '#'}
+          data-guided-tour="dashboard-menu"
+          prefetch
+          onMouseEnter={() => hasCompany && companyId && prefetchHref(`/${companyId}`)}
+          onFocus={() => hasCompany && companyId && prefetchHref(`/${companyId}`)}
+          className={cn(
+            'flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-semibold transition-all',
+            hasCompany
+              ? pathname === `/${companyId}`
+                ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-sm'
+                : 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+              : 'cursor-not-allowed bg-slate-50 text-slate-400',
+          )}
+        >
+          <LayoutDashboard className="h-5 w-5" />
+          <span className="flex-1">Dashboard</span>
+          {streakDays > 0 && (
+            <span className={cn(
+              'flex items-center gap-0.5 px-1.5 py-0.5 text-[10px]',
+              pathname === `/${companyId}` ? 'bg-white/20 text-white' : 'bg-orange-100 text-orange-600',
+            )}>
+              <Flame className="h-2.5 w-2.5" />
+              {streakDays}
+            </span>
+          )}
+        </Link>
+
+        {navigationGroups.map((group) => (
+          <section key={group.title} className={cn('rounded-xl p-2', group.containerClass)}>
+            <h2 className={cn('px-2 pb-1.5 pt-1 text-[10px] font-bold uppercase', group.titleClass)}>
+              {group.title}
+            </h2>
+            <div className="space-y-0.5">
+              {group.items.map((item) => renderItem(item, group))}
+            </div>
+          </section>
+        ))}
+      </nav>
+
+      <div className="border-t p-3">
+        {hasCompany ? (
+          <Link
+            href={`/${companyId}/landing-pages?action=generate`}
+            prefetch
+            onMouseEnter={() => prefetchHref(`/${companyId}/landing-pages?action=generate`)}
+            onFocus={() => prefetchHref(`/${companyId}/landing-pages?action=generate`)}
+            className="flex min-h-10 items-center gap-2 rounded-lg bg-violet-50 px-3 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-100"
+          >
+            <Sparkles className="h-4 w-4" />
+            Create New Page
+          </Link>
+        ) : (
+          <Link
+            href="/welcome"
+            prefetch
+            onMouseEnter={() => prefetchHref('/welcome')}
+            onFocus={() => prefetchHref('/welcome')}
+            className="flex min-h-10 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground"
+          >
+            <Rocket className="h-4 w-4" />
+            Get Started
+          </Link>
+        )}
+      </div>
+    </div>
   );
 
   return (
     <>
-      {/* Mobile hamburger — only on < lg */}
       <button
         type="button"
         aria-label="Open menu"
         onClick={() => setMobileOpen(true)}
-        className="fixed top-3 left-3 z-40 lg:hidden h-11 w-11 inline-flex items-center justify-center rounded-lg bg-card border shadow-sm hover:bg-muted transition-colors"
+        className="fixed left-3 top-3 z-40 inline-flex h-11 w-11 items-center justify-center rounded-lg bg-card shadow-sm transition-colors hover:bg-muted lg:hidden"
       >
-        <Menu className="w-5 h-5" />
+        <Menu className="h-5 w-5" />
       </button>
 
-      {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-50 hidden w-64 border-r bg-card lg:block">
+      <aside className="fixed inset-y-0 left-0 z-50 hidden w-64 border-r bg-white lg:block">
         {sidebarInner}
       </aside>
 
-      {/* Mobile drawer */}
       {mobileOpen && (
-        <div className="lg:hidden fixed inset-0 z-[60]">
+        <div className="fixed inset-0 z-[60] lg:hidden">
           <div
             className="absolute inset-0 bg-slate-900/50"
             onClick={() => setMobileOpen(false)}
             aria-hidden="true"
           />
-          <aside className="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r bg-card shadow-xl animate-in slide-in-from-left duration-200">
+          <aside className="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r bg-white shadow-xl animate-in slide-in-from-left duration-200">
             <button
               type="button"
               aria-label="Close menu"
               onClick={() => setMobileOpen(false)}
-              className="absolute top-3 right-3 h-9 w-9 inline-flex items-center justify-center rounded-lg hover:bg-muted"
+              className="absolute right-3 top-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-slate-100"
             >
-              <X className="w-5 h-5" />
+              <X className="h-5 w-5" />
             </button>
             {sidebarInner}
           </aside>

@@ -1,10 +1,10 @@
 /**
  * Brand IQ routes — Block 2.
  *
- * Founder owns one active profile per company. Generate it from URL +
- * samples, then refine each facet (voice / personas / style / visual /
- * OKRs) by hand. The active profile is auto-injected into every
- * agent's business context.
+ * Founder owns one active profile per company. The first Brand IQ visit
+ * generates it from existing company intelligence; optional URL/context
+ * can refine later versions. The active profile is auto-injected into
+ * every agent's business context.
  */
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
@@ -15,22 +15,24 @@ import { companies } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import {
-  generateBrandIq,
   getActiveBrandIq,
   updateBrandIqFacet,
 } from '../services/brand-iq-extractor';
+import { generateGroundedBrandIq } from '../services/grounded-brand-iq';
 
 const brandIqRouter = new Hono();
+const autoGenerationByCompany = new Map<string, Promise<Awaited<ReturnType<typeof generateGroundedBrandIq>>>>();
 
 brandIqRouter.use('*', authMiddleware);
 
 async function verifyOwnership(companyId: string, userId: string) {
   const company = await db.query.companies.findFirst({
     where: eq(companies.id, companyId),
-    columns: { id: true, ownerId: true },
+    columns: { id: true, ownerId: true, name: true },
   });
   if (!company) throw new HTTPException(404, { message: 'Company not found' });
   if (company.ownerId !== userId) throw new HTTPException(403, { message: 'Access denied' });
+  return company;
 }
 
 /* ─── Read ───────────────────────────────────────────────────────── */
@@ -41,6 +43,30 @@ brandIqRouter.get('/:companyId/active', async (c) => {
   await verifyOwnership(companyId, userId);
   const profile = await getActiveBrandIq(companyId);
   return c.json({ data: profile });
+});
+
+brandIqRouter.post('/:companyId/auto-generate', async (c) => {
+  const { userId } = c.get('user');
+  const companyId = c.req.param('companyId');
+  const company = await verifyOwnership(companyId, userId);
+  const existing = await getActiveBrandIq(companyId);
+  if (existing) return c.json({ data: existing, created: false });
+
+  let generation = autoGenerationByCompany.get(companyId);
+  if (!generation) {
+    generation = generateGroundedBrandIq(companyId, company.name, {});
+    autoGenerationByCompany.set(companyId, generation);
+  }
+  try {
+    const profile = await generation;
+    return c.json({ data: profile, created: true });
+  } catch (e) {
+    throw new HTTPException(400, { message: (e as Error).message });
+  } finally {
+    if (autoGenerationByCompany.get(companyId) === generation) {
+      autoGenerationByCompany.delete(companyId);
+    }
+  }
 });
 
 /* ─── Generate / regenerate ──────────────────────────────────────── */
@@ -57,10 +83,10 @@ brandIqRouter.post(
   async (c) => {
     const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
-    await verifyOwnership(companyId, userId);
+    const company = await verifyOwnership(companyId, userId);
     const body = c.req.valid('json');
     try {
-      const profile = await generateBrandIq(companyId, body);
+      const profile = await generateGroundedBrandIq(companyId, company.name, body);
       return c.json({ data: profile });
     } catch (e) {
       throw new HTTPException(400, { message: (e as Error).message });

@@ -6,7 +6,7 @@ by Corey Haines, used under the **MIT License** (see `LICENSE` in this folder).
 
 ## What we vendored
 
-- 41 `SKILL.md` framework files (the lean playbooks). We did **not** vendor the
+- 45 `SKILL.md` framework files (the lean playbooks). We did **not** vendor the
   `references/` deep-dive subfolders or the `evals/` — those can be pulled
   per-skill when a feature needs them (see the integration tracker).
 - We kept the content in **English** (founder decision 2026-05-24): this is the

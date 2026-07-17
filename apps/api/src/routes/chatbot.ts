@@ -5,6 +5,7 @@
  */
 
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and, desc, sql } from 'drizzle-orm';
@@ -13,15 +14,181 @@ import {
   chatConversations,
   chatMessages,
   chatbotConfig,
-  knowledgeBase,
   leads,
   companies,
+  landingPages,
+  landingPageSections,
 } from '@1person/core/db';
+import { renderSkillKnowledgeBundle } from '@1person/core';
 import { authMiddleware } from '../middleware/auth';
 import { llmGenerate } from '../lib/llm';
 import { buildBusinessContext } from '../services/business-context';
 
 const chatbotRouter = new Hono();
+
+const ONEPERSON_PLATFORM_CONTEXT = `
+1PERSON PLATFORM KNOWLEDGE:
+- 1Person is an AI-powered marketing automation platform for non-technical business owners and founders.
+- Core promise: build a living Business Brain for each company, then use it to plan, create, publish, track, and learn from marketing work.
+- Important areas: Dashboard, Growth Plan, Brand IQ, CEO Advisor, Your AI Team, Knowledge Hub, Brain Hub, Campaigns, Campaign Launcher, Landing Pages, Market & Competitors, AI Visibility/SEO, Analytics, Reports, Channels, Inbox, and Website Chatbox.
+- Knowledge Hub/Brain Hub store company knowledge, uploaded files, website information, customer questions, campaign/blog learnings, and other business signals.
+- Brand IQ stores brand voice, positioning, target audience, messaging rules, visual style, and customer language.
+- CEO Advisor reads company knowledge, Brand IQ, market/competitor signals, campaigns, blogs, customers, and performance data to recommend next actions.
+- Campaigns turn strategy into execution: plan the campaign, generate banners/social/blog/landing assets, review, launch, track performance, and learn.
+- Landing Pages creates pages that can be hosted publicly or published to a connected WordPress site. Published 1Person landing pages can include this chatbox automatically.
+- Market & Competitors helps identify competitors and market signals so strategy and CEO Advisor recommendations become more competitive.
+- Website Chatbox is the visitor-facing AI assistant. It can answer using the current landing page, public company knowledge, and safe general marketing guidance.
+`.trim();
+
+const MARKETING_QUESTION_PATTERN =
+  /\b(marketing|campaign|seo|content|blog|social|facebook|instagram|linkedin|ads?|landing page|conversion|cro|brand|positioning|audience|persona|lead|funnel|competitor|market|growth|strategy|copy|headline|cta|offer|pricing|analytics|roi|tiep thi|marketing|chien dich|quang cao|bai viet|mang xa hoi|doi thu|thi truong|thuong hieu|khach hang|doanh thu|tang truong)\b/i;
+
+const ONEPERSON_QUESTION_PATTERN =
+  /\b(1person|oneperson|this system|the system|platform|dashboard|brand iq|ceo advisor|growth plan|knowledge hub|brain hub|campaign launcher|landing pages?|market & competitors|website widget|chatbox|he thong|nen tang|bang dieu khien|tri tue thuong hieu|co van ceo|ke hoach tang truong)\b/i;
+
+const chatbotConfigUpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  greeting: z.string().min(1).optional(),
+  tone: z.enum(['professional', 'friendly', 'bold']).optional(),
+  mode: z.enum(['sales', 'support', 'both']).optional(),
+  primaryColor: z.string().optional(),
+  isActive: z.boolean().optional(),
+  accessLevel: z.enum(['public', 'internal', 'admin']).optional(),
+  embedEnabled: z.boolean().optional(),
+  embedAllowedDomains: z.array(z.string()).optional(),
+  logoUrl: z.string().url().max(1000).optional().nullable(),
+  avatarUrl: z.string().url().max(1000).optional().nullable(),
+  poweredByVisible: z.boolean().optional(),
+});
+
+function normalizeIntentText(message: string): string {
+  return message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function isMarketingQuestion(message: string): boolean {
+  return MARKETING_QUESTION_PATTERN.test(normalizeIntentText(message));
+}
+
+function isOnePersonQuestion(message: string): boolean {
+  return ONEPERSON_QUESTION_PATTERN.test(normalizeIntentText(message));
+}
+
+function buildMarketingAdvisorContext(message: string): string {
+  if (!isMarketingQuestion(message)) return '';
+
+  // Keep this bounded: chatbot answers need practical guidance, not the full
+  // Marketing Playbooks Studio. The selected frameworks cover most visitor
+  // questions about strategy, offers, pages, social, SEO, and measurement.
+  const framework = renderSkillKnowledgeBundle(
+    ['marketing-plan', 'product-marketing', 'offers', 'cro', 'social', 'ai-seo', 'analytics'],
+    { maxCharsEach: 900 },
+  );
+
+  return [
+    'MARKETING ADVISORY KNOWLEDGE:',
+    'Use this only for general marketing advice or when the visitor asks for recommendations. Do not invent company-specific facts.',
+    framework,
+  ].filter(Boolean).join('\n\n');
+}
+
+function stringifyLandingValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(stringifyLandingValue).filter(Boolean).join('; ');
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !/image|icon|color|style/i.test(key))
+      .map(([key, entry]) => {
+        const text = stringifyLandingValue(entry);
+        return text ? `${key}: ${text}` : '';
+      })
+      .filter(Boolean)
+      .join('; ');
+  }
+  return '';
+}
+
+async function buildLandingPageContext(companyId: string, pageId?: string | null): Promise<string> {
+  if (!pageId) return '';
+  const page = await db.query.landingPages.findFirst({
+    where: and(eq(landingPages.id, pageId), eq(landingPages.companyId, companyId)),
+  });
+  if (!page) return '';
+
+  const sections = await db
+    .select({
+      type: landingPageSections.type,
+      name: landingPageSections.name,
+      order: landingPageSections.order,
+      content: landingPageSections.content,
+    })
+    .from(landingPageSections)
+    .where(and(
+      eq(landingPageSections.pageId, pageId),
+      eq(landingPageSections.isVisible, 1),
+    ))
+    .orderBy(landingPageSections.order);
+
+  const sectionText = sections
+    .map((section) => {
+      const text = stringifyLandingValue(section.content).slice(0, 900);
+      return text ? `- ${section.name || section.type}: ${text}` : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  return [
+    'CURRENT PUBLISHED LANDING PAGE CONTEXT:',
+    `Page name: ${page.name}`,
+    page.description ? `Description: ${page.description}` : '',
+    page.originalPrompt ? `Original request: ${page.originalPrompt}` : '',
+    page.businessContext ? `Business context: ${JSON.stringify(page.businessContext).slice(0, 1200)}` : '',
+    sectionText ? `Visible page sections:\n${sectionText}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+type BrowserPageContext = {
+  url?: string | null;
+  title?: string | null;
+  description?: string | null;
+  headings?: string[] | null;
+  text?: string | null;
+};
+
+function cleanPromptText(value: unknown, maxChars: number): string {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxChars);
+}
+
+function buildBrowserPageContext(pageContext?: BrowserPageContext | null): string {
+  if (!pageContext) return '';
+  const headings = Array.isArray(pageContext.headings)
+    ? pageContext.headings.map((heading) => cleanPromptText(heading, 180)).filter(Boolean).slice(0, 12)
+    : [];
+  const pageText = cleanPromptText(pageContext.text, 2600);
+  if (!pageText && !pageContext.title && !pageContext.description && headings.length === 0) return '';
+
+  return [
+    'CURRENT BROWSER PAGE SNAPSHOT:',
+    pageContext.url ? `URL: ${cleanPromptText(pageContext.url, 500)}` : '',
+    pageContext.title ? `Title: ${cleanPromptText(pageContext.title, 200)}` : '',
+    pageContext.description ? `Meta description: ${cleanPromptText(pageContext.description, 400)}` : '',
+    headings.length ? `Headings: ${headings.join(' | ')}` : '',
+    pageText ? `Visible page text excerpt: ${pageText}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+// Website widgets run on customer domains, so these public endpoints need
+// explicit cross-origin access. Authenticated chatbot routes keep global CORS.
+chatbotRouter.use('/widget/*', cors({
+  origin: '*',
+  allowMethods: ['GET', 'POST', 'OPTIONS'],
+  allowHeaders: ['Content-Type'],
+  maxAge: 86400,
+}));
 
 // Simple in-memory rate limiter for public widget
 const chatRateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -38,6 +205,68 @@ function rateLimit(ip: string, maxRequests: number, windowMs: number): boolean {
   if (entry.count >= maxRequests) return false;
   entry.count++;
   return true;
+}
+
+function normalizeWidgetDomain(value: string): string {
+  const cleaned = value.trim().toLowerCase();
+  if (!cleaned) return '';
+
+  try {
+    const parsed = new URL(cleaned.includes('://') ? cleaned : `https://${cleaned}`);
+    return parsed.host.replace(/\.$/, '');
+  } catch {
+    return cleaned
+      .replace(/^https?:\/\//, '')
+      .replace(/^\/\//, '')
+      .split(/[/?#]/)[0]!
+      .replace(/\.$/, '');
+  }
+}
+
+function hostnameOnly(host: string): string {
+  try {
+    return new URL(`https://${host}`).hostname.replace(/^www\./, '');
+  } catch {
+    return host.split(':')[0]!.replace(/^www\./, '');
+  }
+}
+
+function widgetHostMatches(sourceHost: string, allowedDomain: string): boolean {
+  if (!sourceHost || !allowedDomain) return false;
+  if (sourceHost === allowedDomain) return true;
+
+  const sourceHostname = hostnameOnly(sourceHost);
+  const allowedHostname = hostnameOnly(allowedDomain);
+  if (allowedDomain.startsWith('*.')) {
+    const base = allowedHostname.replace(/^\*\./, '');
+    return sourceHostname !== base && sourceHostname.endsWith(`.${base}`);
+  }
+
+  // Be forgiving for non-technical users: adding example.com also permits
+  // www.example.com, while app.example.com still requires its own entry or *.
+  return sourceHostname === allowedHostname;
+}
+
+function getWidgetRequestHost(origin?: string | null, referer?: string | null): string {
+  return normalizeWidgetDomain(origin || referer || '');
+}
+
+function getWidgetDomainBlockReason(config: typeof chatbotConfig.$inferSelect, sourceHost: string): string | null {
+  const allowedDomains = Array.isArray(config.embedAllowedDomains)
+    ? config.embedAllowedDomains.map((domain) => normalizeWidgetDomain(String(domain))).filter(Boolean)
+    : [];
+
+  // Backward-compatible: if the user has not configured any domain, existing
+  // published pages and WordPress installs continue to work unrestricted.
+  if (allowedDomains.length === 0) return null;
+
+  if (!sourceHost) {
+    return 'This website is not allowed to use this chatbot. Add its domain in Website Widget > Allowed domains.';
+  }
+
+  return allowedDomains.some((domain) => widgetHostMatches(sourceHost, domain))
+    ? null
+    : `This website (${sourceHost}) is not allowed to use this chatbot. Add it in Website Widget > Allowed domains.`;
 }
 
 // Clean up old entries every 5 minutes
@@ -97,31 +326,43 @@ authed.post(
 
 // Delete chatbot
 authed.delete('/company/:companyId/chatbots/:botId', async (c) => {
+  const companyId = c.req.param('companyId');
   const botId = c.req.param('botId');
-  await db.delete(chatbotConfig).where(eq(chatbotConfig.id, botId));
+  await db.delete(chatbotConfig).where(and(
+    eq(chatbotConfig.id, botId),
+    eq(chatbotConfig.companyId, companyId),
+  ));
   return c.json({ deleted: true });
 });
+
+// Save/update a specific chatbot config. Multi-bot screens must use this
+// endpoint so one bot's form state never overwrites another bot.
+authed.post(
+  '/company/:companyId/chatbots/:botId/config',
+  zValidator('json', chatbotConfigUpdateSchema),
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const botId = c.req.param('botId');
+    const body = c.req.valid('json');
+
+    const [updated] = await db
+      .update(chatbotConfig)
+      .set({ ...body, updatedAt: new Date() })
+      .where(and(
+        eq(chatbotConfig.id, botId),
+        eq(chatbotConfig.companyId, companyId),
+      ))
+      .returning();
+
+    if (!updated) return c.json({ error: 'Chatbot not found' }, 404);
+    return c.json(updated);
+  },
+);
 
 // Save/update chatbot config (by ID)
 authed.post(
   '/company/:companyId/config',
-  zValidator(
-    'json',
-    z.object({
-      name: z.string().min(1).optional(),
-      greeting: z.string().min(1).optional(),
-      tone: z.enum(['professional', 'friendly', 'bold']).optional(),
-      mode: z.enum(['sales', 'support', 'both']).optional(),
-      primaryColor: z.string().optional(),
-      isActive: z.boolean().optional(),
-      accessLevel: z.enum(['public', 'internal', 'admin']).optional(),
-      embedEnabled: z.boolean().optional(),
-      embedAllowedDomains: z.array(z.string()).optional(),
-      logoUrl: z.string().url().max(1000).optional().nullable(),
-      avatarUrl: z.string().url().max(1000).optional().nullable(),
-      poweredByVisible: z.boolean().optional(),
-    })
-  ),
+  zValidator('json', chatbotConfigUpdateSchema),
   async (c) => {
     const companyId = c.req.param('companyId');
     const body = c.req.valid('json');
@@ -175,6 +416,7 @@ authed.post(
     'json',
     z.object({
       conversationId: z.string().uuid().nullish(),
+      botId: z.string().uuid().nullish(),
       message: z.string().min(1),
       visitorName: z.string().nullish(),
       visitorEmail: z.string().email().nullish(),
@@ -182,10 +424,11 @@ authed.post(
   ),
   async (c) => {
     const companyId = c.req.param('companyId');
-    const { conversationId, message, visitorName, visitorEmail } = c.req.valid('json');
+    const { conversationId, botId, message, visitorName, visitorEmail } = c.req.valid('json');
 
     const response = await handleChat(companyId, {
       conversationId,
+      botId,
       message,
       visitorName,
       visitorEmail,
@@ -331,13 +574,24 @@ authed.post('/company/:companyId/conversations/:convId/close', async (c) => {
 // Widget: get config
 chatbotRouter.get('/widget/:companyId/config', async (c) => {
   const companyId = c.req.param('companyId');
+  const botId = c.req.query('botId') || '';
 
   const config = await db.query.chatbotConfig.findFirst({
-    where: eq(chatbotConfig.companyId, companyId),
+    where: botId
+      ? and(eq(chatbotConfig.companyId, companyId), eq(chatbotConfig.id, botId))
+      : eq(chatbotConfig.companyId, companyId),
   });
 
-  if (!config || !config.isActive) {
+  if (!config || !config.isActive || !config.embedEnabled) {
     return c.json({ error: 'Chatbot not available' }, 404);
+  }
+
+  const blockReason = getWidgetDomainBlockReason(
+    config,
+    getWidgetRequestHost(c.req.header('origin'), c.req.header('referer')),
+  );
+  if (blockReason) {
+    return c.json({ error: blockReason, message: blockReason }, 403);
   }
 
   return c.json({
@@ -352,6 +606,76 @@ chatbotRouter.get('/widget/:companyId/config', async (c) => {
   });
 });
 
+// Widget: restore conversation history for the same browser visitor.
+chatbotRouter.get('/widget/:companyId/conversations/:conversationId/history', async (c) => {
+  const companyId = c.req.param('companyId');
+  const conversationId = c.req.param('conversationId');
+  const visitorId = c.req.query('visitorId') || '';
+  const botId = c.req.query('botId') || '';
+
+  const config = await db.query.chatbotConfig.findFirst({
+    where: botId
+      ? and(eq(chatbotConfig.companyId, companyId), eq(chatbotConfig.id, botId))
+      : eq(chatbotConfig.companyId, companyId),
+  });
+
+  if (!config || !config.isActive || !config.embedEnabled) {
+    return c.json({ error: 'Chatbot not available' }, 404);
+  }
+
+  const blockReason = getWidgetDomainBlockReason(
+    config,
+    getWidgetRequestHost(c.req.header('origin'), c.req.header('referer')),
+  );
+  if (blockReason) {
+    return c.json({ error: blockReason, message: blockReason }, 403);
+  }
+
+  if (!visitorId) {
+    return c.json({ error: 'Visitor identity is required' }, 400);
+  }
+
+  const conversation = await db.query.chatConversations.findFirst({
+    where: and(
+      eq(chatConversations.id, conversationId),
+      eq(chatConversations.companyId, companyId),
+    ),
+  });
+
+  // Do not expose whether a conversation exists for another visitor.
+  if (
+    !conversation
+    || conversation.channel !== 'widget'
+    || conversation.visitorId !== visitorId
+    || (botId && conversation.botId !== botId)
+  ) {
+    return c.json({ error: 'Conversation not found for this visitor' }, 404);
+  }
+
+  const rows = await db
+    .select({
+      id: chatMessages.id,
+      role: chatMessages.role,
+      content: chatMessages.content,
+      metadata: chatMessages.metadata,
+      createdAt: chatMessages.createdAt,
+    })
+    .from(chatMessages)
+    .where(eq(chatMessages.conversationId, conversationId))
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(50);
+
+  const messages = rows.reverse().map((message) => ({
+    id: message.id,
+    role: message.role === 'visitor' ? 'user' : 'assistant',
+    content: message.content,
+    quickReplies: (message.metadata as any)?.quickReplies || [],
+    createdAt: message.createdAt,
+  }));
+
+  return c.json({ conversationId, messages });
+});
+
 // Widget: chat (public, no auth)
 chatbotRouter.post(
   '/widget/:companyId/chat',
@@ -359,10 +683,19 @@ chatbotRouter.post(
     'json',
     z.object({
       conversationId: z.string().uuid().nullish(),
+      botId: z.string().uuid().nullish(),
       message: z.string().min(1),
       visitorId: z.string().nullish(),
       visitorName: z.string().nullish(),
       visitorEmail: z.string().email().nullish(),
+      pageId: z.string().uuid().nullish(),
+      pageContext: z.object({
+        url: z.string().max(1000).nullish(),
+        title: z.string().max(300).nullish(),
+        description: z.string().max(800).nullish(),
+        headings: z.array(z.string().max(240)).max(20).nullish(),
+        text: z.string().max(3500).nullish(),
+      }).nullish(),
     })
   ),
   async (c) => {
@@ -372,24 +705,37 @@ chatbotRouter.post(
     }
 
     const companyId = c.req.param('companyId');
-    const { conversationId, message, visitorId, visitorName, visitorEmail } =
+    const { conversationId, botId, message, visitorId, visitorName, visitorEmail, pageId, pageContext } =
       c.req.valid('json');
 
     // Check chatbot is active
     const config = await db.query.chatbotConfig.findFirst({
-      where: eq(chatbotConfig.companyId, companyId),
+      where: botId
+        ? and(eq(chatbotConfig.companyId, companyId), eq(chatbotConfig.id, botId))
+        : eq(chatbotConfig.companyId, companyId),
     });
 
-    if (!config || !config.isActive) {
+    if (!config || !config.isActive || !config.embedEnabled) {
       return c.json({ error: 'Chatbot not available' }, 404);
+    }
+
+    const blockReason = getWidgetDomainBlockReason(
+      config,
+      getWidgetRequestHost(c.req.header('origin'), c.req.header('referer')),
+    );
+    if (blockReason) {
+      return c.json({ error: blockReason, message: blockReason }, 403);
     }
 
     const response = await handleChat(companyId, {
       conversationId,
+      botId,
       message,
       visitorId,
       visitorName,
       visitorEmail,
+      pageId,
+      pageContext,
       channel: 'widget',
     });
 
@@ -408,10 +754,13 @@ async function handleChat(
   companyId: string,
   params: {
     conversationId?: string | null;
+    botId?: string | null;
     message: string;
     visitorId?: string | null;
     visitorName?: string | null;
     visitorEmail?: string | null;
+    pageId?: string | null;
+    pageContext?: BrowserPageContext | null;
     channel: 'web' | 'widget';
   }
 ) {
@@ -419,6 +768,7 @@ async function handleChat(
   const visitorId = params.visitorId || undefined;
   const visitorName = params.visitorName || undefined;
   const visitorEmail = params.visitorEmail || undefined;
+  const botId = params.botId || undefined;
   let conversationId = params.conversationId || undefined;
 
   // 1. Get or create conversation
@@ -427,6 +777,7 @@ async function handleChat(
       .insert(chatConversations)
       .values({
         companyId,
+        botId,
         visitorId,
         visitorName,
         visitorEmail,
@@ -465,7 +816,17 @@ async function handleChat(
       type: 'message',
       subject: `Chatbot · ${visitorName ?? visitorEmail ?? 'visitor'}`,
       content: message,
-      payload: { conversationId, channel, visitorId, visitorEmail, visitorName },
+      payload: {
+        conversationId,
+        channel,
+        visitorId,
+        visitorEmail,
+        visitorName,
+        pageId: params.pageId || null,
+        pageContext: params.pageContext
+          ? { url: params.pageContext.url, title: params.pageContext.title }
+          : null,
+      },
     }),
   );
 
@@ -473,46 +834,72 @@ async function handleChat(
   // Public widget → only 'public' knowledge (never leak internal data).
   // Logged-in dashboard → 'internal' (public + internal).
   // Admin → everything.
-  const config0 = await db.query.chatbotConfig.findFirst({
-    where: eq(chatbotConfig.companyId, companyId),
+  const config = await db.query.chatbotConfig.findFirst({
+    where: botId
+      ? and(eq(chatbotConfig.companyId, companyId), eq(chatbotConfig.id, botId))
+      : eq(chatbotConfig.companyId, companyId),
   });
-  const accessLevel = (config0 as any)?.accessLevel || 'internal';
+  const accessLevel = channel === 'widget' ? 'public' : ((config as any)?.accessLevel || 'internal');
   const visibilityFilter = accessLevel === 'public' ? 'public' as const
     : accessLevel === 'admin' ? 'admin' as const
     : 'internal' as const;
+  const knowledgeTags = Array.isArray(config?.knowledgeTags) ? config.knowledgeTags : [];
 
-  // B2 fix (doc 11 §7): Try vector RAG first (semantic search) for
-  // better answer quality, fall back to SQL-dump business context.
-  let knowledgeContext = '';
-  try {
-    const { getTenantAI, ensureTenantForCompany } = await import('../lib/tenant-ai');
-    const company = await db.query.companies.findFirst({
-      where: eq(companies.id, companyId),
-      columns: { id: true, name: true },
-    });
-    if (company) {
-      const tenantId = await ensureTenantForCompany(company.id, company.name);
-      const ai = getTenantAI();
-      const ragResult = await ai.query({ tenantId, question: message });
-      if (ragResult.answer && ragResult.answer.length > 20) {
-        // Use RAG answer + sources as knowledge context
+  const contextBlocks: string[] = [];
+
+  const landingPageContext = await buildLandingPageContext(companyId, params.pageId);
+  if (landingPageContext) {
+    contextBlocks.push(landingPageContext);
+  }
+
+  const browserPageContext = buildBrowserPageContext(params.pageContext);
+  if (browserPageContext) {
+    contextBlocks.push(browserPageContext);
+  }
+
+  const businessCtx = await buildBusinessContext(companyId, visibilityFilter, knowledgeTags);
+  if (businessCtx.fullContext) {
+    contextBlocks.push(`COMPANY / BRAND / KNOWLEDGE CONTEXT:\n${businessCtx.fullContext}`);
+  }
+
+  // Tenant RAG currently has tenant isolation but not visibility filters.
+  // Only Admin mode can use it; Public/Internal rely on visibility-filtered
+  // knowledge_base so confidential entries cannot leak through retrieval.
+  if (visibilityFilter === 'admin') {
+    try {
+      const { getTenantAI, ensureTenantForCompany } = await import('../lib/tenant-ai');
+      const company = await db.query.companies.findFirst({
+        where: eq(companies.id, companyId),
+        columns: { id: true, name: true },
+      });
+      if (company) {
+        const tenantId = await ensureTenantForCompany(company.id, company.name);
+        const ai = getTenantAI();
+        const ragResult = await ai.query({ tenantId, question: message, maxChunks: 5 });
         const sourceTexts = (ragResult.sources || [])
-          .map((s: any) => s.chunkText || '')
+          .map((s: any) => s.chunkText || s.chunkContent || '')
           .filter(Boolean)
           .slice(0, 5)
           .join('\n---\n');
-        knowledgeContext = sourceTexts || ragResult.answer;
+        if (sourceTexts || (ragResult.answer && ragResult.answer.length > 20)) {
+          contextBlocks.push(`RELEVANT SEMANTIC SEARCH SNIPPETS:\n${sourceTexts || ragResult.answer}`);
+        }
       }
+    } catch {
+      // RAG unavailable - company context above is still enough to answer.
     }
-  } catch {
-    // RAG unavailable — fall through to SQL-dump fallback
   }
 
-  // Fallback: SQL-dump business context (original path)
-  if (!knowledgeContext) {
-    const businessCtx = await buildBusinessContext(companyId, visibilityFilter);
-    knowledgeContext = businessCtx.fullContext || 'No company knowledge available yet.';
+  if (isOnePersonQuestion(message)) {
+    contextBlocks.push(ONEPERSON_PLATFORM_CONTEXT);
   }
+
+  const marketingContext = buildMarketingAdvisorContext(message);
+  if (marketingContext) {
+    contextBlocks.push(marketingContext);
+  }
+
+  const knowledgeContext = contextBlocks.join('\n\n---\n\n') || 'No company knowledge available yet.';
 
   // 4. Load conversation history (last 10 messages)
   const history = await db
@@ -529,11 +916,6 @@ async function handleChat(
       role: m.role === 'visitor' ? 'user' as const : 'assistant' as const,
       content: m.content,
     }));
-
-  // 5. Load chatbot config for tone/mode
-  const config = await db.query.chatbotConfig.findFirst({
-    where: eq(chatbotConfig.companyId, companyId),
-  });
 
   const tone = config?.tone || 'friendly';
   const mode = config?.mode || 'both';
@@ -563,6 +945,14 @@ CONVERSATION RULES:
 <!--/QUICK_REPLIES-->
 Only include this when there are obvious next steps. Max 3 options.
 
+IMPORTANT OVERRIDE FOR SMART ANSWERS:
+- The "do not answer if not in knowledge" rule applies to company-specific facts only: prices, policies, addresses, guarantees, availability, and private operational details.
+- If the visitor asks about this current website/page, summarize CURRENT PUBLISHED LANDING PAGE CONTEXT or CURRENT BROWSER PAGE SNAPSHOT first.
+- If the visitor asks about 1Person or the platform behind this chatbox, answer from 1PERSON PLATFORM KNOWLEDGE.
+- If the visitor asks for marketing, SEO, campaign, social, landing page, conversion, competitor, or growth advice, answer with MARKETING ADVISORY KNOWLEDGE and adapt it to the company/page context. Make clear when something is a recommendation rather than a known fact.
+- Reply in the same language as the visitor. Vietnamese questions should receive Vietnamese answers.
+- Never expose confidential/internal knowledge to public visitors. If unsure, keep the answer high-level and offer to connect the visitor with the team.
+
 ${mode === 'sales' ? `SALES MODE:
 - Understand the visitor's needs FIRST before recommending products/services
 - Ask qualifying questions: What are they looking for? What's their timeline? Budget considerations?
@@ -588,7 +978,17 @@ ${mode === 'both' ? `DUAL MODE (Sales + Support):
     { role: 'user' as const, content: message },
   ];
 
-  const llmResponse = await llmGenerate(llmMessages, { maxTokens: 500 });
+  const llmResponse = await llmGenerate(llmMessages, {
+    featureKey: 'chatbot',
+    maxTokens: 900,
+    metadata: {
+      channel,
+      accessLevel,
+      hasPageContext: Boolean(params.pageId || params.pageContext),
+      marketingIntent: isMarketingQuestion(message),
+      onePersonIntent: isOnePersonQuestion(message),
+    },
+  });
 
   // 7b. Parse quick replies from LLM response
   let cleanText = llmResponse.text;

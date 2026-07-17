@@ -19,11 +19,11 @@
  *
  * Founder can rename / re-prompt any employee via PATCH /employees/{slug}.
  */
-import { eq, and, sql, desc, gte } from 'drizzle-orm';
+import { eq, and, sql, gte, asc } from 'drizzle-orm';
 import { db } from '../lib/db';
 import {
-  agentPersonalities,
   employeeChats,
+  agents,
   companies,
   blogPosts,
   geoMentions,
@@ -188,47 +188,109 @@ export function getEmployeeSpecialties(slug: string): string[] {
 
 /* ─── Seeding ────────────────────────────────────────────────────── */
 
-export async function ensureSeededEmployees(companyId: string): Promise<void> {
-  const existing = await db
-    .select({ slug: agentPersonalities.slug })
-    .from(agentPersonalities)
-    .where(eq(agentPersonalities.companyId, companyId));
-  const existingSlugs = new Set(existing.map((r) => r.slug));
+type CompanyAgent = typeof agents.$inferSelect;
 
-  const toInsert = DEFAULT_EMPLOYEES.filter((e) => !existingSlugs.has(e.slug));
-  if (toInsert.length === 0) return;
-
-  await db.insert(agentPersonalities).values(
-    toInsert.map((e) => ({
-      companyId,
-      slug: e.slug,
-      name: e.name,
-      roleTitle: e.roleTitle,
-      department: e.department,
-      avatarEmoji: e.avatarEmoji,
-      accentColor: e.accentColor,
-      intro: e.intro,
-      personaPrompt: e.personaPrompt,
-      kpiSlots: e.kpiSlots,
-    })),
-  );
+export interface TeamEmployee {
+  id: string;
+  companyId: string;
+  slug: string;
+  templateSlug: string;
+  name: string;
+  role: string;
+  roleTitle: string;
+  department: string;
+  avatarEmoji: string;
+  accentColor: string;
+  intro: string;
+  personaPrompt: string;
+  kpiSlots: AgentKpiSlot[];
+  status: string;
+  supervisorId?: string;
+  responsibilities: string[];
 }
 
-export async function listEmployees(companyId: string): Promise<AgentPersonality[]> {
-  await ensureSeededEmployees(companyId);
-  return db
+const ROLE_PERSONA: Record<string, string> = {
+  ceo: 'cleo',
+  marketing_manager: 'soshie',
+  sales_manager: 'cassie',
+  content_creator: 'penn',
+  ads_specialist: 'vio',
+  analyst: 'geoffrey',
+  support: 'cassie',
+  developer: 'vio',
+  custom: 'cleo',
+};
+
+const ROLE_DEPARTMENT: Record<string, string> = {
+  ceo: 'executive',
+  marketing_manager: 'marketing',
+  sales_manager: 'sales',
+  content_creator: 'content',
+  ads_specialist: 'marketing',
+  analyst: 'analytics',
+  support: 'support',
+  developer: 'operations',
+  custom: 'operations',
+};
+
+function personaForAgent(agent: CompanyAgent): PersonalityDef {
+  const title = `${agent.title ?? ''} ${agent.description ?? ''}`.toLowerCase();
+  let slug = ROLE_PERSONA[agent.role] ?? 'cleo';
+  if (title.includes('seo')) slug = 'seomi';
+  else if (title.includes('geo') || title.includes('ai visibility')) slug = 'geoffrey';
+  else if (title.includes('visual') || title.includes('video') || title.includes('design')) slug = 'vio';
+  return DEFAULT_EMPLOYEES.find((employee) => employee.slug === slug) ?? DEFAULT_EMPLOYEES[0]!;
+}
+
+function agentResponsibilities(agent: CompanyAgent): string[] {
+  const capabilities = Array.isArray(agent.capabilities) ? agent.capabilities : [];
+  const responsibilities = capabilities
+    .map((capability) => typeof capability === 'string' ? capability : capability?.name)
+    .filter((value): value is string => Boolean(value));
+  return responsibilities.length > 0
+    ? responsibilities
+    : agent.description
+      ? [agent.description]
+      : [];
+}
+
+function toTeamEmployee(agent: CompanyAgent): TeamEmployee {
+  const persona = personaForAgent(agent);
+  return {
+    id: agent.id,
+    companyId: agent.companyId,
+    slug: agent.id,
+    templateSlug: persona.slug,
+    name: agent.name,
+    role: agent.role,
+    roleTitle: agent.title || persona.roleTitle,
+    department: ROLE_DEPARTMENT[agent.role] ?? persona.department,
+    avatarEmoji: agent.name.trim().charAt(0).toUpperCase() || 'AI',
+    accentColor: agent.color || persona.accentColor,
+    intro: agent.description || persona.intro,
+    personaPrompt: agent.systemPrompt || persona.personaPrompt,
+    kpiSlots: persona.kpiSlots,
+    status: agent.status,
+    supervisorId: agent.supervisorId ?? undefined,
+    responsibilities: agentResponsibilities(agent),
+  };
+}
+
+export async function listEmployees(companyId: string): Promise<TeamEmployee[]> {
+  const rows = await db
     .select()
-    .from(agentPersonalities)
-    .where(eq(agentPersonalities.companyId, companyId))
-    .orderBy(agentPersonalities.createdAt);
+    .from(agents)
+    .where(and(eq(agents.companyId, companyId), sql`${agents.status} <> 'archived'`))
+    .orderBy(asc(agents.createdAt));
+  return rows.map(toTeamEmployee);
 }
 
-export async function getEmployeeBySlug(companyId: string, slug: string): Promise<AgentPersonality | null> {
-  await ensureSeededEmployees(companyId);
-  const row = await db.query.agentPersonalities.findFirst({
-    where: and(eq(agentPersonalities.companyId, companyId), eq(agentPersonalities.slug, slug)),
-  });
-  return row ?? null;
+export async function getEmployeeBySlug(companyId: string, slug: string): Promise<TeamEmployee | null> {
+  const employees = await listEmployees(companyId);
+  // UUID routes are canonical. Template slugs keep old bookmarks working.
+  return employees.find((employee) => employee.id === slug)
+    ?? employees.find((employee) => employee.templateSlug === slug)
+    ?? null;
 }
 
 /* ─── KPI resolution ─────────────────────────────────────────────── */
@@ -299,7 +361,7 @@ async function resolveKpiValue(companyId: string, slot: AgentKpiSlot): Promise<s
   }
 }
 
-export async function resolveEmployeeKpis(companyId: string, employee: AgentPersonality): Promise<ResolvedKpi[]> {
+export async function resolveEmployeeKpis(companyId: string, employee: TeamEmployee): Promise<ResolvedKpi[]> {
   const slots = employee.kpiSlots ?? [];
   return Promise.all(
     slots.map(async (s) => ({ ...s, value: await resolveKpiValue(companyId, s) })),
@@ -327,9 +389,17 @@ export async function sendMessageToEmployee(
   let thread = await db.query.employeeChats.findFirst({
     where: and(
       eq(employeeChats.companyId, companyId),
-      eq(employeeChats.employeeSlug, employeeSlug),
+      eq(employeeChats.employeeSlug, employee.id),
     ),
   });
+  if (!thread && employeeSlug !== employee.templateSlug) {
+    thread = await db.query.employeeChats.findFirst({
+      where: and(
+        eq(employeeChats.companyId, companyId),
+        eq(employeeChats.employeeSlug, employee.templateSlug),
+      ),
+    });
+  }
   const history: EmployeeChatMessage[] = thread?.messages ?? [];
 
   // Semantic search across the founder's own data to ground the reply
@@ -362,7 +432,7 @@ export async function sendMessageToEmployee(
 
   // P3: inject the employee's full expert-playbook bundle (the same set shown as
   // "specialties" on the /team UI). Per-skill cap keeps chat token cost bounded.
-  const skillBundle = EMPLOYEE_SKILLS[employee.slug] ?? [];
+  const skillBundle = EMPLOYEE_SKILLS[employee.templateSlug] ?? [];
   const expertiseBlock = skillBundle.length
     ? renderSkillKnowledgeBundle(skillBundle, { maxCharsEach: 1800 })
     : '';
@@ -390,7 +460,7 @@ You are ${employee.name}, ${employee.roleTitle}. Stay in this role and apply you
   const response = await llmGenerate(messages, {
     featureKey: 'employee_chat',
     maxTokens: 1200,
-    metadata: { employeeSlug: employee.slug },
+    metadata: { employeeId: employee.id, employeeRole: employee.role },
   });
 
   const now = new Date().toISOString();
@@ -406,12 +476,12 @@ You are ${employee.name}, ${employee.roleTitle}. Stay in this role and apply you
   if (thread) {
     await db
       .update(employeeChats)
-      .set({ messages: newMessages, updatedAt: new Date() })
+      .set({ employeeSlug: employee.id, messages: newMessages, updatedAt: new Date() })
       .where(eq(employeeChats.id, thread.id));
   } else {
     await db.insert(employeeChats).values({
       companyId,
-      employeeSlug,
+      employeeSlug: employee.id,
       messages: newMessages,
     });
   }
@@ -420,11 +490,21 @@ You are ${employee.name}, ${employee.roleTitle}. Stay in this role and apply you
 }
 
 export async function getThread(companyId: string, employeeSlug: string): Promise<EmployeeChatMessage[]> {
-  const thread = await db.query.employeeChats.findFirst({
+  const employee = await getEmployeeBySlug(companyId, employeeSlug);
+  if (!employee) return [];
+  let thread = await db.query.employeeChats.findFirst({
     where: and(
       eq(employeeChats.companyId, companyId),
-      eq(employeeChats.employeeSlug, employeeSlug),
+      eq(employeeChats.employeeSlug, employee.id),
     ),
   });
+  if (!thread) {
+    thread = await db.query.employeeChats.findFirst({
+      where: and(
+        eq(employeeChats.companyId, companyId),
+        eq(employeeChats.employeeSlug, employee.templateSlug),
+      ),
+    });
+  }
   return thread?.messages ?? [];
 }

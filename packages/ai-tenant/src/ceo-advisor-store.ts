@@ -18,6 +18,43 @@ export interface BriefAction {
   impact?: string;
   link?: string;
   severity?: 'critical' | 'high' | 'medium' | 'low';
+  confidence?: 'high' | 'medium' | 'low';
+  evidence?: BriefEvidence[];
+  actionKind?: 'campaign' | 'content' | 'sales' | 'market' | 'operations';
+  campaignProposal?: CampaignProposal;
+  teamTasks?: AdvisorTeamTask[];
+}
+
+export interface AdvisorTeamTask {
+  agentId: string;
+  agentName: string;
+  role: string;
+  title?: string;
+  department?: string;
+  task: string;
+  expectedOutcome?: string;
+}
+
+export interface BriefEvidence {
+  id: string;
+  sourceType: string;
+  sourceId?: string;
+  label: string;
+  detail: string;
+  link?: string;
+  occurredAt?: string;
+  score?: number;
+}
+
+export interface CampaignProposal {
+  goal: string;
+  audience: string;
+  offer?: string;
+  publicTopic?: string;
+  contentAngle?: string;
+  channels: string[];
+  assets: string[];
+  expectedOutcome?: string;
 }
 
 export interface BriefWin {

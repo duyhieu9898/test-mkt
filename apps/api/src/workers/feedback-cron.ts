@@ -21,6 +21,7 @@ import { db } from '../lib/db';
 import { eq, and } from 'drizzle-orm';
 import { companies, campaigns } from '@1person/core/db';
 import { performanceTracker } from '../services/performance-tracker';
+import { syncCampaignFacebookPerformance } from '../services/campaign-performance';
 // Growth Brain agent removed as part of IA restructure (doc 10).
 // The feedback loop now only runs Marketing Feedback + Revenue Brain.
 
@@ -70,6 +71,28 @@ export class FeedbackCron {
       } catch (err) {
         console.warn(`[FeedbackCron] Platform metrics refresh failed for ${companyId}:`, err);
       }
+      for (const campaign of liveCampaigns) {
+        try {
+          const performance = await syncCampaignFacebookPerformance(companyId, campaign.id);
+          if (performance?.facebook.publishedPosts) {
+            (campaign as any).metrics = {
+              ...((campaign as any).metrics ?? {}),
+              impressions: performance.totals.impressions,
+              reach: performance.totals.reach,
+              clicks: performance.totals.clicks,
+              clicksMeasured: performance.totals.clicksMeasured,
+              engagements: performance.totals.engagements,
+              engagementRate: performance.totals.engagementRate,
+              conversions: performance.totals.conversions,
+              revenue: performance.totals.revenue,
+              lastRefreshedAt: performance.lastSyncedAt,
+              source: 'facebook_organic',
+            };
+          }
+        } catch (err) {
+          console.warn(`[FeedbackCron] Facebook post metrics refresh failed for ${campaign.id}:`, err);
+        }
+      }
     }
 
     if (liveCampaigns.length === 0) return;
@@ -92,7 +115,7 @@ export class FeedbackCron {
         let statusUpdate: string | null = null;
 
         // Rule: CTR below 1% with enough impressions — flag weak creative
-        if (ctr < 1 && impressions > 500) {
+        if (metrics.clicksMeasured !== false && ctr < 1 && impressions > 500) {
           aiDecisions.push({
             type: 'weak_creative',
             reason: `CTR is ${ctr.toFixed(2)}% (below 1%) with ${impressions} impressions — creatives may need refresh`,
@@ -162,7 +185,16 @@ export class FeedbackCron {
         // can draw on what worked / what failed. Each "interesting" outcome
         // becomes a structured Brain learning entry.
         try {
-          await this.appendBrainLearnings(campaign, { ctr, spend, conversions, impressions, cpa, roas });
+          await this.appendBrainLearnings(campaign, {
+            ctr,
+            spend,
+            conversions,
+            impressions,
+            cpa,
+            roas,
+            clicksMeasured: metrics.clicksMeasured !== false,
+            engagementRate: Number(metrics.engagementRate ?? 0),
+          });
         } catch (err) {
           console.warn(`[FeedbackCron] Brain learning append failed for campaign ${campaign.id}:`, err);
         }
@@ -278,7 +310,16 @@ export class FeedbackCron {
    */
   private async appendBrainLearnings(
     campaign: any,
-    metrics: { ctr: number; spend: number; conversions: number; impressions: number; cpa: number; roas: number },
+    metrics: {
+      ctr: number;
+      spend: number;
+      conversions: number;
+      impressions: number;
+      cpa: number;
+      roas: number;
+      clicksMeasured: boolean;
+      engagementRate: number;
+    },
   ): Promise<void> {
     // Avoid double-counting: only append if we haven't already created a
     // learning for this campaign's current state. Use a tag in the
@@ -300,7 +341,12 @@ export class FeedbackCron {
     }
 
     // Strong win: CTR > 3%
-    if (metrics.ctr > 3 && metrics.impressions > 1000 && !alreadyLearnedTypes.has('brain_learning:strong_ctr')) {
+    if (
+      metrics.clicksMeasured
+      && metrics.ctr > 3
+      && metrics.impressions > 1000
+      && !alreadyLearnedTypes.has('brain_learning:strong_ctr')
+    ) {
       learnings.push({
         type: 'brain_learning:strong_ctr',
         category: 'win',
@@ -309,11 +355,29 @@ export class FeedbackCron {
     }
 
     // Failure: very low CTR with enough sample
-    if (metrics.ctr < 0.5 && metrics.impressions > 1000 && !alreadyLearnedTypes.has('brain_learning:low_ctr')) {
+    if (
+      metrics.clicksMeasured
+      && metrics.ctr < 0.5
+      && metrics.impressions > 1000
+      && !alreadyLearnedTypes.has('brain_learning:low_ctr')
+    ) {
       learnings.push({
         type: 'brain_learning:low_ctr',
         category: 'fail',
         lesson: `Campaign "${campaign.name}" CTR was only ${metrics.ctr.toFixed(2)}% on ${metrics.impressions} impressions — creative or audience mismatch. AVOID: repeating the same hook/angle without testing. Goal was: ${campaign.goal}.`,
+      });
+    }
+
+    if (
+      !metrics.clicksMeasured
+      && metrics.engagementRate >= 3
+      && metrics.impressions > 500
+      && !alreadyLearnedTypes.has('brain_learning:strong_organic_engagement')
+    ) {
+      learnings.push({
+        type: 'brain_learning:strong_organic_engagement',
+        category: 'win',
+        lesson: `Campaign "${campaign.name}" reached a ${metrics.engagementRate.toFixed(2)}% organic engagement rate on Facebook with ${metrics.impressions} impressions. KEEP: the customer-facing hook and creative direction used by its strongest post.`,
       });
     }
 

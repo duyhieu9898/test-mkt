@@ -19,6 +19,7 @@ import {
   conversions,
   dailyMetrics,
   landingPages,
+  campaigns,
   type VisitorSession,
   type PageView,
   type TrackingEvent,
@@ -114,6 +115,38 @@ interface TrackConversionInput {
   landingPage?: string;
   referrer?: string;
   properties?: Record<string, unknown>;
+  campaignId?: string;
+  creativeId?: string;
+  channel?: string;
+  revenue?: number;
+  cost?: number;
+  attributionModel?: string;
+  touchpoints?: unknown;
+}
+
+function slugifyCampaignName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 100);
+}
+
+async function resolveTrackedCampaignId(
+  companyId: string,
+  utmCampaign?: string,
+): Promise<string | undefined> {
+  const value = utmCampaign?.trim();
+  if (!value) return undefined;
+  const rows = await db.select({
+    id: campaigns.id,
+    name: campaigns.name,
+  }).from(campaigns).where(eq(campaigns.companyId, companyId));
+  return rows.find((campaign) => (
+    campaign.id === value
+    || campaign.name === value
+    || slugifyCampaignName(campaign.name) === value
+  ))?.id;
 }
 
 /**
@@ -172,6 +205,7 @@ export class TrackingEngine {
     }
 
     // Create new session
+    const campaignId = await resolveTrackedCampaignId(input.companyId, input.utmCampaign);
     const [session] = await db
       .insert(visitorSessions)
       .values({
@@ -191,6 +225,7 @@ export class TrackingEngine {
         utmCampaign: input.utmCampaign,
         utmContent: input.utmContent,
         utmTerm: input.utmTerm,
+        campaignId,
         referrer: input.referrer,
         referrerDomain,
         landingPage: input.landingPage,
@@ -408,6 +443,7 @@ export class TrackingEngine {
    */
   async trackConversion(input: TrackConversionInput): Promise<string> {
     let sessionInternalId: string | undefined;
+    let trackedSession: typeof visitorSessions.$inferSelect | undefined;
 
     // Get internal session ID if provided
     if (input.sessionId) {
@@ -417,6 +453,7 @@ export class TrackingEngine {
           eq(visitorSessions.sessionId, input.sessionId)
         ),
       });
+      trackedSession = session;
       sessionInternalId = session?.id;
     }
 
@@ -431,13 +468,20 @@ export class TrackingEngine {
         name: input.name,
         value: input.value?.toString(),
         currency: input.currency || 'USD',
-        source: input.source,
-        medium: input.medium,
-        campaign: input.campaign,
-        content: input.content,
-        term: input.term,
-        landingPage: input.landingPage,
-        referrer: input.referrer,
+        campaignId: input.campaignId ?? trackedSession?.campaignId,
+        creativeId: input.creativeId ?? trackedSession?.creativeId,
+        channel: input.channel,
+        revenue: input.revenue?.toString(),
+        cost: input.cost?.toString(),
+        source: input.source ?? trackedSession?.utmSource,
+        medium: input.medium ?? trackedSession?.utmMedium,
+        campaign: input.campaign ?? trackedSession?.utmCampaign,
+        content: input.content ?? trackedSession?.utmContent,
+        term: input.term ?? trackedSession?.utmTerm,
+        landingPage: input.landingPage ?? trackedSession?.landingPage,
+        referrer: input.referrer ?? trackedSession?.referrer,
+        attributionModel: input.attributionModel,
+        touchpoints: input.touchpoints,
         properties: input.properties,
       })
       .returning();

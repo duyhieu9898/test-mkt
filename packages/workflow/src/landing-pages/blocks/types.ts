@@ -19,6 +19,7 @@ export const BlockTypeEnum = {
   PRICING: 'pricing',
   FAQ: 'faq',
   CTA: 'cta',
+  IMAGE: 'image',
   FOOTER: 'footer',
   CUSTOM: 'custom',
 } as const;
@@ -35,9 +36,12 @@ export const heroContentSchema = z.object({
   subheadline: z.string().optional(),
   ctaText: z.string().optional(),
   ctaUrl: z.string().optional(),
+  ctaOpenInNewTab: z.boolean().default(false),
   ctaSecondaryText: z.string().optional(),
   ctaSecondaryUrl: z.string().optional(),
+  ctaSecondaryOpenInNewTab: z.boolean().default(false),
   backgroundImage: z.string().optional(),
+  backgroundImageAlt: z.string().optional(),
   alignment: z.enum(['left', 'center', 'right']).default('center'),
 });
 export type HeroContent = z.infer<typeof heroContentSchema>;
@@ -76,6 +80,7 @@ export const featureSchema = z.object({
   description: z.string(),
   icon: z.string().optional(),
   image: z.string().optional(),
+  imageAlt: z.string().optional(),
 });
 
 export const featuresContentSchema = z.object({
@@ -114,6 +119,7 @@ export const pricingPlanSchema = z.object({
   features: z.array(z.string()).default([]),
   ctaText: z.string().optional(),
   ctaUrl: z.string().optional(),
+  ctaOpenInNewTab: z.boolean().default(false),
   featured: z.boolean().default(false),
   badge: z.string().optional(),
 });
@@ -146,12 +152,26 @@ export const ctaContentSchema = z.object({
   description: z.string().optional(),
   ctaText: z.string().optional(),
   ctaUrl: z.string().optional(),
+  ctaOpenInNewTab: z.boolean().default(false),
   ctaSecondaryText: z.string().optional(),
   ctaSecondaryUrl: z.string().optional(),
+  ctaSecondaryOpenInNewTab: z.boolean().default(false),
   showEmailCapture: z.boolean().default(false),
   emailPlaceholder: z.string().optional(),
 });
 export type CTAContent = z.infer<typeof ctaContentSchema>;
+
+// Image Block
+export const imageContentSchema = z.object({
+  url: z.string().default(''),
+  alt: z.string().default(''),
+  caption: z.string().optional(),
+  linkUrl: z.string().optional(),
+  openInNewTab: z.boolean().default(false),
+  aspectRatio: z.enum(['auto', 'wide', 'square', 'portrait']).default('wide'),
+  fit: z.enum(['cover', 'contain']).default('cover'),
+});
+export type ImageContent = z.infer<typeof imageContentSchema>;
 
 // Footer Block
 export const footerLinkSchema = z.object({
@@ -201,8 +221,33 @@ export type BlockContent =
   | PricingContent
   | FAQContent
   | CTAContent
+  | ImageContent
   | FooterContent
   | CustomContent;
+
+const ALLOWED_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:']);
+
+/**
+ * Keeps CTA and image links safe while supporting internal anchors and paths.
+ */
+export function normalizeLandingPageLink(value?: string, fallback = '#'): string {
+  const link = value?.trim();
+  if (!link) return fallback;
+  if (link.startsWith('#')) return link;
+  if (link.startsWith('/') && !link.startsWith('//')) return link;
+
+  try {
+    const parsed = new URL(link);
+    return ALLOWED_LINK_PROTOCOLS.has(parsed.protocol) ? link : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function isExternalLandingPageLink(value?: string): boolean {
+  const link = normalizeLandingPageLink(value, '');
+  return link.startsWith('http://') || link.startsWith('https://');
+}
 
 export interface BlockData {
   id: string;

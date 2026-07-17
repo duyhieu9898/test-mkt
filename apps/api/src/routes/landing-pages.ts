@@ -12,12 +12,14 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { companies, landingPages, landingPageLeads } from '@1person/core/db';
+import { companies, landingPageDeployments, landingPages, landingPageLeads } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { landingPageService } from '../services/landing-page-service';
-import { writeFile, mkdir, unlink } from 'fs/promises';
-import { join } from 'path';
+import { CMSIntegration } from '../services/cms-integration';
+import { decryptMaybe } from '../lib/crypto';
+import { landingPagePublisher } from '../services/landing-page-publisher';
+import { pageRendererService } from '../services/page-renderer-service';
 
 const landingPagesRouter = new Hono();
 
@@ -66,11 +68,19 @@ const sectionSchema = z.object({
   content: z.record(z.unknown()),
   order: z.number(),
   isVisible: z.number().optional(),
-  backgroundColor: z.string().optional(),
+  backgroundColor: z.string().nullable().optional(),
+  customStyles: z.record(z.string()).nullable().optional(),
 });
 
 const updateSectionsSchema = z.object({
   sections: z.array(sectionSchema),
+});
+
+const saveEditorSchema = updateSectionsSchema.extend({
+  pageSettings: z.object({
+    primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
+    secondaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).nullable().optional(),
+  }),
 });
 
 const captureLeadSchema = z.object({
@@ -155,7 +165,7 @@ landingPagesRouter.get('/:id', async (c) => {
   const { userId } = c.get('user');
   const pageId = c.req.param('id');
 
-  await checkPageOwnership(pageId, userId);
+  const ownedPage = await checkPageOwnership(pageId, userId);
 
   const page = await landingPageService.getPage(pageId);
 
@@ -163,9 +173,21 @@ landingPagesRouter.get('/:id', async (c) => {
     throw new HTTPException(404, { message: 'Landing page not found' });
   }
 
+  let wordpressReviewUrl: string | null = null;
+  if (page.deploymentProvider === 'wordpress' && page.deploymentId) {
+    const deployment = await db.query.landingPageDeployments.findFirst({
+      where: eq(landingPageDeployments.id, page.deploymentId),
+    });
+    const wordpressPageId = Number(deployment?.externalDeploymentId);
+    const siteUrl = ((ownedPage.company.settings || {}) as Record<string, any>).wordpress?.siteUrl;
+    if (siteUrl && Number.isFinite(wordpressPageId)) {
+      wordpressReviewUrl = `${String(siteUrl).replace(/\/+$/, '')}/wp-admin/post.php?post=${wordpressPageId}&action=edit`;
+    }
+  }
+
   return c.json({
     success: true,
-    data: page,
+    data: { ...page, wordpressReviewUrl },
   });
 });
 
@@ -248,6 +270,29 @@ landingPagesRouter.put(
       message: 'Sections updated successfully',
     });
   }
+);
+
+/**
+ * PUT /landing-pages/:id/editor
+ * Save section content and page-level appearance from the visual editor.
+ */
+landingPagesRouter.put(
+  '/:id/editor',
+  zValidator('json', saveEditorSchema),
+  async (c) => {
+    const { userId } = c.get('user');
+    const pageId = c.req.param('id');
+    const { sections, pageSettings } = c.req.valid('json');
+
+    await checkPageOwnership(pageId, userId);
+    const updated = await landingPageService.updateSections(pageId, sections, pageSettings);
+
+    return c.json({
+      success: true,
+      data: updated,
+      message: 'Page changes saved successfully',
+    });
+  },
 );
 
 /**
@@ -609,11 +654,20 @@ RULES:
 
     const parsed = extractJSON(text);
 
-    let sections: Array<{ type: string; content: any }> = [];
+    const sectionOrder = [
+      'hero',
+      'features',
+      'problem',
+      'solution',
+      'testimonials',
+      'faq',
+      'cta',
+    ] as const;
+    type GeneratedSectionType = (typeof sectionOrder)[number];
+    let sections: Array<{ type: GeneratedSectionType; content: any }> = [];
 
     if (parsed) {
       // Dynamic section ordering based on what AI returned
-      const sectionOrder = ['hero', 'features', 'problem', 'solution', 'testimonials', 'faq', 'cta'];
       sections = sectionOrder
         .filter((t) => parsed[t])
         .map((t) => ({ type: t, content: parsed[t] }));
@@ -629,10 +683,12 @@ RULES:
 
     // Insert sections
     for (let i = 0; i < sections.length; i++) {
+      const section = sections[i];
+      if (!section) continue;
       await db.insert(landingPageSections).values({
         pageId,
-        type: sections[i].type,
-        content: sections[i].content as any,
+        type: section.type,
+        content: section.content as any,
         order: i,
         isVisible: 1,
       });
@@ -787,15 +843,15 @@ Return JSON array:
             const [saved] = await db.insert(bannersTable).values({
               companyId,
               name: `${page.name} Banner`,
-              headline: item.headline || page.name || '',
-              subheadline: item.subheadline || '',
-              ctaText: item.ctaText || 'Learn More',
               size: '1200x628',
-              format: 'image' as any,
               status: 'draft' as any,
-              designData: item as any,
+              copy: {
+                headline: item.headline || page.name || '',
+                subheadline: item.subheadline || '',
+                cta: item.ctaText || 'Learn More',
+              },
             }).returning();
-            results.banner.push(saved);
+            if (saved) results.banner.push(saved);
           } catch (bannerErr) {
             console.error('[Landing Pages] Banner insert failed:', bannerErr);
           }
@@ -914,135 +970,160 @@ Return JSON:
 // PUBLISH / UNPUBLISH
 // =============================================================================
 
+landingPagesRouter.get('/:id/publish-options', async (c) => {
+  const { userId } = c.get('user');
+  const page = await checkPageOwnership(c.req.param('id'), userId);
+  const settings = (page.company.settings || {}) as Record<string, any>;
+  const wp = settings.wordpress;
+
+  if (!wp?.siteUrl || !wp?.username || !wp?.appPassword) {
+    return c.json({
+      hosted: {
+        baseDomain: process.env.LANDING_PAGE_PUBLIC_BASE_DOMAIN || null,
+        baseUrl: process.env.LANDING_PAGE_PUBLIC_BASE_URL || null,
+        urlMode: process.env.LANDING_PAGE_PUBLIC_URL_MODE || (process.env.LANDING_PAGE_PUBLIC_BASE_URL ? 'path' : 'subdomain'),
+      },
+      wordpress: { connected: false, pages: [], templates: [], menus: [] },
+    });
+  }
+
+  const cms = new CMSIntegration();
+  const password = decryptMaybe(wp.appPassword);
+  const [pages, templates, menus] = await Promise.all([
+    cms.getPages(wp.siteUrl, wp.username, password).catch(() => []),
+    cms.getPageTemplates(wp.siteUrl, wp.username, password).catch(() => []),
+    cms.getMenus(wp.siteUrl, wp.username, password).catch(() => []),
+  ]);
+  const deployment = page.deploymentProvider === 'wordpress' && page.deploymentId
+    ? await db.query.landingPageDeployments.findFirst({
+      where: eq(landingPageDeployments.id, page.deploymentId),
+    })
+    : null;
+  const currentWordPressPage = deployment?.externalDeploymentId
+    ? pages.find((item) => item.id === Number(deployment.externalDeploymentId))
+    : undefined;
+
+  return c.json({
+    hosted: {
+      baseDomain: process.env.LANDING_PAGE_PUBLIC_BASE_DOMAIN || null,
+      baseUrl: process.env.LANDING_PAGE_PUBLIC_BASE_URL || null,
+      urlMode: process.env.LANDING_PAGE_PUBLIC_URL_MODE || (process.env.LANDING_PAGE_PUBLIC_BASE_URL ? 'path' : 'subdomain'),
+    },
+    wordpress: {
+      connected: true,
+      siteUrl: wp.siteUrl,
+      pages,
+      templates,
+      menus,
+      current: currentWordPressPage
+        ? {
+          pageId: currentWordPressPage.id,
+          parentPageId: currentWordPressPage.parent || null,
+          template: currentWordPressPage.template || null,
+        }
+        : null,
+    },
+  });
+});
+
+landingPagesRouter.get('/:id/publish-history', async (c) => {
+  const { userId } = c.get('user');
+  const page = await checkPageOwnership(c.req.param('id'), userId);
+  const deployments = await db.query.landingPageDeployments.findMany({
+    where: eq(landingPageDeployments.pageId, page.id),
+    orderBy: [desc(landingPageDeployments.createdAt)],
+    with: { version: true },
+  });
+
+  const history = deployments.map((deployment) => {
+    let publicationStatus: 'draft' | 'publish' = 'publish';
+    if (deployment.buildLogs) {
+      try {
+        const metadata = JSON.parse(deployment.buildLogs) as { publicationStatus?: string };
+        if (metadata.publicationStatus === 'draft') publicationStatus = 'draft';
+      } catch {
+        // Older deployment records did not store user-facing metadata.
+      }
+    }
+
+    const target = deployment.externalProjectId === 'wordpress'
+      ? 'wordpress'
+      : deployment.provider === 'cloudflare'
+        ? 'hosted'
+        : deployment.provider;
+    const isCurrent = deployment.id === page.deploymentId;
+
+    return {
+      id: deployment.id,
+      target,
+      publicationStatus,
+      status: deployment.status,
+      isCurrent,
+      versionId: deployment.versionId,
+      version: deployment.version?.version || null,
+      url: isCurrent ? deployment.url : null,
+      createdAt: deployment.deployedAt || deployment.createdAt,
+      errorMessage: deployment.errorMessage,
+    };
+  });
+
+  return c.json({ history });
+});
+
+landingPagesRouter.get('/:id/publish-history/:versionId/preview', async (c) => {
+  const { userId } = c.get('user');
+  const pageId = c.req.param('id');
+  await checkPageOwnership(pageId, userId);
+
+  try {
+    const rendered = await pageRendererService.renderVersionToHtml(
+      pageId,
+      c.req.param('versionId'),
+    );
+    return c.json({ html: rendered.html });
+  } catch (error) {
+    return c.json({
+      error: {
+        message: error instanceof Error ? error.message : 'Could not preview this version.',
+      },
+    }, 404);
+  }
+});
+
 /**
- * POST /landing-pages/:id/publish
- * Publish a landing page to one of three targets: builtin, wordpress, aws
+ * Publish through one user-facing destination. Provider-specific credentials
+ * and deployment details remain behind LandingPagePublisher.
  */
 landingPagesRouter.post('/:id/publish', zValidator('json', z.object({
-  target: z.enum(['builtin', 'wordpress', 'aws']),
+  target: z.enum(['hosted', 'wordpress']),
+  subdomain: z.string().min(3).max(60).optional(),
   wordpress: z.object({
-    parentPath: z.string().optional(),
-    pageStatus: z.enum(['draft', 'publish']).default('publish'),
-  }).optional(),
-  aws: z.object({
-    bucket: z.string(),
-    region: z.string(),
-    accessKeyId: z.string(),
-    secretAccessKey: z.string(),
-    cloudFrontDistId: z.string().optional(),
+    status: z.enum(['draft', 'publish']).default('draft'),
+    parentPageId: z.number().int().positive().optional(),
+    template: z.string().max(200).optional(),
+    menuId: z.number().int().positive().optional(),
   }).optional(),
 })), async (c) => {
   const pageId = c.req.param('id');
   const body = c.req.valid('json');
   const { userId } = c.get('user');
-
-  // Verify ownership
   await checkPageOwnership(pageId, userId);
 
-  // Get page
-  const page = await db.query.landingPages.findFirst({ where: eq(landingPages.id, pageId) });
-  if (!page) return c.json({ error: 'Page not found' }, 404);
-
-  // Render HTML via the renderer (fetches sections internally)
-  const { PageRendererService } = await import('../services/page-renderer-service');
-  const renderer = new PageRendererService();
-  const rendered = await renderer.renderToHtml(pageId);
-  const html = rendered.html;
-
-  let publishedUrl = '';
-  const deploymentProvider = body.target;
-
   try {
-    if (body.target === 'builtin') {
-      // Save to local deploy directory
-      const deployDir = join(process.cwd(), '..', '..', 'deploy', 'pages', page.companyId);
-      await mkdir(deployDir, { recursive: true });
-      const filePath = join(deployDir, `${page.slug || pageId}.html`);
-      await writeFile(filePath, html);
-
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') || 'http://localhost:8004';
-      publishedUrl = `${apiUrl}/pages/${page.companyId}/${page.slug || pageId}`;
-
-    } else if (body.target === 'wordpress') {
-      // Get WordPress credentials from company settings
-      const company = await db.query.companies.findFirst({ where: eq(companies.id, page.companyId) });
-      const wpSettings = (company?.settings as any)?.wordpress;
-      if (!wpSettings?.siteUrl) {
-        return c.json({ error: 'WordPress not connected. Go to Settings to connect.' }, 400);
-      }
-
-      const { CMSIntegration } = await import('../services/cms-integration');
-      const cms = new CMSIntegration();
-
-      // Resolve parent page if path provided
-      let parentId: number | undefined;
-      if (body.wordpress?.parentPath) {
-        parentId = await cms.resolveParentPage(
-          wpSettings.siteUrl, wpSettings.username, wpSettings.appPassword,
-          body.wordpress.parentPath
-        );
-      }
-
-      const result = await cms.publishPage(
-        wpSettings.siteUrl, wpSettings.username, wpSettings.appPassword,
-        {
-          title: page.name,
-          content: html,
-          status: body.wordpress?.pageStatus || 'publish',
-          parent: parentId,
-          slug: page.slug || undefined,
-        }
-      );
-
-      publishedUrl = result.url;
-      // Store WordPress page ID for future updates/unpublish
-      await db.update(landingPages).set({
-        deploymentId: String(result.id),
-      }).where(eq(landingPages.id, pageId));
-
-    } else if (body.target === 'aws') {
-      if (!body.aws) return c.json({ error: 'AWS settings required' }, 400);
-
-      const { S3DeployService } = await import('../services/s3-deploy');
-      const s3 = new S3DeployService();
-
-      const key = `pages/${page.slug || pageId}.html`;
-      const result = await s3.deployPage({
-        ...body.aws,
-        key,
-        html,
-      });
-
-      publishedUrl = result.url;
-
-      // Save AWS key for unpublish
-      await db.update(landingPages).set({
-        deploymentId: key,
-      }).where(eq(landingPages.id, pageId));
-    }
-
-    // Update page record
-    await db.update(landingPages).set({
-      status: 'published',
-      publishedUrl,
-      deploymentProvider,
-      publishedAt: new Date(),
-      updatedAt: new Date(),
-    }).where(eq(landingPages.id, pageId));
-
+    const result = await landingPagePublisher.publish({
+      pageId,
+      userId,
+      ...body,
+    });
     return c.json({
       success: true,
-      publishedUrl,
-      target: body.target,
-      message: `Page published to ${body.target === 'builtin' ? 'built-in hosting' : body.target === 'wordpress' ? 'WordPress' : 'AWS S3'}`,
+      publishedUrl: result.url,
+      ...result,
     });
-
   } catch (err) {
+    const message = err instanceof Error ? err.message : 'Publishing failed. Please try again.';
     console.error('[LandingPages] Publishing failed:', err);
-    return c.json({
-      success: false,
-      error: 'Publishing failed. Please try again.',
-    }, 500);
+    return c.json({ success: false, error: { message } }, 400);
   }
 });
 
@@ -1053,55 +1134,18 @@ landingPagesRouter.post('/:id/publish', zValidator('json', z.object({
 landingPagesRouter.post('/:id/unpublish', async (c) => {
   const pageId = c.req.param('id');
   const { userId } = c.get('user');
-
-  // Verify ownership
   await checkPageOwnership(pageId, userId);
 
-  const page = await db.query.landingPages.findFirst({ where: eq(landingPages.id, pageId) });
-  if (!page) return c.json({ error: 'Page not found' }, 404);
-
   try {
-    const provider = page.deploymentProvider;
-
-    if (provider === 'builtin' || !provider) {
-      // Delete local file
-      const filePath = join(process.cwd(), '..', '..', 'deploy', 'pages', page.companyId, `${page.slug || pageId}.html`);
-      try { await unlink(filePath); } catch { /* file may already be gone */ }
-
-    } else if (provider === 'wordpress' && page.deploymentId) {
-      const company = await db.query.companies.findFirst({ where: eq(companies.id, page.companyId) });
-      const wpSettings = (company?.settings as any)?.wordpress;
-      if (wpSettings?.siteUrl) {
-        const { CMSIntegration } = await import('../services/cms-integration');
-        const cms = new CMSIntegration();
-        await cms.updatePage(
-          wpSettings.siteUrl, wpSettings.username, wpSettings.appPassword,
-          parseInt(page.deploymentId), { status: 'draft' }
-        );
-      }
-
-    } else if (provider === 'aws' && page.deploymentId) {
-      const company = await db.query.companies.findFirst({ where: eq(companies.id, page.companyId) });
-      const awsSettings = (company?.settings as any)?.aws;
-      if (awsSettings) {
-        const { S3DeployService } = await import('../services/s3-deploy');
-        const s3 = new S3DeployService();
-        await s3.undeployPage({ ...awsSettings, key: page.deploymentId });
-      }
-    }
-
-    await db.update(landingPages).set({
-      status: 'ready',
-      publishedUrl: null,
-      publishedAt: null,
-      deploymentProvider: null,
-      deploymentId: null,
-      updatedAt: new Date(),
-    }).where(eq(landingPages.id, pageId));
-
+    await landingPagePublisher.unpublish(pageId);
     return c.json({ success: true, message: 'Page unpublished' });
   } catch (err) {
-    return c.json({ success: false, error: 'Could not unpublish. Please try again.' }, 500);
+    return c.json({
+      success: false,
+      error: {
+        message: err instanceof Error ? err.message : 'Could not unpublish. Please try again.',
+      },
+    }, 500);
   }
 });
 

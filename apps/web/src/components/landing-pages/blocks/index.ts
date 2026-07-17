@@ -12,4 +12,5 @@ export { TestimonialsBlock } from './testimonials/testimonials-block';
 export { PricingBlock } from './pricing/pricing-block';
 export { FAQBlock } from './faq/faq-block';
 export { CTABlock } from './cta/cta-block';
+export { ImageBlock } from './image/image-block';
 export { FooterBlock } from './footer/footer-block';

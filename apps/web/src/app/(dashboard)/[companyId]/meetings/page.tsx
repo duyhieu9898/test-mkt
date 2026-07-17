@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,12 +30,15 @@ import {
   Lightbulb,
   Target,
   MessageSquare,
+  Trash2,
+  Play,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth-store';
 import { KnowledgeTabs } from '@/components/knowledge/knowledge-tabs';
 import { api } from '@/lib/api/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { friendlyError } from '@/lib/friendly-errors';
 
 const statusConfig: Record<string, { icon: React.ElementType; color: string; label: string }> = {
   uploading: { icon: Clock, color: 'text-blue-600', label: 'Awaiting Transcript' },
@@ -57,6 +60,7 @@ export default function MeetingsPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const discardRecordingRef = useRef(false);
   const [transcriptDialog, setTranscriptDialog] = useState(false);
   const [transcriptTitle, setTranscriptTitle] = useState('');
   const [transcriptText, setTranscriptText] = useState('');
@@ -64,6 +68,15 @@ export default function MeetingsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [expandedMeeting, setExpandedMeeting] = useState<string | null>(null);
   const [selectedMeeting, setSelectedMeeting] = useState<any | null>(null);
+  const [audioPreview, setAudioPreview] = useState<{ meetingId: string; url: string } | null>(null);
+  const audioPreviewUrlRef = useRef<string | null>(null);
+  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  const [meetingToDiscard, setMeetingToDiscard] = useState<any | null>(null);
+  const [isDiscardingMeeting, setIsDiscardingMeeting] = useState(false);
+
+  useEffect(() => () => {
+    if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
+  }, []);
 
   // Fetch meetings
   const { data: meetingsData, isLoading } = useQuery({
@@ -141,17 +154,73 @@ export default function MeetingsPage() {
   const handleApprove = async (meetingId: string) => {
     if (!token) return;
     try {
-      const result = await api.patch<{ knowledgeSaved: number; tasksSaved: number }>(
+      const result = await api.patch<{ knowledgeSaved: number; tasksSaved: number; indexingFailed?: number }>(
         `/meetings/company/${companyId}/${meetingId}/approve`,
         {},
         { token }
       );
-      toast.success(
-        `Approved! ${result.knowledgeSaved} knowledge entries + ${result.tasksSaved} tasks created.`
-      );
+      if (result.indexingFailed) {
+        toast.warning(
+          `Approved ${result.knowledgeSaved} insights and ${result.tasksSaved} tasks. Search indexing will retry automatically.`
+        );
+      } else {
+        toast.success(
+          `Approved! ${result.knowledgeSaved} knowledge entries + ${result.tasksSaved} tasks created.`
+        );
+      }
       queryClient.invalidateQueries({ queryKey: ['meetings'] });
     } catch {
       toast.error('Approve failed');
+    }
+  };
+
+  const closeAudioPreview = () => {
+    if (audioPreviewUrlRef.current) {
+      URL.revokeObjectURL(audioPreviewUrlRef.current);
+      audioPreviewUrlRef.current = null;
+    }
+    setAudioPreview(null);
+  };
+
+  const handleListen = async (meetingId: string) => {
+    if (!token) return;
+    if (audioPreview?.meetingId === meetingId) {
+      closeAudioPreview();
+      return;
+    }
+
+    setLoadingAudioId(meetingId);
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'}/meetings/company/${companyId}/${meetingId}/audio`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!response.ok) throw new Error('Recording is unavailable');
+
+      const blobUrl = URL.createObjectURL(await response.blob());
+      closeAudioPreview();
+      audioPreviewUrlRef.current = blobUrl;
+      setAudioPreview({ meetingId, url: blobUrl });
+    } catch (err) {
+      toast.error(friendlyError(err, "We couldn't play this recording. Please try again."));
+    } finally {
+      setLoadingAudioId(null);
+    }
+  };
+
+  const handleDiscardMeeting = async () => {
+    if (!token || !meetingToDiscard) return;
+    setIsDiscardingMeeting(true);
+    try {
+      await api.delete(`/meetings/company/${companyId}/${meetingToDiscard.id}`, { token });
+      if (audioPreview?.meetingId === meetingToDiscard.id) closeAudioPreview();
+      setMeetingToDiscard(null);
+      toast.success('Meeting recording discarded.');
+      await queryClient.invalidateQueries({ queryKey: ['meetings', companyId] });
+    } catch (err) {
+      toast.error(friendlyError(err, "We couldn't discard this meeting. Please try again."));
+    } finally {
+      setIsDiscardingMeeting(false);
     }
   };
 
@@ -173,6 +242,7 @@ export default function MeetingsPage() {
       const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
+      discardRecordingRef.current = false;
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -180,13 +250,29 @@ export default function MeetingsPage() {
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
-        if (timerRef.current) clearInterval(timerRef.current);
-
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        const file = new File([blob], `recording-${Date.now()}.webm`, { type: 'audio/webm' });
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
 
         setRecordingTime(0);
         setIsRecording(false);
+        mediaRecorderRef.current = null;
+
+        if (discardRecordingRef.current) {
+          discardRecordingRef.current = false;
+          chunksRef.current = [];
+          toast.info('Recording discarded. Nothing was uploaded.');
+          return;
+        }
+
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        chunksRef.current = [];
+        if (blob.size === 0) {
+          toast.error('No audio was recorded. Please try again.');
+          return;
+        }
+        const file = new File([blob], `recording-${Date.now()}.webm`, { type: 'audio/webm' });
 
         // Upload the recording
         await handleUpload(file);
@@ -205,9 +291,20 @@ export default function MeetingsPage() {
 
   // Stop recording
   const handleStopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
+    const recorder = mediaRecorderRef.current;
+    if (recorder && isRecording && recorder.state !== 'inactive') {
+      discardRecordingRef.current = false;
+      recorder.stop();
       toast.success('Recording saved — AI is analyzing...');
+    }
+  };
+
+  // Stop the microphone and clear the browser buffer without uploading it.
+  const handleDiscardRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && isRecording && recorder.state !== 'inactive') {
+      discardRecordingRef.current = true;
+      recorder.stop();
     }
   };
 
@@ -247,9 +344,17 @@ export default function MeetingsPage() {
               </div>
               <p className="font-semibold text-red-700 mb-1">Recording in progress</p>
               <p className="text-3xl font-mono text-red-600 mb-4">{formatTime(recordingTime)}</p>
-              <Button variant="destructive" onClick={handleStopRecording} className="gap-2" size="lg">
-                <span className="w-3 h-3 bg-white rounded-sm" /> Stop Recording
-              </Button>
+              <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-center gap-2">
+                <Button variant="outline" onClick={handleDiscardRecording} className="gap-2 bg-white" size="lg">
+                  <Trash2 className="w-4 h-4" /> Discard
+                </Button>
+                <Button variant="destructive" onClick={handleStopRecording} className="gap-2" size="lg">
+                  <span className="w-3 h-3 bg-white rounded-sm" /> Stop &amp; Save
+                </Button>
+              </div>
+              <p className="text-xs text-red-700/80 mt-3">
+                Stop &amp; Save uploads this recording. Discard deletes it from this device.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -308,11 +413,11 @@ export default function MeetingsPage() {
             return (
               <Card key={meeting.id}>
                 <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
+                  <div className="flex flex-wrap items-start gap-3">
                     <div className="p-2 bg-muted rounded-lg shrink-0">
                       <Mic className="w-4 h-4" />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-[16rem] flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         <p className="font-medium text-sm truncate">{meeting.title}</p>
                         <Badge variant="outline" className={`text-xs gap-1 ${config.color}`}>
@@ -326,6 +431,20 @@ export default function MeetingsPage() {
                         {new Date(meeting.createdAt).toLocaleDateString()}
                         {insights?.summary && ` · ${insights.keyTopics?.length || 0} topics`}
                       </p>
+
+                      {audioPreview?.meetingId === meeting.id && (
+                        <div className="mt-3 rounded-md bg-muted/50 p-2">
+                          <audio
+                            src={audioPreview?.url}
+                            controls
+                            autoPlay
+                            preload="metadata"
+                            className="h-10 w-full"
+                          >
+                            Your browser does not support audio playback.
+                          </audio>
+                        </div>
+                      )}
 
                       {/* Quick insights preview */}
                       {insights && (
@@ -453,15 +572,40 @@ export default function MeetingsPage() {
                     </div>
 
                     {/* Actions */}
-                    <div className="flex gap-1 shrink-0">
-                      {meeting.status === 'analyzed' && (
+                    <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1.5">
+                      {meeting.audioUrl && (
                         <Button
                           size="sm"
                           variant="outline"
-                          className="gap-1 text-green-600"
+                          className="gap-1.5"
+                          disabled={loadingAudioId === meeting.id}
+                          onClick={() => handleListen(meeting.id)}
+                        >
+                          {loadingAudioId === meeting.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5" />
+                          )}
+                          {audioPreview?.meetingId === meeting.id ? 'Hide audio' : 'Listen'}
+                        </Button>
+                      )}
+                      {meeting.status !== 'approved' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="gap-1.5 text-red-600 hover:bg-red-50 hover:text-red-700"
+                          onClick={() => setMeetingToDiscard(meeting)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Discard
+                        </Button>
+                      )}
+                      {meeting.status === 'analyzed' && (
+                        <Button
+                          size="sm"
+                          className="gap-1.5 bg-green-600 text-white hover:bg-green-700"
                           onClick={() => handleApprove(meeting.id)}
                         >
-                          <CheckCircle2 className="w-3 h-3" /> Approve
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Approve
                         </Button>
                       )}
                     </div>
@@ -517,6 +661,50 @@ export default function MeetingsPage() {
                 <Sparkles className="w-4 h-4" />
               )}
               Analyze with AI
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!meetingToDiscard}
+        onOpenChange={(open) => {
+          if (!open && !isDiscardingMeeting) setMeetingToDiscard(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Discard this meeting?</DialogTitle>
+            <DialogDescription>
+              The recording and its AI insights will be permanently removed. Nothing from this
+              meeting will be added to your Knowledge Hub.
+            </DialogDescription>
+          </DialogHeader>
+          {meetingToDiscard?.title && (
+            <div className="rounded-md bg-muted px-3 py-2 text-sm font-medium">
+              {meetingToDiscard.title}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={isDiscardingMeeting}
+              onClick={() => setMeetingToDiscard(null)}
+            >
+              Keep meeting
+            </Button>
+            <Button
+              variant="destructive"
+              className="gap-2"
+              disabled={isDiscardingMeeting}
+              onClick={handleDiscardMeeting}
+            >
+              {isDiscardingMeeting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              Discard permanently
             </Button>
           </DialogFooter>
         </DialogContent>

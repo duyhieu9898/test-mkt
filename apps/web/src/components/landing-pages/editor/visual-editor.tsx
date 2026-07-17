@@ -20,7 +20,8 @@ interface Section {
   content: Record<string, unknown>;
   order: number;
   isVisible?: number;
-  backgroundColor?: string;
+  backgroundColor?: string | null;
+  customStyles?: Record<string, string> | null;
 }
 
 interface PageData {
@@ -44,6 +45,7 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedBlocksRef = useRef<string>('');
+  const lastFailedAutoSaveRef = useRef<string>('');
 
   const {
     initialize,
@@ -55,7 +57,7 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
     isDirty,
   } = useEditorStore();
 
-  const updateSections = useUpdateLandingPageSections();
+  const { mutateAsync: updateSectionsAsync } = useUpdateLandingPageSections();
 
   // Initialize editor with page data
   useEffect(() => {
@@ -65,7 +67,8 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
       content: section.content as BlockContent,
       order: section.order,
       isVisible: section.isVisible !== 0,
-      backgroundColor: section.backgroundColor,
+      backgroundColor: section.backgroundColor ?? undefined,
+      customStyles: section.customStyles ?? undefined,
     }));
 
     initialize(
@@ -82,8 +85,8 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
   }, [page, initialize]);
 
   // Handle save
-  const handleSave = useCallback(async (silent = false) => {
-    if (!editorPage) return;
+  const handleSave = useCallback(async (silent = false): Promise<boolean> => {
+    if (!editorPage) return false;
 
     const sections = blocks.map((block) => ({
       id: block.id,
@@ -92,35 +95,52 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
       order: block.order,
       isVisible: block.isVisible ? 1 : 0,
       backgroundColor: block.backgroundColor,
+      customStyles: block.customStyles,
     }));
 
-    // Check if blocks have changed since last save
-    const blocksJson = JSON.stringify(sections);
-    if (blocksJson === lastSavedBlocksRef.current) {
-      return; // No changes to save
+    const pageSettings = {
+      primaryColor: editorPage.primaryColor,
+      secondaryColor: editorPage.secondaryColor ?? null,
+    };
+
+    // Track both section content and page-level appearance.
+    const editorJson = JSON.stringify({ sections, pageSettings });
+    if (editorJson === lastSavedBlocksRef.current) {
+      return true; // No changes to save
+    }
+    if (silent && editorJson === lastFailedAutoSaveRef.current) {
+      return false; // Wait for another edit or an explicit manual retry.
     }
 
     setSaving(true);
     try {
-      await updateSections.mutateAsync({
+      await updateSectionsAsync({
         pageId: page.id,
         sections,
+        pageSettings,
       });
 
-      lastSavedBlocksRef.current = blocksJson;
+      lastSavedBlocksRef.current = editorJson;
+      lastFailedAutoSaveRef.current = '';
       markSaved();
       if (!silent) {
         toast.success('Changes saved');
       }
+      return true;
     } catch (error) {
       console.error('Failed to save:', error);
-      if (!silent) {
-        toast.error('Failed to save changes');
-      }
+      lastFailedAutoSaveRef.current = editorJson;
+      toast.error(
+        silent
+          ? 'Autosave failed. Your changes are still in the editor.'
+          : 'Failed to save changes',
+        { id: 'landing-page-save-error' },
+      );
+      return false;
     } finally {
       setSaving(false);
     }
-  }, [editorPage, blocks, page.id, updateSections, markSaved, setSaving]);
+  }, [editorPage, blocks, page.id, updateSectionsAsync, markSaved, setSaving]);
 
   // Auto-save effect: save draft when blocks change
   useEffect(() => {
@@ -151,7 +171,8 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
   // Handle publish — save first, then open the publish dialog
   const handlePublish = useCallback(async () => {
     if (!editorPage) return;
-    await handleSave(true);
+    const saved = await handleSave(true);
+    if (!saved) return;
     setPublishDialogOpen(true);
   }, [editorPage, handleSave]);
 
@@ -213,7 +234,9 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
   return (
     <div className="h-screen flex flex-col bg-background">
       <EditorToolbar
-        onSave={handleSave}
+        onSave={async () => {
+          await handleSave(false);
+        }}
         onBack={handleBack}
         onPublish={handlePublish}
         pageSlug={page.slug}
@@ -224,6 +247,7 @@ export function VisualEditor({ page, companyId }: VisualEditorProps) {
       <div className="flex-1 flex overflow-hidden">
         <EditorCanvas primaryColor={primaryColor} />
         <EditorSidebar
+          companyId={companyId}
           primaryColor={primaryColor}
           onPrimaryColorChange={handlePrimaryColorChange}
         />

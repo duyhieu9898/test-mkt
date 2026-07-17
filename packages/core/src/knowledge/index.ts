@@ -13,6 +13,17 @@ import {
 } from './skill-knowledge.generated';
 
 export {
+  getDepartmentSkillPolicy,
+  normalizeDepartment,
+  renderDepartmentPolicy,
+  resolveSkillsForTask,
+  type DepartmentKey,
+  type DepartmentSkillPolicy,
+  type SkillResolution,
+  type SkillResolutionInput,
+} from './department-skill-policy';
+
+export {
   MARKETING_SKILL_KNOWLEDGE,
   MARKETING_SKILL_NAMES,
   type MarketingSkillName,
@@ -39,7 +50,7 @@ export const MARKETING_SKILL_CATEGORIES: { category: string; skills: string[] }[
   },
   {
     category: 'Content & Copy',
-    skills: ['copywriting', 'copy-editing', 'cold-email', 'emails', 'social', 'sms', 'image', 'video'],
+    skills: ['copywriting', 'copy-editing', 'cold-email', 'emails', 'social', 'sms', 'image', 'video', 'public-relations'],
   },
   {
     category: 'Paid & Measurement',
@@ -51,11 +62,11 @@ export const MARKETING_SKILL_CATEGORIES: { category: string; skills: string[] }[
   },
   {
     category: 'Sales & GTM',
-    skills: ['revops', 'sales-enablement', 'launch', 'pricing'],
+    skills: ['revops', 'sales-enablement', 'launch', 'pricing', 'prospecting'],
   },
   {
     category: 'Strategy',
-    skills: ['marketing-ideas', 'marketing-psychology', 'product-marketing'],
+    skills: ['marketing-ideas', 'marketing-psychology', 'product-marketing', 'marketing-plan', 'offers'],
   },
 ];
 

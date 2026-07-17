@@ -38,8 +38,8 @@ import { TodaysFocus } from '@/components/dashboard/todays-focus';
 import { SystemProgressBars } from '@/components/dashboard/system-progress-bars';
 import { MilestoneToast } from '@/components/dashboard/milestone-toast';
 import { AchievementsPanel } from '@/components/dashboard/achievements-panel';
-import { useBrandIq } from '@/lib/api/brand-iq-hooks';
-import Link from 'next/link';
+import { AiTeamOverview } from '@/components/dashboard/ai-team-overview';
+import { GettingStartedHub } from '@/components/dashboard/getting-started-hub';
 
 // === Types (kept for backward compat with advisor brief query) ===
 
@@ -139,7 +139,14 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <BrandIqSetupBanner companyId={companyId} />
+      <GettingStartedHub
+        companyId={companyId}
+        advisorReady={Boolean(briefQ.data?.brief)}
+        advisorRecommendation={briefQ.data?.brief?.actions?.[0]}
+        competitorCount={competitorsCount}
+        externalStatusLoading={briefQ.isLoading || competitorsQ.isLoading}
+        externalStatusError={briefQ.isError || competitorsQ.isError}
+      />
 
       {/* Growth Score + Today's Focus */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -160,6 +167,8 @@ export default function DashboardPage() {
           />
         </div>
       </div>
+
+      <AiTeamOverview companyId={companyId} />
 
       {/* System Progress Bars */}
       <SystemProgressBars data={growthScoreQ.data} loading={growthScoreQ.isLoading} />
@@ -238,32 +247,5 @@ export default function DashboardPage() {
         campaignsCount={campaignsCount}
       />
     </div>
-  );
-}
-
-function BrandIqSetupBanner({ companyId }: { companyId: string }) {
-  const { data: profile, isLoading } = useBrandIq(companyId);
-  // Hide while loading or when profile already exists — only nudge first-time users.
-  if (isLoading || profile) return null;
-  return (
-    <Card className="border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50">
-      <CardContent className="p-4 flex items-center gap-4 flex-wrap">
-        <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-          <Sparkles className="w-5 h-5 text-amber-700" />
-        </div>
-        <div className="flex-1 min-w-[200px]">
-          <div className="font-semibold text-sm text-amber-900">Set up Brand IQ first</div>
-          <p className="text-xs text-amber-800/80 mt-0.5">
-            One-time, 30 seconds. After this, every blog / banner / ad / chat reply uses your real
-            voice and audience instead of generic AI tone. Most impactful single setup step.
-          </p>
-        </div>
-        <Link href={`/${companyId}/brand-iq`}>
-          <Button size="sm" className="gap-1 bg-amber-600 hover:bg-amber-700">
-            Set up now <ArrowRight className="w-3 h-3" />
-          </Button>
-        </Link>
-      </CardContent>
-    </Card>
   );
 }

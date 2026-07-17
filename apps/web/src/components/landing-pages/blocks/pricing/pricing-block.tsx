@@ -2,7 +2,10 @@
 
 import { CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { PricingContent } from '@1person/workflow/landing-pages/blocks';
+import {
+  normalizeLandingPageLink,
+  type PricingContent,
+} from '@1person/workflow/landing-pages/blocks';
 
 interface PricingBlockProps {
   content: PricingContent;
@@ -81,11 +84,19 @@ export function PricingBlock({
                 ))}
               </ul>
               <Button
+                asChild
                 className="w-full"
                 style={plan.featured ? { backgroundColor: primaryColor } : undefined}
                 variant={plan.featured ? 'default' : 'outline'}
               >
-                {plan.ctaText || 'Get Started'}
+                <a
+                  href={normalizeLandingPageLink(plan.ctaUrl)}
+                  target={!isEditing && plan.ctaOpenInNewTab ? '_blank' : undefined}
+                  rel={!isEditing && plan.ctaOpenInNewTab ? 'noopener noreferrer' : undefined}
+                  onClick={isEditing ? handleFieldClick(['plans', String(i), 'ctaText']) : undefined}
+                >
+                  {plan.ctaText || 'Get Started'}
+                </a>
               </Button>
             </div>
           ))}

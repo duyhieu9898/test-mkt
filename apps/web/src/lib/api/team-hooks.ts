@@ -13,13 +13,18 @@ export interface EmployeeKpi {
 }
 
 export interface EmployeeCard {
+  id: string;
   slug: string;
   name: string;
+  role: string;
   roleTitle: string;
   department: string;
   avatarEmoji: string;
   accentColor: string;
   intro: string;
+  status: string;
+  supervisorId?: string;
+  responsibilities: string[];
   specialties?: string[];
   kpis: EmployeeKpi[];
 }

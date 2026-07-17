@@ -165,7 +165,10 @@ export default function ContentHubPage() {
 
   // WordPress categories
   const [wpCategories, setWpCategories] = useState<Array<{ id: number; name: string }>>([]);
+  const [wpPages, setWpPages] = useState<Array<{ id: number; title: string; slug: string; link: string; parent: number }>>([]);
+  const [publishPlacement, setPublishPlacement] = useState<'post_category' | 'child_page'>('post_category');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [selectedParentPage, setSelectedParentPage] = useState<string>('');
 
   // Blog expand/preview
   const [expandedBlog, setExpandedBlog] = useState<string | null>(null);
@@ -273,12 +276,24 @@ export default function ContentHubPage() {
     enabled: !!token && !!wpStatus?.connected,
   });
 
+  const { data: wpPagesData } = useQuery<{ pages: Array<{ id: number; title: string; slug: string; link: string; parent: number }> }>({
+    queryKey: ['wp-pages', companyId],
+    queryFn: () => api.get(`/seo-engine/company/${companyId}/wordpress/pages`, { token: token! }),
+    enabled: !!token && !!wpStatus?.connected,
+  });
+
   // Sync fetched categories to state
   useEffect(() => {
     if (wpCategoriesData?.categories?.length && wpCategories.length === 0) {
       setWpCategories(wpCategoriesData.categories);
     }
   }, [wpCategoriesData?.categories]);
+
+  useEffect(() => {
+    if (wpPagesData?.pages?.length && wpPages.length === 0) {
+      setWpPages(wpPagesData.pages);
+    }
+  }, [wpPagesData?.pages]);
 
   // ─── Derived data ───────────────────────────────────────────
 
@@ -408,6 +423,19 @@ export default function ContentHubPage() {
     }
   };
 
+  const buildPublishPlacementPayload = () => ({
+    status: publishStatus,
+    placement: publishPlacement === 'child_page'
+      ? {
+        type: 'child_page' as const,
+        parentPageId: selectedParentPage ? parseInt(selectedParentPage) : undefined,
+      }
+      : {
+        type: 'post_category' as const,
+        categoryId: selectedCategory ? parseInt(selectedCategory) : undefined,
+      },
+  });
+
   const handlePublish = async () => {
     if (selectedPosts.size === 0) {
       toast.error('Select at least one blog post to publish');
@@ -420,15 +448,14 @@ export default function ContentHubPage() {
         `/seo-engine/company/${companyId}/publish-blogs`,
         {
           blogPostIds: Array.from(selectedPosts),
-          status: publishStatus,
-          categoryId: selectedCategory ? parseInt(selectedCategory) : undefined,
+          ...buildPublishPlacementPayload(),
         },
         { token: token! }
       );
       toast.success(res.message);
       setSelectedPosts(new Set());
     } catch (err: any) {
-      toast.error(err.message || 'Could not publish to WordPress');
+      toast.error(err.message || 'Could not publish to website destination');
     } finally {
       setIsPublishing(false);
     }
@@ -460,7 +487,7 @@ export default function ContentHubPage() {
       setPublishPreviewOpen(true);
     } else {
       // Multiple posts — publish directly with confirmation
-      if (confirm(`Publish ${selectedPostsList.length} posts to WordPress?`)) {
+      if (confirm(`Publish ${selectedPostsList.length} posts to the website destination?`)) {
         handlePublish();
       }
     }
@@ -474,12 +501,11 @@ export default function ContentHubPage() {
         `/seo-engine/company/${companyId}/publish-blogs`,
         {
           blogPostIds: [previewBlog.id],
-          status: publishStatus,
-          categoryId: selectedCategory ? parseInt(selectedCategory) : undefined,
+          ...buildPublishPlacementPayload(),
         },
         { token: token! }
       );
-      toast.success(res.message || 'Published to WordPress');
+      toast.success(res.message || 'Published to website destination');
       setPublishPreviewOpen(false);
       setSelectedPosts(new Set());
       qc.invalidateQueries({ queryKey: ['seo-results'] });
@@ -905,7 +931,7 @@ export default function ContentHubPage() {
                         <span className="text-[10px] text-muted-foreground">{post.word_count || post.wordCount} words</span>
                         {post.status === 'pushed_to_cms' || post.cmsPostUrl ? (
                           <div className="flex items-center gap-1">
-                            <Badge className="bg-green-100 text-green-700 text-[10px]">On WordPress</Badge>
+                            <Badge className="bg-green-100 text-green-700 text-[10px]">Sent to website</Badge>
                             {post.cmsPostUrl && (
                               <a href={post.cmsPostUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                                 <ExternalLink className="w-2.5 h-2.5" /> View
@@ -937,7 +963,7 @@ export default function ContentHubPage() {
                           togglePost(post.id);
                           document.getElementById('wp-publish-section')?.scrollIntoView({ behavior: 'smooth' });
                         }}>
-                          <Globe className="w-3 h-3" /> Publish to WordPress
+                          <Globe className="w-3 h-3" /> Publish to website
                         </Button>
                       </div>
                     </div>
@@ -970,13 +996,38 @@ export default function ContentHubPage() {
 
                 {blogPosts.length > 0 && (
                   <div className="space-y-3">
-                    {/* Category selector */}
-                    {wpCategories.length > 0 && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">Where should this appear?</Label>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() => setPublishPlacement('post_category')}
+                          className={`rounded-lg border p-3 text-left text-xs transition-colors ${
+                            publishPlacement === 'post_category' ? 'border-primary bg-primary/5' : 'hover:bg-muted/40'
+                          }`}
+                        >
+                          <span className="font-medium">Blog area</span>
+                          <span className="mt-1 block text-muted-foreground">Best for articles. Choose a category.</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPublishPlacement('child_page')}
+                          className={`rounded-lg border p-3 text-left text-xs transition-colors ${
+                            publishPlacement === 'child_page' ? 'border-primary bg-primary/5' : 'hover:bg-muted/40'
+                          }`}
+                        >
+                          <span className="font-medium">Under an existing page</span>
+                          <span className="mt-1 block text-muted-foreground">Creates a page below Home, Products, Careers...</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {publishPlacement === 'post_category' && wpCategories.length > 0 && (
                       <div>
-                        <Label className="text-xs">Publish to category</Label>
+                        <Label className="text-xs">Blog category</Label>
                         <Select value={selectedCategory} onValueChange={setSelectedCategory}>
                           <SelectTrigger className="h-8 text-xs mt-1">
-                            <SelectValue placeholder="Select category..." />
+                            <SelectValue placeholder="No category selected" />
                           </SelectTrigger>
                           <SelectContent>
                             {wpCategories.map(cat => (
@@ -984,6 +1035,27 @@ export default function ContentHubPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                      </div>
+                    )}
+
+                    {publishPlacement === 'child_page' && (
+                      <div>
+                        <Label className="text-xs">Parent page</Label>
+                        <Select value={selectedParentPage} onValueChange={setSelectedParentPage}>
+                          <SelectTrigger className="h-8 text-xs mt-1">
+                            <SelectValue placeholder="Choose a page..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {wpPages.map(page => (
+                              <SelectItem key={page.id} value={String(page.id)}>
+                                {page.title}{page.slug ? ` /${page.slug}` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          The article becomes a new child page under the page you choose.
+                        </p>
                       </div>
                     )}
 
@@ -1005,7 +1077,7 @@ export default function ContentHubPage() {
                     <Button
                       className="w-full gap-2"
                       onClick={handlePublishClick}
-                      disabled={selectedPosts.size === 0 || isPublishing}
+                      disabled={selectedPosts.size === 0 || isPublishing || (publishPlacement === 'child_page' && !selectedParentPage)}
                     >
                       {isPublishing ? (
                         <>
@@ -1015,7 +1087,7 @@ export default function ContentHubPage() {
                       ) : (
                         <>
                           <ArrowRight className="w-4 h-4" />
-                          Push {selectedPosts.size} post{selectedPosts.size !== 1 ? 's' : ''} to WordPress
+                          Push {selectedPosts.size} post{selectedPosts.size !== 1 ? 's' : ''} to website
                         </>
                       )}
                     </Button>
@@ -1063,36 +1135,83 @@ export default function ContentHubPage() {
             </div>
 
             {/* Publish settings */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-3">
               <div>
-                <Label className="text-xs">Category</Label>
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger className="h-8 text-xs mt-1"><SelectValue placeholder="Select category..." /></SelectTrigger>
-                  <SelectContent>
-                    {wpCategories.map(cat => (
-                      <SelectItem key={cat.id} value={String(cat.id)}>{cat.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label className="text-xs">Where should this appear?</Label>
+                <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setPublishPlacement('post_category')}
+                    className={`rounded-lg border p-3 text-left text-xs ${
+                      publishPlacement === 'post_category' ? 'border-primary bg-primary/5' : 'hover:bg-muted/40'
+                    }`}
+                  >
+                    <span className="font-medium">Blog area</span>
+                    <span className="mt-1 block text-muted-foreground">Publish as a blog post.</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPublishPlacement('child_page')}
+                    className={`rounded-lg border p-3 text-left text-xs ${
+                      publishPlacement === 'child_page' ? 'border-primary bg-primary/5' : 'hover:bg-muted/40'
+                    }`}
+                  >
+                    <span className="font-medium">Under an existing page</span>
+                    <span className="mt-1 block text-muted-foreground">Create a child page.</span>
+                  </button>
+                </div>
               </div>
-              <div>
-                <Label className="text-xs">Publish as</Label>
-                <Select value={publishStatus} onValueChange={(v) => setPublishStatus(v as any)}>
-                  <SelectTrigger className="h-8 text-xs mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="draft">Draft (review first)</SelectItem>
-                    <SelectItem value="publish">Publish immediately</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="grid grid-cols-2 gap-3">
+                {publishPlacement === 'post_category' ? (
+                  <div>
+                    <Label className="text-xs">Blog category</Label>
+                    <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                      <SelectTrigger className="h-8 text-xs mt-1"><SelectValue placeholder="No category selected" /></SelectTrigger>
+                      <SelectContent>
+                        {wpCategories.map(cat => (
+                          <SelectItem key={cat.id} value={String(cat.id)}>{cat.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <div>
+                    <Label className="text-xs">Parent page</Label>
+                    <Select value={selectedParentPage} onValueChange={setSelectedParentPage}>
+                      <SelectTrigger className="h-8 text-xs mt-1"><SelectValue placeholder="Choose a page..." /></SelectTrigger>
+                      <SelectContent>
+                        {wpPages.map(page => (
+                          <SelectItem key={page.id} value={String(page.id)}>
+                            {page.title}{page.slug ? ` /${page.slug}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <div>
+                  <Label className="text-xs">Publish as</Label>
+                  <Select value={publishStatus} onValueChange={(v) => setPublishStatus(v as any)}>
+                    <SelectTrigger className="h-8 text-xs mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="draft">Draft (review first)</SelectItem>
+                      <SelectItem value="publish">Publish immediately</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setPublishPreviewOpen(false)}>Cancel</Button>
-            <Button onClick={handlePublishWithPreview} disabled={isPublishing} className="gap-2">
+            <Button
+              onClick={handlePublishWithPreview}
+              disabled={isPublishing || (publishPlacement === 'child_page' && !selectedParentPage)}
+              className="gap-2"
+            >
               {isPublishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
-              Publish to WordPress
+              Publish to website
             </Button>
           </DialogFooter>
         </DialogContent>

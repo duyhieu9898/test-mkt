@@ -1,26 +1,26 @@
 'use client';
 
-import {
-  MoreHorizontal,
-  MessageCircle,
-  Repeat2,
-  Heart,
-  BarChart2,
-  Bookmark,
-  Share,
-  BadgeCheck,
-} from 'lucide-react';
+import type { ReactNode } from 'react';
+import { BadgeCheck, BarChart2, Bookmark, Heart, MessageCircle, MoreHorizontal, Repeat2, Share } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { PostPreviewMetrics } from './index';
+import { ExpandablePostText } from './expandable-post-text';
+import { PostMediaGrid } from './post-media-grid';
+import { formatPostMetric, formatPostTimestamp, hasPostMetrics } from './post-preview-meta';
 
 export interface XPostPreviewProps {
   content: string;
   hashtags?: string[] | null;
   brandName: string;
   brandAvatarUrl?: string;
-  timestamp?: string;
+  timestamp?: string | null;
+  isPublished?: boolean;
+  metrics?: PostPreviewMetrics | null;
   imageUrl?: string;
+  mediaUrls?: string[] | null;
   verified?: boolean;
   darkMode?: boolean;
+  headerAction?: ReactNode;
 }
 
 const X_BLUE = '#1D9BF0';
@@ -38,111 +38,77 @@ export function XPostPreview({
   hashtags,
   brandName,
   brandAvatarUrl,
-  timestamp = '2h',
+  timestamp,
+  isPublished = false,
+  metrics,
   imageUrl,
-  verified = true,
+  mediaUrls,
+  verified = false,
   darkMode = false,
+  headerAction,
 }: XPostPreviewProps) {
+  const images = mediaUrls?.length ? mediaUrls : imageUrl ? [imageUrl] : [];
   const bg = darkMode ? 'bg-black' : 'bg-white';
   const border = darkMode ? 'border-neutral-800' : 'border-slate-200';
   const primaryText = darkMode ? 'text-white' : 'text-slate-900';
   const mutedText = darkMode ? 'text-neutral-500' : 'text-slate-500';
   const hoverBg = darkMode ? 'hover:bg-neutral-900' : 'hover:bg-slate-50';
+  const publishedTime = formatPostTimestamp(timestamp);
+  const showMetrics = isPublished && hasPostMetrics(metrics);
 
   return (
-    <div
-      className={cn(
-        'w-full max-w-md rounded-xl border shadow-sm overflow-hidden font-sans',
-        bg,
-        border,
-      )}
-    >
-      <div className="p-3 flex gap-3">
+    <div className={cn('w-full max-w-md overflow-hidden rounded-xl border font-sans shadow-sm', bg, border)}>
+      <div className="flex gap-3 p-3">
         {brandAvatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={brandAvatarUrl}
-            alt={brandName}
-            className="w-10 h-10 rounded-full object-cover flex-shrink-0"
-          />
+          <img src={brandAvatarUrl} alt={brandName} className="h-10 w-10 flex-shrink-0 rounded-full object-cover" />
         ) : (
-          <div
-            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold flex-shrink-0"
-            style={{ backgroundColor: X_BLUE }}
-          >
+          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full font-semibold text-white" style={{ backgroundColor: X_BLUE }}>
             {initialOf(brandName)}
           </div>
         )}
 
-        <div className="flex-1 min-w-0">
-          {/* Header row */}
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1 text-[15px]">
-            <span className={cn('font-bold truncate', primaryText)}>{brandName}</span>
-            {verified && (
-              <BadgeCheck className="w-4 h-4 flex-shrink-0" style={{ color: X_BLUE }} fill={X_BLUE} stroke={darkMode ? '#000' : '#fff'} />
-            )}
+            <span className={cn('truncate font-bold', primaryText)} title={brandName}>{brandName}</span>
+            {verified && <BadgeCheck className="h-4 w-4 flex-shrink-0" style={{ color: X_BLUE }} fill={X_BLUE} stroke={darkMode ? '#000' : '#fff'} />}
             <span className={cn('truncate', mutedText)}>@{handleFrom(brandName)}</span>
-            <span className={mutedText}>·</span>
-            <span className={mutedText}>{timestamp}</span>
-            <button
-              type="button"
-              className={cn('ml-auto p-1 rounded-full', hoverBg, mutedText)}
-              aria-label="More"
-            >
-              <MoreHorizontal className="w-4 h-4" />
-            </button>
+            {isPublished && publishedTime && <span className={mutedText} aria-hidden>·</span>}
+            {isPublished && publishedTime && <span className={mutedText}>{publishedTime}</span>}
+            {!isPublished && <span className={mutedText}>Draft preview</span>}
+            <div className="ml-auto shrink-0">
+              {headerAction ?? (
+                <button type="button" className={cn('rounded-full p-1', hoverBg, mutedText)} aria-label="More">
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Content */}
-          <p className={cn('mt-1 text-[15px] leading-snug whitespace-pre-wrap break-words', primaryText)}>
-            {content}
-          </p>
+          <ExpandablePostText
+            text={content}
+            threshold={180}
+            className={cn('mt-1 whitespace-pre-wrap break-words text-[15px] leading-snug', primaryText)}
+            buttonClassName={cn(mutedText, 'hover:text-slate-700')}
+          />
           {hashtags && hashtags.length > 0 && (
-            <p className="mt-1 text-[15px] leading-snug break-words">
-              {hashtags.map((h, i) => (
-                <span key={i} className="mr-1" style={{ color: X_BLUE }}>
-                  {h.startsWith('#') ? h : `#${h}`}
+            <p className="mt-1 break-words text-[15px] leading-snug">
+              {hashtags.map((hashtag) => (
+                <span key={hashtag} className="mr-1" style={{ color: X_BLUE }}>
+                  {hashtag.startsWith('#') ? hashtag : `#${hashtag}`}
                 </span>
               ))}
             </p>
           )}
 
-          {/* Optional image */}
-          {imageUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={imageUrl}
-              alt=""
-              className={cn('mt-2 rounded-2xl border w-full object-cover max-h-80', border)}
-            />
-          )}
+          <PostMediaGrid images={images} imageClassName={cn('mt-2 rounded-2xl border', border)} className={cn('mt-2 overflow-hidden rounded-2xl border', border)} />
 
-          {/* Action bar */}
           <div className={cn('mt-3 flex items-center justify-between text-xs', mutedText)}>
-            <button type="button" className="flex items-center gap-1.5 hover:text-[#1D9BF0]">
-              <MessageCircle className="w-4 h-4" />
-              <span>42</span>
-            </button>
-            <button type="button" className="flex items-center gap-1.5 hover:text-green-500">
-              <Repeat2 className="w-4 h-4" />
-              <span>128</span>
-            </button>
-            <button type="button" className="flex items-center gap-1.5 hover:text-pink-500">
-              <Heart className="w-4 h-4" />
-              <span>1.2K</span>
-            </button>
-            <button type="button" className="flex items-center gap-1.5 hover:text-[#1D9BF0]">
-              <BarChart2 className="w-4 h-4" />
-              <span>24K</span>
-            </button>
-            <div className="flex items-center gap-1">
-              <button type="button" className="p-1 rounded-full hover:text-[#1D9BF0]">
-                <Bookmark className="w-4 h-4" />
-              </button>
-              <button type="button" className="p-1 rounded-full hover:text-[#1D9BF0]">
-                <Share className="w-4 h-4" />
-              </button>
-            </div>
+            <span className="flex items-center gap-1.5"><MessageCircle className="h-4 w-4" />{showMetrics && formatPostMetric(metrics?.comments ?? 0)}</span>
+            <span className="flex items-center gap-1.5"><Repeat2 className="h-4 w-4" />{showMetrics && formatPostMetric(metrics?.shares ?? 0)}</span>
+            <span className="flex items-center gap-1.5"><Heart className="h-4 w-4" />{showMetrics && formatPostMetric(metrics?.reactions ?? 0)}</span>
+            <span className="flex items-center gap-1.5"><BarChart2 className="h-4 w-4" />{showMetrics && typeof metrics?.views === 'number' ? formatPostMetric(metrics.views) : null}</span>
+            <div className="flex items-center gap-1"><Bookmark className="h-4 w-4" /><Share className="h-4 w-4" /></div>
           </div>
         </div>
       </div>

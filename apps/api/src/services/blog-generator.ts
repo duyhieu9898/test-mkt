@@ -27,6 +27,7 @@ export class BlogGenerator {
       language: string;
       relatedProducts?: string[];
       targetWordCount?: number;
+      sourceContext?: string;
     }
   ): Promise<{
     title: string;
@@ -66,6 +67,11 @@ Search intent: ${options.searchIntent}
 Related products to mention naturally: ${options.relatedProducts?.join(', ') || 'none'}
 Target word count: ${wordCount}
 Language: ${options.language}
+${options.sourceContext ? `
+Founder-provided source context:
+${options.sourceContext}
+
+Use this source context to shape the angle, examples, proof points, and terminology. Do not invent facts beyond it.` : ''}
 
 Return JSON:
 {
@@ -122,6 +128,11 @@ Title: ${outline.title}
 Keyword: ${options.keyword}
 Search intent: ${options.searchIntent}
 Company: ${ctx.companyName} (${ctx.industry})
+${options.sourceContext ? `
+Founder-provided source context:
+${options.sourceContext}
+
+Use the source context where relevant, but keep the article coherent and SEO-focused.` : ''}
 
 Outline:
 ${JSON.stringify(outline.sections, null, 2)}

@@ -1,19 +1,25 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle2, Edit3, Globe, Users, Target, Package, TrendingUp } from 'lucide-react';
+import { CheckCircle2, Edit3, Globe, Loader2, Save, Users, Target, Package, TrendingUp, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import type { DetectedInfo, WebsiteAnalysis } from '@/lib/ftux/types';
+import { Progress } from '@/components/ui/progress';
+import type { DetectedBusinessInfo, DetectedInfo, WebsiteAnalysis } from '@/lib/ftux/types';
 
 interface BusinessConfirmationViewProps {
   detectedInfo: DetectedInfo;
   websiteAnalysis: WebsiteAnalysis | null;
   companyName: string;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
+  onSave: (details: DetectedBusinessInfo) => Promise<void>;
+  isConfirming?: boolean;
+  confirmError?: string | null;
   onBack: () => void;
 }
 
@@ -22,11 +28,124 @@ export function BusinessConfirmationView({
   websiteAnalysis,
   companyName,
   onConfirm,
+  onSave,
+  isConfirming = false,
+  confirmError,
   onBack,
 }: BusinessConfirmationViewProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [finalizationSeconds, setFinalizationSeconds] = useState(0);
 
   const businessInfo = websiteAnalysis?.businessInfo;
+  const initialDetails = useMemo<DetectedBusinessInfo>(() => ({
+    companyName: businessInfo?.companyName || companyName,
+    industry: businessInfo?.industry || businessInfo?.market || detectedInfo.market,
+    market: businessInfo?.market || detectedInfo.market,
+    model: businessInfo?.model || detectedInfo.model,
+    audience: businessInfo?.audience || 'General audience',
+    strategy: businessInfo?.strategy || detectedInfo.strategy,
+    offerings: businessInfo?.offerings || [],
+    valueProposition: businessInfo?.valueProposition || '',
+  }), [businessInfo, companyName, detectedInfo]);
+  const [details, setDetails] = useState(initialDetails);
+  const [draft, setDraft] = useState(initialDetails);
+
+  useEffect(() => {
+    if (!isConfirming) {
+      setFinalizationSeconds(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setFinalizationSeconds((Date.now() - startedAt) / 1000);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [isConfirming]);
+
+  const estimatedProgress = useMemo(() => {
+    if (finalizationSeconds < 10) return 8 + (finalizationSeconds / 10) * 24;
+    if (finalizationSeconds < 28) return 32 + ((finalizationSeconds - 10) / 18) * 30;
+    if (finalizationSeconds < 52) return 62 + ((finalizationSeconds - 28) / 24) * 24;
+    return Math.min(94, 86 + ((finalizationSeconds - 52) / 30) * 8);
+  }, [finalizationSeconds]);
+
+  const finalizationStages = [
+    {
+      label: 'Building your Growth Plan',
+      detail: 'Turning your business context into practical priorities.',
+      startsAt: 0,
+    },
+    {
+      label: 'Creating your Brand IQ',
+      detail: 'Defining audience, positioning, voice, and brand guidance.',
+      startsAt: 32,
+    },
+    {
+      label: 'Preparing your first CEO advice',
+      detail: 'Prioritizing the most useful next actions for your company.',
+      startsAt: 62,
+    },
+    {
+      label: 'Saving and checking everything',
+      detail: 'Making sure your company intelligence is ready to use.',
+      startsAt: 86,
+    },
+  ];
+  const activeFinalizationStage = finalizationStages.reduce(
+    (active, stage, index) => estimatedProgress >= stage.startsAt ? index : active,
+    0,
+  );
+
+  const startEditing = () => {
+    setDraft(details);
+    setSaveError(null);
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setDraft(details);
+    setSaveError(null);
+    setIsEditing(false);
+  };
+
+  const updateDraft = (field: keyof DetectedBusinessInfo, value: string | string[]) => {
+    setDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleSave = async () => {
+    const normalized = {
+      ...draft,
+      companyName: draft.companyName.trim(),
+      industry: draft.industry.trim(),
+      market: draft.market.trim(),
+      model: draft.model.trim(),
+      audience: draft.audience.trim(),
+      strategy: draft.strategy.trim(),
+      valueProposition: draft.valueProposition.trim(),
+      offerings: draft.offerings.map((item) => item.trim()).filter(Boolean),
+    };
+
+    if (!normalized.companyName || !normalized.market || !normalized.model || !normalized.audience) {
+      setSaveError('Add a company name, market, business model, and target audience before saving.');
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await onSave(normalized);
+      setDetails(normalized);
+      setDraft(normalized);
+      setIsEditing(false);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save your changes. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -62,7 +181,7 @@ export function BusinessConfirmationView({
             <CardContent className="pt-6 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-xl font-semibold">{businessInfo?.companyName || companyName}</h3>
+                  <h3 className="text-xl font-semibold">{details.companyName}</h3>
                   {websiteAnalysis && (
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-xs font-medium text-muted-foreground">AI Confidence:</span>
@@ -79,58 +198,173 @@ export function BusinessConfirmationView({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setIsEditing(!isEditing)}
+                  onClick={isEditing ? cancelEditing : startEditing}
                   className="gap-1"
+                  disabled={isSaving}
                 >
-                  <Edit3 className="w-3 h-3" />
-                  Edit
+                  {isEditing ? <X className="w-3 h-3" /> : <Edit3 className="w-3 h-3" />}
+                  {isEditing ? 'Cancel' : 'Edit'}
                 </Button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="flex items-start gap-3">
-                  <Target className="w-5 h-5 text-blue-500 mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Market</p>
-                    <p className="font-medium">{businessInfo?.market || detectedInfo.market}</p>
+              {isEditing ? (
+                <div className="space-y-5 border-t pt-5">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="business-company-name">Company name</Label>
+                      <Input
+                        id="business-company-name"
+                        value={draft.companyName}
+                        onChange={(event) => updateDraft('companyName', event.target.value)}
+                        disabled={isSaving}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="business-industry">Industry</Label>
+                      <Input
+                        id="business-industry"
+                        value={draft.industry}
+                        onChange={(event) => updateDraft('industry', event.target.value)}
+                        placeholder="Example: Food and beverage"
+                        disabled={isSaving}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="business-market">Market</Label>
+                      <Input
+                        id="business-market"
+                        value={draft.market}
+                        onChange={(event) => updateDraft('market', event.target.value)}
+                        disabled={isSaving}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="business-model">Business model</Label>
+                      <Input
+                        id="business-model"
+                        value={draft.model}
+                        onChange={(event) => updateDraft('model', event.target.value)}
+                        placeholder="Example: Online sales and delivery"
+                        disabled={isSaving}
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex items-start gap-3">
-                  <Package className="w-5 h-5 text-purple-500 mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Business Model</p>
-                    <p className="font-medium">{businessInfo?.model || detectedInfo.model}</p>
+                  <div className="space-y-2">
+                    <Label htmlFor="business-audience">Target audience</Label>
+                    <Textarea
+                      id="business-audience"
+                      value={draft.audience}
+                      onChange={(event) => updateDraft('audience', event.target.value)}
+                      placeholder="Who is most likely to buy from you?"
+                      rows={2}
+                      disabled={isSaving}
+                    />
                   </div>
-                </div>
 
-                <div className="flex items-start gap-3">
-                  <Users className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Target Audience</p>
-                    <p className="font-medium">{businessInfo?.audience || 'General audience'}</p>
+                  <div className="space-y-2">
+                    <Label htmlFor="business-offerings">Products or services</Label>
+                    <Textarea
+                      id="business-offerings"
+                      value={draft.offerings.join('\n')}
+                      onChange={(event) => updateDraft('offerings', event.target.value.split('\n'))}
+                      placeholder={'Add one item per line\nExample: In-store dining\nHome delivery'}
+                      rows={3}
+                      disabled={isSaving}
+                    />
                   </div>
-                </div>
 
-                <div className="flex items-start gap-3">
-                  <TrendingUp className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Strategy</p>
-                    <p className="font-medium">{businessInfo?.strategy || detectedInfo.strategy}</p>
+                  <div className="space-y-2">
+                    <Label htmlFor="business-value">What makes your business valuable?</Label>
+                    <Textarea
+                      id="business-value"
+                      value={draft.valueProposition}
+                      onChange={(event) => updateDraft('valueProposition', event.target.value)}
+                      placeholder="Describe the main reason customers choose you."
+                      rows={2}
+                      disabled={isSaving}
+                    />
                   </div>
-                </div>
-              </div>
 
-              {/* Offerings */}
-              {businessInfo?.offerings && businessInfo.offerings.length > 0 && (
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground mb-2">Core Offerings</p>
-                  <div className="flex flex-wrap gap-2">
-                    {businessInfo.offerings.map((offering, i) => (
-                      <Badge key={i} variant="secondary">{offering}</Badge>
-                    ))}
+                  <div className="space-y-2">
+                    <Label htmlFor="business-strategy">Growth direction</Label>
+                    <Textarea
+                      id="business-strategy"
+                      value={draft.strategy}
+                      onChange={(event) => updateDraft('strategy', event.target.value)}
+                      placeholder="How should the business attract and retain customers?"
+                      rows={2}
+                      disabled={isSaving}
+                    />
+                  </div>
+
+                  {saveError && (
+                    <p role="alert" className="text-sm text-destructive">{saveError}</p>
+                  )}
+
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <Button variant="outline" onClick={cancelEditing} disabled={isSaving}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleSave} disabled={isSaving} className="gap-2">
+                      {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      {isSaving ? 'Saving...' : 'Save changes'}
+                    </Button>
                   </div>
                 </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex items-start gap-3">
+                      <Target className="w-5 h-5 text-blue-500 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Market</p>
+                        <p className="font-medium">{details.market}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-3">
+                      <Package className="w-5 h-5 text-purple-500 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Business Model</p>
+                        <p className="font-medium">{details.model}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-3">
+                      <Users className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Target Audience</p>
+                        <p className="font-medium">{details.audience}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-3">
+                      <TrendingUp className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">Strategy</p>
+                        <p className="font-medium">{details.strategy}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {details.offerings.length > 0 && (
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground mb-2">Core Offerings</p>
+                      <div className="flex flex-wrap gap-2">
+                        {details.offerings.map((offering, i) => (
+                          <Badge key={i} variant="secondary">{offering}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {details.valueProposition && (
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground mb-1">Value Proposition</p>
+                      <p className="text-sm">{details.valueProposition}</p>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
@@ -189,25 +423,95 @@ export function BusinessConfirmationView({
           </motion.div>
         )}
 
-        {/* Actions */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
-          className="flex gap-3 justify-center"
-        >
-          <Button variant="outline" onClick={onBack}>
-            Start Over
-          </Button>
-          <Button
-            onClick={onConfirm}
-            size="lg"
-            className="gap-2 bg-gradient-to-r from-primary to-purple-500"
+        {isConfirming ? (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="border bg-white p-5 shadow-sm"
+            aria-live="polite"
           >
-            <CheckCircle2 className="w-4 h-4" />
-            Confirm & Build My Team
-          </Button>
-        </motion.div>
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-50">
+                <Loader2 className="h-5 w-5 animate-spin text-indigo-600" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">Preparing your company intelligence</h3>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      One setup now, so Brand IQ and CEO Advisor are ready when you arrive.
+                    </p>
+                  </div>
+                  <span className="text-xs font-medium text-slate-500">
+                    Estimated {Math.round(estimatedProgress)}%
+                  </span>
+                </div>
+
+                <Progress
+                  value={estimatedProgress}
+                  className="mt-4 h-2 bg-slate-100"
+                  indicatorClassName="bg-indigo-600 duration-500"
+                  aria-label="Estimated company intelligence preparation progress"
+                />
+
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {finalizationStages.map((stage, index) => {
+                    const completed = index < activeFinalizationStage;
+                    const active = index === activeFinalizationStage;
+                    return (
+                      <div key={stage.label} className="flex items-start gap-2.5">
+                        <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold ${
+                          completed
+                            ? 'border-emerald-500 bg-emerald-500 text-white'
+                            : active
+                              ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                              : 'border-slate-200 bg-white text-slate-400'
+                        }`}>
+                          {completed ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
+                        </div>
+                        <div>
+                          <p className={`text-sm font-medium ${active ? 'text-indigo-700' : completed ? 'text-slate-700' : 'text-slate-400'}`}>
+                            {stage.label}
+                          </p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">{stage.detail}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <p className="mt-5 border-t pt-3 text-xs text-muted-foreground">
+                  This may take about a minute. Please keep this page open while AI prepares the shared context.
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5 }}
+            className="flex gap-3 justify-center"
+          >
+            <Button variant="outline" onClick={onBack}>
+              Start Over
+            </Button>
+            <Button
+              onClick={onConfirm}
+              size="lg"
+              className="gap-2 bg-gradient-to-r from-primary to-purple-500"
+              disabled={isEditing || isSaving}
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              Confirm & Build My Team
+            </Button>
+          </motion.div>
+        )}
+        {confirmError && (
+          <p role="alert" className="mt-3 text-center text-sm text-destructive">
+            {confirmError}
+          </p>
+        )}
       </motion.div>
     </div>
   );

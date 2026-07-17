@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Search, FileText, Share2, ArrowRight, Zap } from 'lucide-react';
+import { Search, FileText, Share2, ArrowRight, Loader2, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +10,9 @@ import type { MasterPlan } from '@/lib/ftux/types';
 interface MasterPlanViewProps {
   masterPlan: MasterPlan;
   companyName: string;
-  onApprove: () => void;
+  onApprove: () => Promise<void>;
+  isApproving?: boolean;
+  approvalError?: string | null;
 }
 
 const priorityColors = {
@@ -31,7 +33,13 @@ const planColors = {
   socialMediaPlan: 'from-green-500 to-emerald-500',
 };
 
-export function MasterPlanView({ masterPlan, companyName, onApprove }: MasterPlanViewProps) {
+export function MasterPlanView({
+  masterPlan,
+  companyName,
+  onApprove,
+  isApproving = false,
+  approvalError,
+}: MasterPlanViewProps) {
   const plans = [
     { key: 'seoGrowthPlan' as const, data: masterPlan.seoGrowthPlan },
     { key: 'contentPlan' as const, data: masterPlan.contentPlan },
@@ -125,10 +133,17 @@ export function MasterPlanView({ masterPlan, companyName, onApprove }: MasterPla
             onClick={onApprove}
             size="lg"
             className="gap-2 px-8 py-6 text-lg bg-gradient-to-r from-primary to-purple-500"
+            disabled={isApproving}
           >
-            Approve Plan
-            <ArrowRight className="w-5 h-5" />
+            {isApproving ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
+            {isApproving ? 'Approving plan...' : 'Approve Plan'}
+            {!isApproving ? <ArrowRight className="w-5 h-5" /> : null}
           </Button>
+          {approvalError && (
+            <p role="alert" className="mt-3 text-sm text-destructive">
+              {approvalError}
+            </p>
+          )}
         </motion.div>
       </motion.div>
     </div>

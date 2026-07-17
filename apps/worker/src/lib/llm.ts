@@ -74,6 +74,7 @@ export interface AgentContext {
   agentRole: string;
   companyName: string;
   companyDescription?: string;
+  departmentName?: string;
   capabilities: string[];
   currentTask?: {
     title: string;
@@ -102,6 +103,7 @@ export function buildAgentSystemPrompt(context: AgentContext): string {
 
 ${context.companyDescription ? `Company Description: ${context.companyDescription}` : ''}
 
+${context.departmentName ? `Department: ${context.departmentName}` : ''}
 Your capabilities include: ${context.capabilities.join(', ')}
 
 Your responsibilities:

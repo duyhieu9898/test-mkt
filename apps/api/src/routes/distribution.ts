@@ -5,6 +5,10 @@ import { HTTPException } from 'hono/http-exception';
 import { authMiddleware, getUserCompanies } from '../middleware/auth';
 import { distributionEngine } from '../services/distribution-engine';
 import { env } from '../lib/env';
+import {
+  missingFacebookPublishPermissions,
+  resolveFacebookPageAccess,
+} from '../services/facebook-page-access';
 
 const distribution = new Hono();
 
@@ -69,7 +73,32 @@ distribution.post(
 
     // Verify the token works by making a test API call
     try {
-      const testUrl = `https://graph.facebook.com/v18.0/${pageId}?fields=name,id&access_token=${accessToken}`;
+      const pageAccess = await resolveFacebookPageAccess(accessToken, pageId);
+      if (!pageAccess.requestedPageFound) {
+        const available = pageAccess.availablePages
+          .map((page) => `${page.name || 'Unnamed Page'} (${page.id})`)
+          .join(', ');
+        throw new HTTPException(400, {
+          message: `Page ID ${pageId} is not managed by this token.`
+            + (available ? ` Use: ${available}.` : ''),
+        });
+      }
+      const missingPermissions = missingFacebookPublishPermissions(pageAccess.permissions);
+      if (missingPermissions.length > 0) {
+        throw new HTTPException(400, {
+          message: `Facebook token is missing: ${missingPermissions.join(', ')}. Reconnect and grant both permissions.`,
+        });
+      }
+      if (
+        pageAccess.pageTasks?.length
+        && !pageAccess.pageTasks.includes('CREATE_CONTENT')
+      ) {
+        throw new HTTPException(400, {
+          message: 'This Facebook account cannot create content on the selected Page.',
+        });
+      }
+
+      const testUrl = `https://graph.facebook.com/v21.0/${pageId}?fields=name,id&access_token=${pageAccess.accessToken}`;
       const testResponse = await fetch(testUrl);
 
       if (!testResponse.ok) {
@@ -84,11 +113,13 @@ distribution.post(
       const connectionId = await distributionEngine.connectAccount(
         companyId,
         'facebook',
-        accessToken,
+        pageAccess.accessToken,
         {
           platformPageId: pageId,
-          platformAccountName: pageName || pageData.name,
-          permissions: ['pages_manage_posts', 'pages_read_engagement'],
+          platformAccountName: pageName || pageAccess.pageName || pageData.name,
+          permissions: pageAccess.permissions.length > 0
+            ? pageAccess.permissions
+            : ['pages_manage_posts', 'pages_read_engagement'],
         }
       );
 

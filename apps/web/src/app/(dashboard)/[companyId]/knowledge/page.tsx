@@ -9,7 +9,6 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Progress } from '@/components/ui/progress';
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -55,16 +54,20 @@ export default function KnowledgePage() {
 
   const { data: knowledgeData } = useQuery({
     queryKey: ['knowledge-entries', companyId, searchQuery],
-    queryFn: () => api.get<{ data: any[] }>(`/knowledge/company/${companyId}/search?q=${encodeURIComponent(searchQuery)}`, { token: token! }),
+    queryFn: () => api.get<{ data: any[]; total: number }>(`/knowledge/company/${companyId}/search?q=${encodeURIComponent(searchQuery)}`, { token: token! }),
     enabled: !!token,
   });
 
   const documents = docsData?.data || [];
   const knowledgeEntries = knowledgeData?.data || [];
-  const readyDocs = documents.filter((d: any) => d.status === 'approved' || d.status === 'extracted');
+  const knowledgeTotal = knowledgeData?.total || 0;
+  const readyDocs = documents.filter((d: any) => d.status === 'approved');
   const processingDocs = documents.filter((d: any) => d.status === 'processing' || d.status === 'uploading');
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['knowledge-docs', 'knowledge-entries'] });
+  const invalidate = () => Promise.all([
+    qc.invalidateQueries({ queryKey: ['knowledge-docs', companyId] }),
+    qc.invalidateQueries({ queryKey: ['knowledge-entries', companyId] }),
+  ]);
 
   // Handlers
   const handleFileUpload = async (file: File) => {
@@ -142,8 +145,12 @@ export default function KnowledgePage() {
   const handleApprove = async (docId: string) => {
     if (!token) return;
     try {
-      const r = await api.patch<{ knowledgeEntriesSaved: number }>(`/knowledge/company/${companyId}/documents/${docId}/approve`, {}, { token });
-      toast.success(`AI learned ${r.knowledgeEntriesSaved} new things!`);
+      const r = await api.patch<{ knowledgeEntriesSaved: number; indexingFailed?: number }>(`/knowledge/company/${companyId}/documents/${docId}/approve`, {}, { token });
+      if (r.indexingFailed) {
+        toast.warning(`Saved ${r.knowledgeEntriesSaved} facts. Search indexing will retry automatically.`);
+      } else {
+        toast.success(`AI learned ${r.knowledgeEntriesSaved} new things!`);
+      }
       invalidate();
     } catch (err) {
       toast.error(friendlyError(err, "We couldn't approve that yet. Please try again."));
@@ -201,7 +208,7 @@ export default function KnowledgePage() {
         </CardContent></Card>
         <Card><CardContent className="pt-4 pb-4 flex items-center gap-3">
           <div className="p-2 bg-blue-50 rounded-lg"><BookOpen className="w-4 h-4 text-blue-600" /></div>
-          <div><p className="text-xl font-bold">{knowledgeEntries.length}</p><p className="text-xs text-muted-foreground">Facts Learned</p></div>
+          <div><p className="text-xl font-bold">{knowledgeTotal}</p><p className="text-xs text-muted-foreground">Facts Learned</p></div>
         </CardContent></Card>
         <Card><CardContent className="pt-4 pb-4 flex items-center gap-3">
           <div className="p-2 bg-purple-50 rounded-lg"><MessageSquare className="w-4 h-4 text-purple-600" /></div>
@@ -242,8 +249,12 @@ export default function KnowledgePage() {
               Upload documents, paste your website, or type what you know
             </p>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
-              <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.txt,.doc,.docx"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); }} />
+              <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.docx,.txt,.md"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.currentTarget.value = '';
+                  if (file) handleFileUpload(file);
+                }} />
               <Button onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="gap-2 w-full sm:w-auto">
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                 Upload File
@@ -255,6 +266,7 @@ export default function KnowledgePage() {
                 <FileText className="w-4 h-4" /> Type Knowledge
               </Button>
             </div>
+            <p className="text-xs text-muted-foreground mt-3">PDF, DOCX, TXT, or Markdown · up to 10 MB</p>
           </div>
         </CardContent>
       </Card>
@@ -268,7 +280,6 @@ export default function KnowledgePage() {
               <p className="font-medium text-amber-900 text-sm">AI is reading your files...</p>
               <p className="text-xs text-amber-700">{processingDocs.length} file(s) being processed</p>
             </div>
-            <Progress value={60} className="w-24 h-2" />
           </CardContent>
         </Card>
       )}
@@ -408,7 +419,7 @@ export default function KnowledgePage() {
       )}
 
       {/* Knowledge Search */}
-      {knowledgeEntries.length > 0 && (
+      {knowledgeTotal > 0 && (
         <div className="space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <h3 className="font-semibold flex items-center gap-2">
@@ -419,7 +430,10 @@ export default function KnowledgePage() {
               <Input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search..." className="pl-9 h-8 text-sm" />
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {knowledgeEntries.length === 0 ? (
+            <Card><CardContent className="p-5 text-sm text-muted-foreground text-center">No approved knowledge matches this search.</CardContent></Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {knowledgeEntries.slice(0, 8).map((entry: any) => (
               <Card key={entry.id}>
                 <CardContent className="p-3">
@@ -429,7 +443,8 @@ export default function KnowledgePage() {
                 </CardContent>
               </Card>
             ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 

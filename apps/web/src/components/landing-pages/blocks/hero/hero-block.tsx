@@ -3,7 +3,10 @@
 import { useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { InlineEditableText } from '../../editor/inline-editable-text';
-import type { HeroContent } from '@1person/workflow/landing-pages/blocks';
+import {
+  normalizeLandingPageLink,
+  type HeroContent,
+} from '@1person/workflow/landing-pages/blocks';
 
 interface HeroBlockProps {
   content: HeroContent;
@@ -36,13 +39,22 @@ export function HeroBlock({ content, primaryColor, isEditing, onFieldClick, onCo
     center: 'text-center items-center',
     right: 'text-right items-end',
   };
+  const legacyContent = content as HeroContent & { imageUrl?: string; heroImage?: string };
+  const backgroundImage =
+    content.backgroundImage || legacyContent.imageUrl || legacyContent.heroImage;
+
+  const actionProps = (url?: string, openInNewTab?: boolean) => ({
+    href: normalizeLandingPageLink(url),
+    target: !isEditing && openInNewTab ? '_blank' : undefined,
+    rel: !isEditing && openInNewTab ? 'noopener noreferrer' : undefined,
+  });
 
   return (
     <section
       className="py-20 px-4"
       style={{
-        background: content.backgroundImage
-          ? `url(${content.backgroundImage}) center/cover`
+        background: backgroundImage
+          ? `linear-gradient(rgba(0,0,0,.42), rgba(0,0,0,.5)), url(${backgroundImage}) center/cover`
           : `linear-gradient(135deg, ${primaryColor}15, ${primaryColor}05)`,
       }}
     >
@@ -72,33 +84,43 @@ export function HeroBlock({ content, primaryColor, isEditing, onFieldClick, onCo
         >
           {(content.ctaText || isEditing) && (
             <Button
+              asChild
               size="lg"
               style={{ backgroundColor: primaryColor }}
               className="text-white hover:opacity-90"
-              onClick={isEditing ? handleFieldClick(['ctaText']) : undefined}
             >
-              <InlineEditableText
-                value={content.ctaText || ''}
-                onChange={(value) => handleTextChange('ctaText', value)}
-                isEditing={!!isEditing}
-                as="span"
-                placeholder="Button text"
-              />
+              <a
+                {...actionProps(content.ctaUrl, content.ctaOpenInNewTab)}
+                onClick={isEditing ? handleFieldClick(['ctaText']) : undefined}
+              >
+                <InlineEditableText
+                  value={content.ctaText || ''}
+                  onChange={(value) => handleTextChange('ctaText', value)}
+                  isEditing={!!isEditing}
+                  as="span"
+                  placeholder="Button text"
+                />
+              </a>
             </Button>
           )}
           {(content.ctaSecondaryText || isEditing) && (
             <Button
+              asChild
               size="lg"
               variant="outline"
-              onClick={isEditing ? handleFieldClick(['ctaSecondaryText']) : undefined}
             >
-              <InlineEditableText
-                value={content.ctaSecondaryText || ''}
-                onChange={(value) => handleTextChange('ctaSecondaryText', value)}
-                isEditing={!!isEditing}
-                as="span"
-                placeholder="Secondary button"
-              />
+              <a
+                {...actionProps(content.ctaSecondaryUrl, content.ctaSecondaryOpenInNewTab)}
+                onClick={isEditing ? handleFieldClick(['ctaSecondaryText']) : undefined}
+              >
+                <InlineEditableText
+                  value={content.ctaSecondaryText || ''}
+                  onChange={(value) => handleTextChange('ctaSecondaryText', value)}
+                  isEditing={!!isEditing}
+                  as="span"
+                  placeholder="Secondary button"
+                />
+              </a>
             </Button>
           )}
         </div>

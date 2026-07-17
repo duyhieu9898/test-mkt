@@ -1,8 +1,9 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Bot, Sparkles } from 'lucide-react';
+import { AlertCircle, Bot, Sparkles } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { TypingText } from './typing-text';
 import { ProgressStep } from './progress-step';
 import type { ProcessingStep, DetectedInfo } from '@/lib/ftux/types';
@@ -15,6 +16,8 @@ interface ProcessingViewProps {
   detectedInfo: DetectedInfo | null;
   progress: number;
   aiThinking: string;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
 const ALL_STEPS: ProcessingStep[] = [
@@ -24,6 +27,7 @@ const ALL_STEPS: ProcessingStep[] = [
   'creating_marketing',
   'creating_operations',
   'generating_strategy',
+  'setting_up_brand',
 ];
 
 export function ProcessingView({
@@ -33,6 +37,8 @@ export function ProcessingView({
   detectedInfo,
   progress,
   aiThinking,
+  error,
+  onRetry,
 }: ProcessingViewProps) {
   const getStepStatus = (step: ProcessingStep): 'pending' | 'active' | 'complete' => {
     if (completedSteps.includes(step)) return 'complete';
@@ -67,6 +73,31 @@ export function ProcessingView({
         {/* Main Card */}
         <Card className="border-0 shadow-xl">
           <CardContent className="p-6">
+            {error ? (
+              <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/25">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-destructive mb-1">
+                      Setup could not finish
+                    </p>
+                    <p className="text-sm text-foreground break-words">{error}</p>
+                    {onRetry && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-3"
+                        onClick={onRetry}
+                      >
+                        Back and try again
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             {/* AI Thinking */}
             <div className="mb-6 p-4 rounded-lg bg-muted/50 min-h-[60px]">
               <div className="flex items-start gap-3">

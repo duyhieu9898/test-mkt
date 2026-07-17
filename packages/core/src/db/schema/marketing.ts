@@ -52,6 +52,37 @@ export const campaigns = pgTable(
       ageRange?: string;
       interests?: string[];
       keywords?: string[];
+      blogPostId?: string;
+      launchSummary?: {
+        launchedAt: string;
+        options?: {
+          bannerIds?: string[];
+          activateBanners?: boolean;
+          scheduleSocialPosts?: boolean;
+        };
+        results?: {
+          blog?: {
+            status: string;
+            blogPostId?: string;
+            title?: string;
+            message?: string;
+          };
+          banners?: {
+            status: string;
+            requested?: number;
+            activated?: number;
+          };
+          socialPosts?: {
+            status: string;
+            requested?: number;
+            scheduled?: number;
+          };
+          externalPublishing?: {
+            status: string;
+            message?: string;
+          };
+        };
+      };
     }>(),
     landingPageUrl: text('landing_page_url'),
     revenue: decimal('revenue', { precision: 10, scale: 2 }).default('0'),
@@ -253,7 +284,7 @@ export const blogPosts = pgTable(
     metaDescription: text('meta_description'),
     content: text('content').notNull(),
     excerpt: text('excerpt'),
-    keyword: varchar('keyword', { length: 255 }),
+    keyword: text('keyword'),
     searchIntent: varchar('search_intent', { length: 50 }),
     tags: jsonb('tags').default([]),
     faq: jsonb('faq').default([]),

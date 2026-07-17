@@ -44,6 +44,7 @@ import {
   Bell,
   TrendingUp,
 } from 'lucide-react';
+import { useCompany, useLandingPages } from '@/lib/api/hooks';
 
 type FeatureStatus = 'live' | 'partial' | 'soon';
 
@@ -106,7 +107,7 @@ const SECTIONS = (companyId: string): Section[] => [
       },
       {
         name: 'Brand IQ (auto voice + audience extract)',
-        description: 'Paste your URL + samples. Get a structured brand voice, audience personas, style guide that every agent will reuse.',
+        description: 'AI builds your voice, audience, positioning, and style from existing company data; add extra context whenever needed.',
         href: `/${companyId}/brand-iq`,
         status: 'live',
         icon: Sparkles,
@@ -205,14 +206,14 @@ const SECTIONS = (companyId: string): Section[] => [
         icon: MessageSquare,
       },
       {
-        name: 'Channels (FB Messenger)',
-        description: 'Connect your Facebook Page. Inbound DMs land in the omnichannel inbox; AI auto-reply is opt-in.',
+        name: 'Channels (Facebook Page)',
+        description: 'Connect a Facebook Page and publish approved campaign posts without copying tokens.',
         href: `/${companyId}/channels`,
         status: 'live',
         icon: Link2,
         block: 'Block 6',
         whatItDoes:
-          'Founder pastes Page Access Token + Verify Token from Meta dashboard. We surface the webhook URL to paste back into Meta. Tokens are AES-256 encrypted at rest.',
+          'Sign in with Facebook, choose a Page you manage, and 1Person securely configures campaign publishing for you.',
       },
       {
         name: 'Inbox · Messages',
@@ -439,7 +440,14 @@ function FeatureRow({ feature }: { feature: Feature }) {
 
 export default function WalkthroughPage() {
   const { companyId } = useParams<{ companyId: string }>();
+  const { data: company, isLoading: companyLoading } = useCompany(companyId);
+  const { data: landingPages = [], isLoading: landingPagesLoading } = useLandingPages(companyId);
   const sections = SECTIONS(companyId);
+  const showWebsiteStep = !companyLoading
+    && !landingPagesLoading
+    && company?.websiteProfile?.startingFresh === true;
+  const publishedWebsitePage = landingPages.find((page) => page.status === 'published');
+  const hasWebsiteDrafts = landingPages.length > 0;
 
   const totals = sections.reduce(
     (acc, s) => {
@@ -546,10 +554,10 @@ export default function WalkthroughPage() {
       </Card>
 
       {/* Quick start */}
-      <Card>
+      <Card data-guided-tour="walkthrough-quick-start">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
-            <Rocket className="w-4 h-4 text-primary" /> Quick start — 6 steps, ~10 minutes
+            <Rocket className="w-4 h-4 text-primary" /> Quick start — {showWebsiteStep ? '7' : '6'} steps, ~10 minutes
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -563,8 +571,8 @@ export default function WalkthroughPage() {
                 <Link href={`/${companyId}/knowledge`} className="text-primary underline font-medium">
                   Knowledge
                 </Link>{' '}
-                and paste your website URL + a few sample documents. This is what every agent will
-                read before answering anything.
+                and add your product information, FAQs, or sample documents. This is what every
+                agent reads before answering anything.
               </span>
             </li>
             <li className="flex gap-3">
@@ -576,16 +584,81 @@ export default function WalkthroughPage() {
                 <Link href={`/${companyId}/brand-iq`} className="text-primary underline font-medium">
                   Brand IQ
                 </Link>{' '}
-                — paste your URL + 1-2 writing samples. Takes ~30 seconds. After this, every blog,
-                banner, ad, chat reply uses your real voice instead of generic AI tone.
+                — AI builds it automatically from your company data. Review the result and add
+                extra context only when something important is missing.
                 <span className="inline-block ml-1 text-[10px] uppercase font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
                   most impactful
                 </span>
               </span>
             </li>
+            {showWebsiteStep && (
+              <li className="flex items-start gap-3">
+                <span className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center shrink-0 ${
+                  publishedWebsitePage
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-indigo-600 text-white'
+                }`}>
+                  {publishedWebsitePage ? <CheckCircle2 className="h-4 w-4" /> : '3'}
+                </span>
+                <div className={`flex min-w-0 flex-1 flex-col gap-2 rounded-md border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between ${
+                  publishedWebsitePage
+                    ? 'border-emerald-200 bg-emerald-50/70'
+                    : 'border-indigo-200 bg-indigo-50/70'
+                }`}>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Globe className={`h-3.5 w-3.5 shrink-0 ${publishedWebsitePage ? 'text-emerald-700' : 'text-indigo-700'}`} />
+                      <span className="font-semibold">
+                          {publishedWebsitePage
+                            ? 'Your first website is live'
+                            : hasWebsiteDrafts
+                              ? 'Finish your first website'
+                              : 'Create your first website'}
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className={`h-5 px-1.5 text-[10px] font-medium ${
+                          publishedWebsitePage
+                            ? 'border-emerald-300 bg-white/80 text-emerald-700'
+                            : 'border-indigo-300 bg-white/80 text-indigo-700'
+                        }`}
+                      >
+                          {publishedWebsitePage ? 'Complete' : 'Recommended'}
+                      </Badge>
+                    </div>
+                    <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
+                        {publishedWebsitePage
+                          ? 'Your public page is ready for visitors. You can update or add more pages at any time.'
+                          : hasWebsiteDrafts
+                            ? `AI prepared ${landingPages.length} starter page${landingPages.length === 1 ? '' : 's'}. Review one, make any changes, then publish it.`
+                            : 'Answer a few simple questions and AI will create a complete home page. No coding needed.'}
+                    </p>
+                  </div>
+                  <Link
+                    href={hasWebsiteDrafts
+                      ? `/${companyId}/landing-pages`
+                      : `/${companyId}/landing-pages?action=generate`}
+                    className="shrink-0"
+                  >
+                    <Button
+                      size="sm"
+                      variant={publishedWebsitePage ? 'outline' : 'default'}
+                      className="h-8 w-full gap-1 px-3 text-xs sm:w-auto"
+                    >
+                        {publishedWebsitePage
+                          ? 'Manage website'
+                          : hasWebsiteDrafts
+                            ? 'Review drafts'
+                            : 'Create website'}
+                      <ArrowRight className="h-3 w-3" />
+                    </Button>
+                  </Link>
+                </div>
+              </li>
+            )}
             <li className="flex gap-3">
               <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center shrink-0">
-                3
+                {showWebsiteStep ? '4' : '3'}
               </span>
               <span>
                 Add 3-5 competitors at{' '}
@@ -597,7 +670,7 @@ export default function WalkthroughPage() {
             </li>
             <li className="flex gap-3">
               <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center shrink-0">
-                4
+                {showWebsiteStep ? '5' : '4'}
               </span>
               <span>
                 Open{' '}
@@ -610,7 +683,7 @@ export default function WalkthroughPage() {
             </li>
             <li className="flex gap-3">
               <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center shrink-0">
-                5
+                {showWebsiteStep ? '6' : '5'}
               </span>
               <span>
                 Try the{' '}
@@ -623,7 +696,7 @@ export default function WalkthroughPage() {
             </li>
             <li className="flex gap-3">
               <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center shrink-0">
-                6
+                {showWebsiteStep ? '7' : '6'}
               </span>
               <span>
                 Connect your Facebook Page at{' '}

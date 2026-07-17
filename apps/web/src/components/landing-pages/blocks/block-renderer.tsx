@@ -11,6 +11,7 @@ import {
   PricingBlock,
   FAQBlock,
   CTABlock,
+  ImageBlock,
   FooterBlock,
 } from './index';
 
@@ -56,6 +57,8 @@ export function BlockRenderer({
         return FAQBlock;
       case 'cta':
         return CTABlock;
+      case 'image':
+        return ImageBlock;
       case 'footer':
         return FooterBlock;
       default:

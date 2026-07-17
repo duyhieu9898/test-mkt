@@ -56,7 +56,12 @@ export function WorkflowProgressPanel({ companyId, campaignId, token, flow = 'ge
   const steps_config = flow === 'launch' ? LAUNCH_STEPS : GENERATE_STEPS;
   const terminalStep = flow === 'launch' ? 'launch_campaign' : 'finalize_ready';
   const [steps, setSteps] = useState<StepState[]>(() =>
-    steps_config.map((s) => ({ ...s, status: 'pending' as StepStatus })),
+    steps_config.map((s, index) => ({
+      ...s,
+      // Launch is optimistically visible before the API round-trip finishes.
+      // Marking the first step as running gives immediate, truthful feedback.
+      status: flow === 'launch' && index === 0 ? 'running' : 'pending',
+    })),
   );
   const [connectionError, setConnectionError] = useState<string | null>(null);
 

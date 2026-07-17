@@ -817,6 +817,9 @@ export type {
   AdvisorBrief,
   AdvisorBriefInput,
   BriefAction,
+  AdvisorTeamTask,
+  BriefEvidence,
+  CampaignProposal,
   BriefWin,
   BriefAlert,
 } from './ceo-advisor-store.js';

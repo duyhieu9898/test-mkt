@@ -13,6 +13,7 @@ interface LandingHeroProps {
 }
 
 type UserPath = null | 'beginner' | 'advanced';
+const MIN_BUSINESS_DESCRIPTION_LENGTH = 10;
 
 function detectIsUrl(input: string): boolean {
   return /^(https?:\/\/)?[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(input.trim());
@@ -23,18 +24,23 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
   const [prompt, setPrompt] = useState('');
 
   const isUrl = useMemo(() => detectIsUrl(prompt), [prompt]);
+  const trimmedLength = prompt.trim().length;
+  const isWebsiteInput = isUrl || path === 'advanced';
+  const isInputValid = isWebsiteInput
+    ? trimmedLength >= 5
+    : trimmedLength >= MIN_BUSINESS_DESCRIPTION_LENGTH;
 
   const handleSubmit = useCallback(() => {
     const trimmed = prompt.trim();
-    if (trimmed.length < 5) return;
+    if (!isInputValid) return;
 
-    if (isUrl || path === 'advanced') {
+    if (isWebsiteInput) {
       const url = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
       onSubmit(`Analyze and grow this business: ${url}`, url);
     } else {
       onSubmit(trimmed);
     }
-  }, [prompt, isUrl, path, onSubmit]);
+  }, [prompt, isInputValid, isWebsiteInput, onSubmit]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -43,7 +49,7 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
     }
   };
 
-  const canSubmit = prompt.trim().length >= 5 && !isProcessing;
+  const canSubmit = isInputValid && !isProcessing;
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -151,7 +157,16 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
                   disabled={isProcessing}
                 />
                 {prompt.length > 0 && (
-                  <div className="flex justify-end mt-2">
+                  <div className="mt-2 flex items-start justify-between gap-3">
+                    {!isWebsiteInput && trimmedLength < MIN_BUSINESS_DESCRIPTION_LENGTH ? (
+                      <p className="text-left text-xs text-red-600">
+                        Please add a little more detail about your business
+                        {' '}({MIN_BUSINESS_DESCRIPTION_LENGTH - trimmedLength} more character
+                        {MIN_BUSINESS_DESCRIPTION_LENGTH - trimmedLength === 1 ? '' : 's'}).
+                      </p>
+                    ) : (
+                      <span />
+                    )}
                     <span className={`text-xs px-2 py-1 rounded-full ${
                       isUrl ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'
                     }`}>

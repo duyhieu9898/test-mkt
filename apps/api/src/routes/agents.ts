@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, desc, or } from 'drizzle-orm';
+import { eq, and, desc, or, ne } from 'drizzle-orm';
 import { db } from '../lib/db';
 import { companies, agents, departments, messages, tasks } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
@@ -69,7 +69,7 @@ agentsRouter.get('/', async (c) => {
   await checkCompanyOwnership(companyId, userId);
 
   const companyAgents = await db.query.agents.findMany({
-    where: eq(agents.companyId, companyId),
+    where: and(eq(agents.companyId, companyId), ne(agents.status, 'archived')),
     orderBy: [desc(agents.createdAt)],
     with: {
       department: true,

@@ -20,11 +20,13 @@ import {
   Palette,
   Settings,
   Type,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { useEditorStore, selectSelectedBlock } from '@/stores/editor-store';
 import { blockDefinitions, categoryOrder, categoryLabels } from '@1person/workflow/landing-pages/blocks';
 import type { BlockType } from '@1person/workflow/landing-pages/blocks';
 import { cn } from '@/lib/utils';
+import { BlockContentEditor } from './block-content-editor';
 
 const iconMap: Record<string, React.ReactNode> = {
   'layout-template': <LayoutTemplate className="w-5 h-5" />,
@@ -36,14 +38,16 @@ const iconMap: Record<string, React.ReactNode> = {
   'help-circle': <HelpCircle className="w-5 h-5" />,
   megaphone: <Megaphone className="w-5 h-5" />,
   'panel-bottom': <PanelBottom className="w-5 h-5" />,
+  image: <ImageIcon className="w-5 h-5" />,
 };
 
 interface EditorSidebarProps {
+  companyId: string;
   primaryColor: string;
   onPrimaryColorChange: (color: string) => void;
 }
 
-export function EditorSidebar({ primaryColor, onPrimaryColorChange }: EditorSidebarProps) {
+export function EditorSidebar({ companyId, primaryColor, onPrimaryColorChange }: EditorSidebarProps) {
   const { addBlock, selectedBlockId, updateBlockContent, isPreviewing } = useEditorStore();
   const selectedBlock = useEditorStore(selectSelectedBlock);
   const [activeTab, setActiveTab] = useState('blocks');
@@ -160,8 +164,9 @@ export function EditorSidebar({ primaryColor, onPrimaryColorChange }: EditorSide
 
           <TabsContent value="edit" className="p-4 pb-20">
             {selectedBlock ? (
-              <BlockEditor
+              <BlockContentEditor
                 block={selectedBlock}
+                companyId={companyId}
                 onUpdate={(content) => updateBlockContent(selectedBlock.id, content)}
               />
             ) : (
@@ -172,100 +177,6 @@ export function EditorSidebar({ primaryColor, onPrimaryColorChange }: EditorSide
           </TabsContent>
         </ScrollArea>
       </Tabs>
-    </div>
-  );
-}
-
-// Simple block editor component
-interface BlockEditorProps {
-  block: {
-    id: string;
-    type: string;
-    content: Record<string, unknown>;
-  };
-  onUpdate: (content: Record<string, unknown>) => void;
-}
-
-function BlockEditor({ block, onUpdate }: BlockEditorProps) {
-  const renderField = (key: string, value: unknown, path: string[] = []) => {
-    if (value === null || value === undefined) return null;
-
-    if (typeof value === 'string') {
-      return (
-        <div key={key}>
-          <Label className="text-xs text-muted-foreground capitalize">
-            {key.replace(/([A-Z])/g, ' $1').trim()}
-          </Label>
-          <Input
-            value={value}
-            onChange={(e) => {
-              const newContent = { ...block.content };
-              let obj: Record<string, unknown> = newContent;
-              for (let i = 0; i < path.length; i++) {
-                obj = obj[path[i]] as Record<string, unknown>;
-              }
-              obj[key] = e.target.value;
-              onUpdate(newContent);
-            }}
-            className="mt-1"
-          />
-        </div>
-      );
-    }
-
-    if (typeof value === 'boolean') {
-      return (
-        <div key={key} className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={value}
-            onChange={(e) => {
-              const newContent = { ...block.content };
-              let obj: Record<string, unknown> = newContent;
-              for (let i = 0; i < path.length; i++) {
-                obj = obj[path[i]] as Record<string, unknown>;
-              }
-              obj[key] = e.target.checked;
-              onUpdate(newContent);
-            }}
-            className="rounded border-gray-300"
-          />
-          <Label className="text-xs capitalize">
-            {key.replace(/([A-Z])/g, ' $1').trim()}
-          </Label>
-        </div>
-      );
-    }
-
-    if (Array.isArray(value)) {
-      return (
-        <div key={key} className="space-y-2">
-          <Label className="text-xs text-muted-foreground capitalize">
-            {key.replace(/([A-Z])/g, ' $1').trim()} ({value.length} items)
-          </Label>
-          <div className="text-xs text-muted-foreground">
-            Array editing coming soon...
-          </div>
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  const content = block.content as Record<string, unknown>;
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="font-semibold text-sm mb-2 capitalize">{block.type} Block</h3>
-        <p className="text-xs text-muted-foreground">
-          Edit the content of this block
-        </p>
-      </div>
-      <div className="space-y-4">
-        {Object.entries(content).map(([key, value]) => renderField(key, value))}
-      </div>
     </div>
   );
 }

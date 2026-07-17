@@ -1,7 +1,7 @@
 /**
  * Brand IQ Extractor — Block 2.
  *
- * Input: a website URL and/or up to 5 writing samples.
+ * Input: existing company intelligence plus optional URL/user context.
  * Output: a structured Brand IQ profile (voice, audience personas,
  * style guide, visual identity, OKRs slot) saved to brand_iq_profiles.
  *
@@ -11,8 +11,8 @@
  *   2. Best-effort visual extraction from inline CSS (regex over hex
  *      colors + font-family declarations + og:image for logo guess).
  *   3. Call the configured LLM once with a structured JSON schema
- *      prompt to derive voice / personas / style guide from the text
- *      plus samples.
+ *      prompt grounded in company, Brain Hub, campaign, content, and
+ *      optional user-supplied context.
  *   4. Mark any previous profiles inactive and insert the new row.
  */
 import { eq, and, desc } from 'drizzle-orm';
@@ -20,6 +20,7 @@ import { db } from '../lib/db';
 import {
   brandIqProfiles,
   companies,
+  brandIdentities,
   type BrandIqVoice,
   type AudiencePersona,
   type StyleGuide,
@@ -46,6 +47,8 @@ const PMM_FRAMEWORK = renderSkillKnowledgeBundle(['product-marketing', 'customer
 export interface BrandIqInput {
   url?: string;
   samples?: string[];
+  /** Server-built context from company data. Never accepted directly from the client. */
+  companyContext?: string;
 }
 
 export interface ExtractedSource {
@@ -177,14 +180,19 @@ export async function scrapeBrandSource(url: string): Promise<ExtractedSource> {
 
 /* ─── LLM-driven derivation ──────────────────────────────────────── */
 
-function buildPrompt(companyName: string, src: ExtractedSource | null, samples: string[]): string {
+function buildPrompt(
+  companyName: string,
+  src: ExtractedSource | null,
+  samples: string[],
+  companyContext: string,
+): string {
   const sourceBlock = src
     ? `WEBSITE TITLE: ${src.title ?? '(none)'}\nMETA DESCRIPTION: ${src.description ?? '(none)'}\nBODY EXCERPT (first 3000 chars):\n"""${src.bodyExcerpt}"""\nDETECTED COLORS: ${src.detectedColors.join(', ') || '(none)'}\nDETECTED FONTS: ${src.detectedFonts.join(', ') || '(none)'}`
     : '(no URL provided)';
   const samplesBlock =
     samples.length > 0
-      ? samples.map((s, i) => `SAMPLE ${i + 1}:\n"""${s.slice(0, 1500)}"""`).join('\n\n')
-      : '(no writing samples provided)';
+      ? samples.map((s, i) => `ADDITIONAL INPUT ${i + 1}:\n"""${s.slice(0, 1500)}"""`).join('\n\n')
+      : '(no additional user context provided)';
   return `You are a senior brand + product-marketing strategist. Analyze the company's existing public surface and extract a structured Brand IQ.
 
 Apply the playbooks below (product-marketing positioning + customer-research). Do NOT ask questions — infer from the material provided, and where evidence is thin, make a clearly reasonable best guess rather than leaving fields empty.
@@ -195,9 +203,12 @@ ${PMM_FRAMEWORK}
 
 COMPANY NAME: ${companyName}
 
+EXISTING COMPANY CONTEXT:
+${companyContext || '(only the company name is available)'}
+
 ${sourceBlock}
 
-WRITING SAMPLES:
+USER-SUPPLIED CONTEXT OR WRITING EXAMPLES:
 ${samplesBlock}
 
 Respond ONLY with a single valid JSON object matching this schema (no markdown, no commentary):
@@ -246,7 +257,9 @@ Respond ONLY with a single valid JSON object matching this schema (no markdown, 
   "objections": [ { "objection": "top objection heard", "response": "how to address it" } ] // 2-4
 }
 
-Be specific. Pull concrete signature phrases and verbatim customer language from the samples when possible. Personas must be distinct (not just "ICP variants"). For JTBD forces, think about the moment of switching.`;
+Be specific. Treat explicit user preferences as constraints. When an input is clearly a real writing
+example, use it as voice evidence and pull concrete signature phrases or customer language from it.
+Personas must be distinct (not just "ICP variants"). For JTBD forces, think about the moment of switching.`;
 }
 
 function coerceVoice(v: any): BrandIqVoice {
@@ -334,16 +347,54 @@ function coerceObjections(o: any): Objection[] {
     .filter((it: Objection) => it.objection.trim().length > 0);
 }
 
-function visualFromSource(src: ExtractedSource | null): VisualIdentity {
-  if (!src) return { ...DEFAULT_VISUAL };
+function validHex(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+function visualFromSources(
+  src: ExtractedSource | null,
+  brand: typeof brandIdentities.$inferSelect | null,
+  current: BrandIqProfile | null,
+): VisualIdentity {
+  const colors = (brand?.colors ?? {}) as {
+    primary?: string;
+    secondary?: string;
+    accent?: string;
+  };
+  const typography = (brand?.typography ?? {}) as {
+    headingFont?: string;
+    bodyFont?: string;
+  };
+  const existing = current?.visualIdentity;
+  const detected = src?.detectedColors ?? [];
   return {
-    primaryColor: src.detectedColors[0] ?? DEFAULT_VISUAL.primaryColor,
-    secondaryColor: src.detectedColors[1] ?? DEFAULT_VISUAL.secondaryColor,
-    accentColors: src.detectedColors.slice(2, 5),
-    fontHeadline: src.detectedFonts[0] ?? null,
-    fontBody: src.detectedFonts[1] ?? src.detectedFonts[0] ?? null,
-    imageMood: DEFAULT_VISUAL.imageMood,
-    logoUrl: src.ogImage,
+    primaryColor: detected[0]
+      ?? (validHex(colors.primary) ? colors.primary : null)
+      ?? existing?.primaryColor
+      ?? DEFAULT_VISUAL.primaryColor,
+    secondaryColor: detected[1]
+      ?? (validHex(colors.secondary) ? colors.secondary : null)
+      ?? existing?.secondaryColor
+      ?? DEFAULT_VISUAL.secondaryColor,
+    accentColors: detected.slice(2, 5).length
+      ? detected.slice(2, 5)
+      : [
+        ...(validHex(colors.accent) ? [colors.accent] : []),
+        ...(existing?.accentColors ?? []),
+      ].slice(0, 5),
+    fontHeadline: src?.detectedFonts[0]
+      ?? typography.headingFont
+      ?? existing?.fontHeadline
+      ?? null,
+    fontBody: src?.detectedFonts[1]
+      ?? src?.detectedFonts[0]
+      ?? typography.bodyFont
+      ?? existing?.fontBody
+      ?? null,
+    imageMood: brand?.visualStyle
+      ? `${brand.visualStyle}, human-led`
+      : existing?.imageMood ?? DEFAULT_VISUAL.imageMood,
+    logoUrl: src?.ogImage ?? brand?.logoUrl ?? existing?.logoUrl ?? null,
   };
 }
 
@@ -358,22 +409,42 @@ export async function getActiveBrandIq(companyId: string): Promise<BrandIqProfil
 }
 
 export async function generateBrandIq(companyId: string, input: BrandIqInput): Promise<BrandIqProfile> {
-  const company = await db.query.companies.findFirst({
-    where: eq(companies.id, companyId),
-    columns: { id: true, name: true, industry: true },
-  });
+  const [company, brand, current] = await Promise.all([
+    db.query.companies.findFirst({
+      where: eq(companies.id, companyId),
+    }),
+    db.query.brandIdentities.findFirst({
+      where: eq(brandIdentities.companyId, companyId),
+    }),
+    getActiveBrandIq(companyId),
+  ]);
   if (!company) throw new Error('Company not found');
 
   // 1. URL scrape
-  const src = input.url ? await scrapeBrandSource(input.url) : null;
-  const samples = (input.samples ?? []).filter((s) => typeof s === 'string' && s.trim().length > 50);
-
-  if (!src && samples.length === 0) {
-    throw new Error('Provide a URL or at least one writing sample to extract Brand IQ');
-  }
+  const sourceUrl = input.url
+    ?? current?.sourceUrl
+    ?? brand?.extractedFromUrl
+    ?? (company.settings as { websiteUrl?: string } | null)?.websiteUrl
+    ?? undefined;
+  const src = sourceUrl ? await scrapeBrandSource(sourceUrl) : null;
+  const suppliedSamples = (input.samples ?? [])
+    .filter((s) => typeof s === 'string' && s.trim().length > 50)
+    .map((s) => s.trim());
+  const samples = [...new Set([...(current?.sourceSamples ?? []), ...suppliedSamples])].slice(-5);
+  const companyProfile = JSON.stringify({
+    name: company.name,
+    industry: company.industry,
+    description: company.description,
+    businessType: company.businessType,
+    goals: company.goals,
+    businessPlan: company.businessPlan,
+    language: company.settings?.language,
+    websiteUrl: sourceUrl,
+  }, null, 2);
+  const companyContext = `${companyProfile}\n\n${input.companyContext ?? ''}`.slice(0, 18_000);
 
   // 2. LLM derivation
-  const prompt = buildPrompt(company.name, src, samples);
+  const prompt = buildPrompt(company.name, src, samples, companyContext);
 
   let parsed: any = {};
   try {
@@ -394,15 +465,27 @@ export async function generateBrandIq(companyId: string, input: BrandIqInput): P
     parsed = {};
   }
 
-  const voice = coerceVoice(parsed.voice);
-  const personas = coercePersonas(parsed.audiencePersonas);
-  const style = coerceStyle(parsed.styleGuide);
-  const visual = visualFromSource(src);
-  const tagline = typeof parsed.tagline === 'string' && parsed.tagline.length <= 120 ? parsed.tagline : null;
-  const jtbdForces = coerceJtbd(parsed.jtbdForces);
-  const customerLanguage = coerceCustomerLanguage(parsed.customerLanguage);
-  const antiPersonas = coerceAntiPersonas(parsed.antiPersonas);
-  const objections = coerceObjections(parsed.objections);
+  const voice = parsed.voice ? coerceVoice(parsed.voice) : current?.voice ?? DEFAULT_VOICE;
+  const personas = parsed.audiencePersonas
+    ? coercePersonas(parsed.audiencePersonas)
+    : current?.audiencePersonas ?? [];
+  const style = parsed.styleGuide ? coerceStyle(parsed.styleGuide) : current?.styleGuide ?? DEFAULT_STYLE;
+  const visual = visualFromSources(src, brand ?? null, current);
+  const tagline = typeof parsed.tagline === 'string' && parsed.tagline.length <= 120
+    ? parsed.tagline
+    : current?.tagline ?? null;
+  const jtbdForces = parsed.jtbdForces
+    ? coerceJtbd(parsed.jtbdForces)
+    : current?.jtbdForces ?? null;
+  const customerLanguage = parsed.customerLanguage
+    ? coerceCustomerLanguage(parsed.customerLanguage)
+    : current?.customerLanguage ?? null;
+  const antiPersonas = parsed.antiPersonas
+    ? coerceAntiPersonas(parsed.antiPersonas)
+    : current?.antiPersonas ?? [];
+  const objections = parsed.objections
+    ? coerceObjections(parsed.objections)
+    : current?.objections ?? [];
 
   // 3. Mark previous active rows inactive, insert new version
   const previous = await db
@@ -424,13 +507,13 @@ export async function generateBrandIq(companyId: string, input: BrandIqInput): P
       companyId,
       version: nextVersion,
       isActive: true,
-      sourceUrl: input.url ?? null,
+      sourceUrl: sourceUrl ?? null,
       sourceSamples: samples,
       voice,
       audiencePersonas: personas,
       styleGuide: style,
       visualIdentity: visual,
-      okrs: [],
+      okrs: current?.okrs ?? [],
       jtbdForces,
       customerLanguage,
       antiPersonas,

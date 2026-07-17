@@ -121,6 +121,23 @@ export function useGenerateBrandIq(companyId: string) {
   });
 }
 
+export function useAutoGenerateBrandIq(companyId: string) {
+  const token = useAuthStore((s) => s.token);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ data: BrandIqProfile; created: boolean }>(
+        `/brand-iq/${companyId}/auto-generate`,
+        {},
+        { token: token! },
+      ),
+    onSuccess: (result) => {
+      qc.setQueryData(['brand-iq', companyId], { data: result.data });
+      qc.invalidateQueries({ queryKey: ['brand-iq', companyId] });
+    },
+  });
+}
+
 export function useUpdateBrandIq(companyId: string) {
   const token = useAuthStore((s) => s.token);
   const qc = useQueryClient();

@@ -8,29 +8,40 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, desc, ilike, or } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { eq, and, desc, ilike, or, count, like } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { documents, knowledgeBase, companies } from '@1person/core/db';
+import { documents, knowledgeBase } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { queueTaskExecution } from '../lib/queue';
 import { knowledgeExtractionService } from '../services/knowledge-extraction';
-import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
+import { assertCompanyAccess } from '../lib/company-access';
+import { llmGenerate } from '../lib/llm';
+import { semanticSearch } from '../services/embedding-service';
+import {
+  ensureApprovedKnowledgeIndexed,
+  removeApprovedKnowledge,
+  replaceApprovedKnowledge,
+} from '../services/knowledge-lifecycle';
+import { discoverKnowledgeCrawlData } from '../services/knowledge-crawl-discovery';
+import {
+  deleteObjectByStorageReference,
+  isObjectStorageReference,
+  objectStorageReference,
+  saveObject,
+} from '../services/object-storage';
 
 const knowledgeRouter = new Hono();
 knowledgeRouter.use('*', authMiddleware);
+knowledgeRouter.use('/company/:companyId/*', async (c, next) => {
+  await assertCompanyAccess(c.req.param('companyId'), c.get('user').userId);
+  await next();
+});
 
 // Auto-mark stuck documents as failed (>5 min in processing)
 setInterval(async () => {
   try {
     const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
-    await db.update(documents)
-      .set({ status: 'failed', errorMessage: 'Processing timed out. Try re-uploading a smaller file.' })
-      .where(and(
-        eq(documents.status, 'processing' as any),
-        // @ts-ignore
-        documents.createdAt ? undefined : undefined // drizzle lt workaround below
-      ));
-    // Use raw SQL for the date comparison
     const { sql } = await import('drizzle-orm');
     await db.execute(sql`
       UPDATE documents SET status = 'failed', error_message = 'Processing timed out. Try a smaller file.'
@@ -38,6 +49,45 @@ setInterval(async () => {
     `);
   } catch {}
 }, 60000); // Check every minute
+
+function sanitizeFileName(name?: string): string {
+  return (name || 'document').replace(/[/\\]/g, '_').replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function contentTypeForDocument(file: File): string {
+  if (file.type) return file.type;
+  const lower = (file.name || '').toLowerCase();
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (lower.endsWith('.md')) return 'text/markdown; charset=utf-8';
+  return 'text/plain; charset=utf-8';
+}
+
+async function resolveLegacyKnowledgePath(companyId: string, fileUrl: string): Promise<string | null> {
+  const path = await import('node:path');
+  const storageRoot = path.resolve(process.cwd(), '..', '..', 'deploy', 'knowledge', companyId);
+  const resolvedPath = path.resolve(fileUrl);
+  const relativePath = path.relative(storageRoot, resolvedPath);
+
+  if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return null;
+  }
+  return resolvedPath;
+}
+
+async function deleteStoredDocumentFile(companyId: string, fileUrl?: string | null): Promise<void> {
+  if (!fileUrl) return;
+  if (isObjectStorageReference(fileUrl)) {
+    await deleteObjectByStorageReference(fileUrl).catch(() => undefined);
+    return;
+  }
+
+  const localPath = await resolveLegacyKnowledgePath(companyId, fileUrl);
+  if (localPath) {
+    const fileSystem = await import('node:fs/promises');
+    await fileSystem.unlink(localPath).catch(() => undefined);
+  }
+}
 
 // Upload file (PDF, doc, image)
 knowledgeRouter.post('/company/:companyId/upload', async (c) => {
@@ -50,6 +100,15 @@ knowledgeRouter.post('/company/:companyId/upload', async (c) => {
   }
 
   const name = (body['name'] as string) || file.name || 'Uploaded Document';
+  const lowerFileName = (file.name || '').toLowerCase();
+  const supportedExtension = ['.pdf', '.docx', '.txt', '.md'].some((extension) =>
+    lowerFileName.endsWith(extension)
+  );
+  if (!supportedExtension) {
+    return c.json({
+      error: 'Unsupported file. Upload a PDF, DOCX, TXT, or Markdown document.',
+    }, 400);
+  }
 
   // File size limit: 10MB
   const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -64,84 +123,83 @@ knowledgeRouter.post('/company/:companyId/upload', async (c) => {
     where: and(eq(documents.companyId, companyId), eq(documents.name, name)),
   });
   if (existingFile) {
-    return c.json({ id: existingFile.id, name: existingFile.name, message: 'This file was already uploaded' });
+    const isStale = ['processing', 'uploading'].includes(existingFile.status)
+      && Date.now() - existingFile.updatedAt.getTime() > 2 * 60 * 1000;
+    const canRetry = ['failed', 'rejected'].includes(existingFile.status) || isStale;
+
+    if (!canRetry) {
+      return c.json({
+        id: existingFile.id,
+        name: existingFile.name,
+        status: existingFile.status,
+        message: 'This file was already uploaded',
+      });
+    }
+
+    // A failed/stale attempt must not block the user from selecting the same
+    // file again. Its derived knowledge and stored source file are cleaned first.
+    await removeApprovedKnowledge(companyId, `document:${existingFile.id}`);
+    await db.delete(documents).where(and(
+      eq(documents.id, existingFile.id),
+      eq(documents.companyId, companyId),
+    ));
+    await deleteStoredDocumentFile(companyId, existingFile.fileUrl);
   }
 
-  const fileType = file.name?.endsWith('.pdf') ? 'pdf' :
+  const fileType = lowerFileName.endsWith('.pdf') ? 'pdf' :
     file.name?.match(/\.(png|jpg|jpeg|gif)$/i) ? 'image' :
     file.name?.match(/\.(mp3|wav|m4a)$/i) ? 'audio' :
-    file.name?.match(/\.(doc|docx)$/i) ? 'doc' : 'text';
+    lowerFileName.endsWith('.docx') ? 'doc' : 'text';
 
-  // Save file to local storage
-  const fs = await import('fs');
-  const path = await import('path');
-  const uploadDir = path.join(process.cwd(), '..', '..', 'deploy', 'knowledge', companyId);
-  fs.mkdirSync(uploadDir, { recursive: true });
-
-  const fileName = `${Date.now()}-${file.name || 'document'}`;
-  const filePath = path.join(uploadDir, fileName);
   const buffer = Buffer.from(await file.arrayBuffer());
-  fs.writeFileSync(filePath, buffer);
+  const safeOriginalName = sanitizeFileName(file.name || 'document');
+  const fileName = `${randomUUID()}-${safeOriginalName}`;
+  const stored = await saveObject({
+    key: `knowledge/${companyId}/documents/${fileName}`,
+    body: buffer,
+    contentType: contentTypeForDocument(file),
+    cacheControl: 'private, max-age=0, no-store',
+  });
 
   // Create document record
   const [doc] = await db.insert(documents).values({
     companyId,
     name,
     type: fileType as any,
-    fileUrl: filePath,
+    fileUrl: objectStorageReference(stored.key),
     fileSize: buffer.length,
     status: 'processing',
   }).returning();
-
-  // W0.1 — dual-write to the trust-grade @1person/ai-tenant pipeline.
-  // Non-fatal: the legacy `documents` table is still authoritative for
-  // Phase 0 so any failure here must not break the upload. Once Phase 1A
-  // lands (pgvector + multi-LLM) the trust pipeline becomes authoritative
-  // and this dual-write collapses into a single call.
-  (async () => {
-    try {
-      const company = await db.query.companies.findFirst({
-        where: eq(companies.id, companyId),
-        columns: { id: true, name: true },
-      });
-      if (!company) return;
-
-      const tenantId = await ensureTenantForCompany(company.id, company.name);
-      const ai = getTenantAI();
-      await ai.uploadDocument(
-        tenantId,
-        name,
-        buffer,
-        file.type || 'application/octet-stream',
-        'user:upload',
-      );
-    } catch (err) {
-      // Log only — legacy path already succeeded so the user is unaffected.
-      console.error('[W0.1 dual-write] TenantAI.uploadDocument failed:', err);
-    }
-  })();
+  if (!doc) return c.json({ error: 'Could not create document' }, 500);
 
   // For text/PDF: extract immediately (small enough)
   if (fileType === 'pdf' || fileType === 'text' || fileType === 'doc') {
     // Queue extraction task
     try {
-      await queueTaskExecution({
-        taskId: doc.id,
-        agentId: '',
-        companyId,
-        taskType: 'extract_document',
-        title: `Extract knowledge from ${name}`,
-        description: `Processing uploaded ${fileType} document`,
-        input: { documentId: doc.id },
-        priority: 'high',
-      });
+      await Promise.race([
+        queueTaskExecution({
+          taskId: doc.id,
+          agentId: '',
+          companyId,
+          taskType: 'extract_document',
+          title: `Extract knowledge from ${name}`,
+          description: `Processing uploaded ${fileType} document`,
+          input: { documentId: doc.id },
+          priority: 'high',
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Document processing queue is unavailable')), 5000)
+        ),
+      ]);
     } catch {
       // If queue unavailable, extract inline with timeout
       try {
         const extractionPromise = async () => {
-          const rawText = fileType === 'pdf'
-            ? await knowledgeExtractionService.extractFromPDF(buffer)
-            : buffer.toString('utf-8');
+          const rawText = await knowledgeExtractionService.extractFromDocument(
+            buffer,
+            file.name || name,
+            fileType,
+          );
           const truncated = rawText.substring(0, 15000); // Limit text for LLM
           const entries = await knowledgeExtractionService.structureContent(truncated, name);
           return { rawText: truncated, entries };
@@ -161,15 +219,19 @@ knowledgeRouter.post('/company/:companyId/upload', async (c) => {
           updatedAt: new Date(),
         }).where(eq(documents.id, doc.id));
       } catch (err) {
+        const message = err instanceof Error
+          ? err.message
+          : 'Could not process this document. Please try uploading again.';
         await db.update(documents).set({
           status: 'failed',
-          errorMessage: 'Could not process this document. Please try uploading again.',
+          errorMessage: message,
+          updatedAt: new Date(),
         }).where(eq(documents.id, doc.id));
       }
     }
   }
 
-  return c.json({ id: doc.id, status: doc.status, name: doc.name });
+  return c.json({ id: doc.id, status: 'processing', name: doc.name }, 202);
 });
 
 // Ingest URL
@@ -202,6 +264,7 @@ knowledgeRouter.post(
       sourceUrl: normalizedUrl,
       status: 'processing',
     }).returning();
+    if (!doc) return c.json({ error: 'Could not create document' }, 500);
 
     // Extract inline (URLs are fast)
     try {
@@ -225,6 +288,134 @@ knowledgeRouter.post(
   }
 );
 
+// Discover public company data from the saved website + public search sources.
+// This route is intentionally read-only: the user reviews sources before they
+// become Knowledge documents.
+knowledgeRouter.get('/company/:companyId/crawl/discover', async (c) => {
+  const companyId = c.req.param('companyId');
+  const result = await discoverKnowledgeCrawlData(companyId);
+  return c.json(result);
+});
+
+const crawlImportSchema = z.object({
+  visibility: z.enum(['public', 'internal', 'confidential']).optional(),
+  sources: z.array(z.object({
+    url: z.string().min(5).max(2048),
+    title: z.string().max(255).optional(),
+    type: z.string().max(80).optional(),
+    snippet: z.string().max(1000).optional(),
+  })).min(1).max(8),
+});
+
+function normalizeImportUrl(value: string): string {
+  const raw = value.trim();
+  const url = new URL(raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`);
+  url.hash = '';
+  return url.toString().replace(/\/$/, '');
+}
+
+// Import selected crawl sources into the existing Knowledge document lifecycle.
+// Imported URLs become `extracted` documents, so the user can inspect and
+// approve them before they affect the company brain/chatbot.
+knowledgeRouter.post(
+  '/company/:companyId/crawl/import',
+  zValidator('json', crawlImportSchema),
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const { sources, visibility } = c.req.valid('json');
+
+    const results: Array<{
+      url: string;
+      ok: boolean;
+      status: 'imported' | 'skipped' | 'failed';
+      documentId?: string;
+      message?: string;
+    }> = [];
+
+    for (const source of sources) {
+      let normalizedUrl = '';
+      try {
+        normalizedUrl = normalizeImportUrl(source.url);
+      } catch {
+        results.push({ url: source.url, ok: false, status: 'failed', message: 'Invalid URL' });
+        continue;
+      }
+
+      const existing = await db.query.documents.findFirst({
+        where: and(
+          eq(documents.companyId, companyId),
+          eq(documents.sourceUrl, normalizedUrl),
+        ),
+      });
+      if (existing) {
+        results.push({
+          url: normalizedUrl,
+          ok: true,
+          status: 'skipped',
+          documentId: existing.id,
+          message: 'Already added',
+        });
+        continue;
+      }
+
+      const docName = (source.title || new URL(normalizedUrl).hostname).slice(0, 255);
+      const [doc] = await db.insert(documents).values({
+        companyId,
+        name: docName,
+        type: 'url',
+        sourceUrl: normalizedUrl,
+        status: 'processing',
+        visibility: visibility || 'internal',
+        tags: ['crawl-data', source.type || 'web'],
+      }).returning();
+
+      if (!doc) {
+        results.push({ url: normalizedUrl, ok: false, status: 'failed', message: 'Could not create document' });
+        continue;
+      }
+
+      try {
+        const rawText = await knowledgeExtractionService.extractFromURL(normalizedUrl);
+        const contentForAi = [
+          source.snippet ? `Search snippet: ${source.snippet}` : '',
+          rawText,
+        ].filter(Boolean).join('\n\n');
+        const entries = await knowledgeExtractionService.structureContent(contentForAi, docName);
+
+        await db.update(documents).set({
+          status: 'extracted',
+          rawContent: contentForAi.substring(0, 50000),
+          extractedContent: entries as any,
+          updatedAt: new Date(),
+        }).where(eq(documents.id, doc.id));
+
+        results.push({
+          url: normalizedUrl,
+          ok: true,
+          status: 'imported',
+          documentId: doc.id,
+          message: 'Ready for review',
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not read this source';
+        await db.update(documents).set({
+          status: 'failed',
+          errorMessage: message,
+          updatedAt: new Date(),
+        }).where(eq(documents.id, doc.id));
+        results.push({ url: normalizedUrl, ok: false, status: 'failed', documentId: doc.id, message });
+      }
+    }
+
+    return c.json({
+      imported: results.filter((result) => result.status === 'imported').length,
+      skipped: results.filter((result) => result.status === 'skipped').length,
+      failed: results.filter((result) => result.status === 'failed').length,
+      results,
+    });
+  },
+);
+
 // Add manual text knowledge
 knowledgeRouter.post(
   '/company/:companyId/add-text',
@@ -233,16 +424,19 @@ knowledgeRouter.post(
     content: z.string().min(10),
     category: z.string().optional(),
     tags: z.array(z.string()).optional(),
+    visibility: z.enum(['public', 'internal', 'confidential']).optional(),
   })),
   async (c) => {
     const companyId = c.req.param('companyId');
-    const { title, content, category, tags } = c.req.valid('json');
+    const { title, content, category, tags, visibility } = c.req.valid('json');
 
     // Create document
     const [doc] = await db.insert(documents).values({
       companyId,
       name: title,
       type: 'text',
+      tags: tags || [],
+      visibility: visibility || 'internal',
       rawContent: content,
       extractedContent: [{
         category: category || 'general',
@@ -254,17 +448,22 @@ knowledgeRouter.post(
       status: 'approved', // Manual text is auto-approved
       approvedAt: new Date(),
     }).returning();
+    if (!doc) return c.json({ error: 'Could not create document' }, 500);
 
-    // Also save directly to knowledge_base (approved = active knowledge)
-    await db.insert(knowledgeBase).values({
+    const sync = await replaceApprovedKnowledge({
       companyId,
-      category: category || 'general',
-      title,
-      content,
       source: `document:${doc.id}`,
+      verifiedByUserId: c.get('user').userId,
+      items: [{
+        category: category || 'general',
+        title,
+        content,
+        visibility: visibility || 'internal',
+        tags: tags || [],
+      }],
     });
 
-    return c.json({ id: doc.id, status: 'approved' });
+    return c.json({ id: doc.id, status: 'approved', ...sync });
   }
 );
 
@@ -288,10 +487,11 @@ knowledgeRouter.get('/company/:companyId/documents', async (c) => {
 
 // Get document detail
 knowledgeRouter.get('/company/:companyId/documents/:id', async (c) => {
+  const companyId = c.req.param('companyId');
   const docId = c.req.param('id');
 
   const doc = await db.query.documents.findFirst({
-    where: eq(documents.id, docId),
+    where: and(eq(documents.id, docId), eq(documents.companyId, companyId)),
   });
 
   if (!doc) return c.json({ error: 'Document not found' }, 404);
@@ -315,6 +515,19 @@ knowledgeRouter.patch(
       updatedAt: new Date(),
     }).where(and(eq(documents.id, docId), eq(documents.companyId, companyId))).returning();
     if (!updated) return c.json({ error: 'Document not found' }, 404);
+
+    // Keep approved chatbot knowledge in sync when visibility changes after
+    // approval; otherwise Public/Internal/Admin levels read stale access data.
+    if (body.visibility) {
+      await db
+        .update(knowledgeBase)
+        .set({ visibility: body.visibility, updatedAt: new Date() })
+        .where(and(
+          eq(knowledgeBase.companyId, companyId),
+          eq(knowledgeBase.source, `document:${docId}`),
+        ));
+    }
+
     return c.json(updated);
   }
 );
@@ -326,59 +539,84 @@ knowledgeRouter.patch('/company/:companyId/documents/:id/approve', async (c) => 
   const { userId } = c.get('user');
 
   const doc = await db.query.documents.findFirst({
-    where: eq(documents.id, docId),
+    where: and(eq(documents.id, docId), eq(documents.companyId, companyId)),
   });
 
   if (!doc) return c.json({ error: 'Document not found' }, 404);
 
-  // Update document status
+  if (doc.status !== 'extracted' && doc.status !== 'approved') {
+    return c.json({ error: 'This document is not ready for review yet' }, 409);
+  }
+
+  const entries = (doc.extractedContent as any[]) || [];
+  if (entries.length === 0) {
+    return c.json({ error: 'No knowledge was extracted from this document' }, 400);
+  }
+  const documentTags = Array.isArray((doc as any).tags) ? ((doc as any).tags as string[]) : [];
+  const sync = await replaceApprovedKnowledge({
+    companyId,
+    source: `document:${docId}`,
+    verifiedByUserId: userId,
+    items: entries.map((entry) => ({
+      category: entry.category || 'general',
+      title: entry.title || doc.name,
+      content: entry.content || '',
+      confidence: entry.confidence,
+      visibility: (doc as any).visibility || 'internal',
+      tags: [...new Set([
+        ...documentTags,
+        ...(Array.isArray(entry.tags) ? entry.tags : []),
+      ])],
+    })),
+  });
+
   await db.update(documents).set({
     status: 'approved',
     approvedAt: new Date(),
     approvedBy: userId,
     updatedAt: new Date(),
-  }).where(eq(documents.id, docId));
+  }).where(and(eq(documents.id, docId), eq(documents.companyId, companyId)));
 
-  // Save extracted entries to knowledge_base (active knowledge for agents/chatbot)
-  const entries = (doc.extractedContent as any[]) || [];
-  let saved = 0;
-
-  for (const entry of entries) {
-    try {
-      await db.insert(knowledgeBase).values({
-        companyId,
-        category: entry.category || 'general',
-        title: entry.title,
-        content: entry.content,
-        source: `document:${docId}`,
-        confidence: entry.confidence,
-        // B1 fix (doc 11 §7): copy document visibility so public docs
-        // produce public knowledge entries reachable by public chatbot widgets
-        visibility: (doc as any).visibility || 'internal',
-      });
-      saved++;
-    } catch {}
-  }
-
-  return c.json({ approved: true, knowledgeEntriesSaved: saved });
+  return c.json({
+    approved: true,
+    knowledgeEntriesSaved: sync.saved,
+    searchEntriesIndexed: sync.indexed,
+    indexingFailed: sync.indexingFailed,
+  });
 });
 
 // Reject document
 knowledgeRouter.patch('/company/:companyId/documents/:id/reject', async (c) => {
+  const companyId = c.req.param('companyId');
   const docId = c.req.param('id');
 
+  const doc = await db.query.documents.findFirst({
+    where: and(eq(documents.id, docId), eq(documents.companyId, companyId)),
+    columns: { id: true },
+  });
+  if (!doc) return c.json({ error: 'Document not found' }, 404);
+
+  await removeApprovedKnowledge(companyId, `document:${docId}`);
   await db.update(documents).set({
     status: 'rejected',
     updatedAt: new Date(),
-  }).where(eq(documents.id, docId));
+  }).where(and(eq(documents.id, docId), eq(documents.companyId, companyId)));
 
   return c.json({ rejected: true });
 });
 
 // Delete document
 knowledgeRouter.delete('/company/:companyId/documents/:id', async (c) => {
+  const companyId = c.req.param('companyId');
   const docId = c.req.param('id');
-  await db.delete(documents).where(eq(documents.id, docId));
+  const doc = await db.query.documents.findFirst({
+    where: and(eq(documents.id, docId), eq(documents.companyId, companyId)),
+  });
+  if (!doc) return c.json({ error: 'Document not found' }, 404);
+
+  await removeApprovedKnowledge(companyId, `document:${docId}`);
+  await db.delete(documents).where(and(eq(documents.id, docId), eq(documents.companyId, companyId)));
+  await deleteStoredDocumentFile(companyId, doc.fileUrl);
   return c.json({ deleted: true });
 });
 
@@ -388,27 +626,84 @@ knowledgeRouter.get('/company/:companyId/search', async (c) => {
   const q = c.req.query('q') || '';
   const category = c.req.query('category');
 
-  const conditions = [eq(knowledgeBase.companyId, companyId)];
+  const sourceFilter = or(
+    like(knowledgeBase.source, 'document:%'),
+    like(knowledgeBase.source, 'meeting:%'),
+  );
+  const conditions = [eq(knowledgeBase.companyId, companyId), sourceFilter];
   if (category) conditions.push(eq(knowledgeBase.category, category));
+  if (q) {
+    const textFilter = or(
+      ilike(knowledgeBase.title, `%${q}%`),
+      ilike(knowledgeBase.content, `%${q}%`),
+    );
+    if (textFilter) conditions.push(textFilter);
+  }
 
-  let query = db
+  const results = await db
     .select()
     .from(knowledgeBase)
     .where(and(...conditions))
     .orderBy(desc(knowledgeBase.updatedAt))
-    .limit(30);
+    .limit(100);
+  const [summary] = await db
+    .select({ total: count() })
+    .from(knowledgeBase)
+    .where(and(eq(knowledgeBase.companyId, companyId), sourceFilter));
 
-  const results = await query;
-
-  // Filter by search term in JS (simpler than dynamic SQL)
-  const filtered = q
-    ? results.filter((r) =>
-        r.title.toLowerCase().includes(q.toLowerCase()) ||
-        r.content.toLowerCase().includes(q.toLowerCase())
-      )
-    : results;
-
-  return c.json({ data: filtered });
+  return c.json({ data: results, total: summary?.total ?? 0 });
 });
+
+// Ask only approved company knowledge using the shared vector index.
+knowledgeRouter.post(
+  '/company/:companyId/query',
+  zValidator('json', z.object({ question: z.string().trim().min(3).max(2000) })),
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const { question } = c.req.valid('json');
+    await ensureApprovedKnowledgeIndexed(companyId);
+    const hits = await semanticSearch(companyId, question, {
+      sourceTypes: ['knowledge_base'],
+      limit: 8,
+      minScore: 0.15,
+    });
+
+    if (hits.length === 0) {
+      return c.json({
+        answer: "I couldn't find enough approved knowledge to answer that yet.",
+        sources: [],
+      });
+    }
+
+    const context = hits.map((hit, index) =>
+      `[Source ${index + 1}: ${String(hit.metadata.title || 'Company knowledge')}]\n${hit.chunkText}`
+    ).join('\n\n');
+    const response = await llmGenerate([
+      {
+        role: 'system',
+        content: 'Answer using only the approved company knowledge provided. Cite supporting sources as [Source N]. If the sources do not contain the answer, say so clearly. Be concise and factual.',
+      },
+      {
+        role: 'user',
+        content: `APPROVED KNOWLEDGE:\n${context}\n\nQUESTION:\n${question}`,
+      },
+    ], {
+      maxTokens: 1000,
+      traceName: 'knowledge.query',
+      metadata: { companyId, sourceCount: hits.length },
+    });
+
+    return c.json({
+      answer: response.text,
+      traceId: response.traceId,
+      sources: hits.map((hit) => ({
+        documentId: hit.sourceId,
+        documentName: String(hit.metadata.title || 'Company knowledge'),
+        chunkText: hit.chunkText,
+        score: hit.score,
+      })),
+    });
+  },
+);
 
 export default knowledgeRouter;

@@ -186,11 +186,11 @@ const BUILT_IN_TOOLS = [
   },
   // Storage
   {
-    name: 'Cloudflare R2',
-    slug: 'cloudflare-r2',
-    description: 'Store and serve assets via Cloudflare R2',
+    name: 'AWS S3',
+    slug: 'aws-s3',
+    description: 'Store and serve assets via AWS S3',
     type: 'storage' as const,
-    provider: 'cloudflare',
+    provider: 'aws',
     apiEndpoint: '',
     authMethod: 'api_key' as const,
     config: {

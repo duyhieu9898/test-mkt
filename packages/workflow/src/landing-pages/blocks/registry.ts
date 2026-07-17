@@ -15,6 +15,7 @@ import type {
   PricingContent,
   FAQContent,
   CTAContent,
+  ImageContent,
   FooterContent,
 } from './types';
 import {
@@ -27,6 +28,7 @@ import {
   pricingContentSchema,
   faqContentSchema,
   ctaContentSchema,
+  imageContentSchema,
   footerContentSchema,
   customContentSchema,
 } from './types';
@@ -40,8 +42,10 @@ const defaultHeroContent: HeroContent = {
   subheadline: 'The best solution for your business needs',
   ctaText: 'Get Started',
   ctaUrl: '#signup',
+  ctaOpenInNewTab: false,
   ctaSecondaryText: 'Learn More',
   ctaSecondaryUrl: '#features',
+  ctaSecondaryOpenInNewTab: false,
   alignment: 'center',
 };
 
@@ -119,6 +123,7 @@ const defaultPricingContent: PricingContent = {
       description: 'Perfect for individuals',
       features: ['Up to 5 projects', 'Basic analytics', 'Email support'],
       ctaText: 'Start Free Trial',
+      ctaOpenInNewTab: false,
       featured: false,
     },
     {
@@ -128,6 +133,7 @@ const defaultPricingContent: PricingContent = {
       description: 'Best for growing teams',
       features: ['Unlimited projects', 'Advanced analytics', 'Priority support', 'Team collaboration'],
       ctaText: 'Start Free Trial',
+      ctaOpenInNewTab: false,
       featured: true,
       badge: 'Most Popular',
     },
@@ -138,6 +144,7 @@ const defaultPricingContent: PricingContent = {
       description: 'For large organizations',
       features: ['Everything in Pro', 'Custom integrations', 'Dedicated support', 'SLA guarantee'],
       ctaText: 'Contact Sales',
+      ctaOpenInNewTab: false,
       featured: false,
     },
   ],
@@ -169,7 +176,19 @@ const defaultCTAContent: CTAContent = {
   description: 'Join thousands of satisfied customers today.',
   ctaText: 'Start Free Trial',
   ctaUrl: '#signup',
+  ctaOpenInNewTab: false,
+  ctaSecondaryOpenInNewTab: false,
   showEmailCapture: false,
+};
+
+const defaultImageContent: ImageContent = {
+  url: '',
+  alt: '',
+  caption: '',
+  linkUrl: '',
+  openInNewTab: false,
+  aspectRatio: 'wide',
+  fit: 'cover',
 };
 
 const defaultFooterContent: FooterContent = {
@@ -283,6 +302,15 @@ export const blockDefinitions: Record<BlockType, BlockDefinition> = {
     category: 'conversion',
     defaultContent: defaultCTAContent,
     schema: ctaContentSchema,
+  },
+  [BlockTypeEnum.IMAGE]: {
+    type: BlockTypeEnum.IMAGE,
+    name: 'Image',
+    description: 'Add a visual from your media library',
+    icon: 'image',
+    category: 'content',
+    defaultContent: defaultImageContent,
+    schema: imageContentSchema,
   },
   [BlockTypeEnum.FOOTER]: {
     type: BlockTypeEnum.FOOTER,

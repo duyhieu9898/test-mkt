@@ -36,6 +36,27 @@
       "when": 1775787129237,
       "tag": "0004_true_sentry",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781836800000,
+      "tag": "0005_ceo_advisor_briefs",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782875501767,
+      "tag": "0006_brain_strategy_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783551600000,
+      "tag": "0007_market_competitors",
+      "breakpoints": true
     }
   ]
 }

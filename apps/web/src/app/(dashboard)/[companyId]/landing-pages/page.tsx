@@ -69,7 +69,6 @@ import {
   type LandingPage,
 } from '@/lib/api/hooks';
 import { PublishDialog } from '@/components/landing-pages/publish-dialog';
-import { MarketingTabs } from '@/components/marketing/marketing-tabs';
 
 const statusConfig: Record<
   string,
@@ -240,7 +239,6 @@ export default function LandingPagesPage() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <MarketingTabs />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -256,8 +254,8 @@ export default function LandingPagesPage() {
               Generate Page
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[640px] max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
+          <DialogContent className="flex h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[760px]">
+            <DialogHeader className="shrink-0 border-b px-6 py-5 pr-12">
               <DialogTitle className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-primary" />
                 Create Landing Page
@@ -403,17 +401,37 @@ export default function LandingPagesPage() {
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
         </div>
-      ) : filteredPages.length === 0 ? (
+      ) : (pages?.length ?? 0) === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Globe className="w-12 h-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-medium text-foreground mb-2">No landing pages yet</h3>
+            <h3 className="text-lg font-medium text-foreground mb-2">Create a page for your next marketing goal</h3>
             <p className="text-muted-foreground text-center max-w-md mb-4">
-              Generate your first AI-powered landing page to start capturing leads
+              Turn an offer, campaign, or lead-generation idea into a public page without writing code.
             </p>
             <Button onClick={() => setIsCreateDialogOpen(true)} className="gap-2">
               <Sparkles className="w-4 h-4" />
-              Generate Your First Page
+              Create a landing page
+            </Button>
+          </CardContent>
+        </Card>
+      ) : filteredPages.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-10">
+            <Search className="mb-3 h-9 w-9 text-slate-300" />
+            <h3 className="font-medium text-foreground">No pages match these filters</h3>
+            <p className="mt-1 text-center text-sm text-muted-foreground">
+              Clear the search or status filter to see your existing pages.
+            </p>
+            <Button
+              variant="outline"
+              className="mt-4"
+              onClick={() => {
+                setSearchQuery('');
+                setStatusFilter('all');
+              }}
+            >
+              Clear filters
             </Button>
           </CardContent>
         </Card>

@@ -17,7 +17,43 @@ const socialRouter = new Hono();
 socialRouter.use('*', authMiddleware);
 const platformEnum = z.enum(['facebook', 'instagram', 'linkedin']);
 
+let socialScheduleTableReady = false;
+
+async function ensureSocialScheduleTable() {
+  if (socialScheduleTableReady) return;
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS social_posts_scheduled (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      content text NOT NULL,
+      platforms jsonb NOT NULL DEFAULT '[]'::jsonb,
+      media_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
+      scheduled_at timestamp,
+      published_at timestamp,
+      status varchar(20) NOT NULL DEFAULT 'draft',
+      platform_post_ids jsonb NOT NULL DEFAULT '{}'::jsonb,
+      metrics jsonb NOT NULL DEFAULT '{}'::jsonb,
+      ai_generated boolean NOT NULL DEFAULT false,
+      created_at timestamp NOT NULL DEFAULT now(),
+      updated_at timestamp NOT NULL DEFAULT now()
+    )
+  `);
+
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS social_posts_scheduled_company_idx
+    ON social_posts_scheduled(company_id)
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS social_posts_scheduled_status_idx
+    ON social_posts_scheduled(status)
+  `);
+
+  socialScheduleTableReady = true;
+}
+
 socialRouter.get('/:companyId/posts', async (c) => {
+  await ensureSocialScheduleTable();
   const rows: any = await db.execute(sql`
     SELECT * FROM social_posts_scheduled WHERE company_id = ${c.req.param('companyId')}
     ORDER BY COALESCE(scheduled_at, created_at) DESC LIMIT 100`);
@@ -26,8 +62,9 @@ socialRouter.get('/:companyId/posts', async (c) => {
 
 socialRouter.post('/:companyId/posts', zValidator('json', z.object({
   content: z.string().min(1).max(5000), platforms: z.array(platformEnum).min(1),
-  mediaUrls: z.array(z.string()).optional().default([]), scheduledAt: z.string().optional(),
+  mediaUrls: z.array(z.string()).optional().default([]), scheduledAt: z.string().nullable().optional(),
 })), async (c) => {
+  await ensureSocialScheduleTable();
   const companyId = c.req.param('companyId');
   const b = c.req.valid('json');
   const status = b.scheduledAt ? 'scheduled' : 'draft';
@@ -44,6 +81,7 @@ socialRouter.patch('/:companyId/posts/:id', zValidator('json', z.object({
   content: z.string().min(1).max(5000).optional(), platforms: z.array(platformEnum).optional(),
   mediaUrls: z.array(z.string()).optional(), scheduledAt: z.string().nullable().optional(),
 })), async (c) => {
+  await ensureSocialScheduleTable();
   const { companyId, id } = c.req.param() as { companyId: string; id: string };
   const b = c.req.valid('json');
   const rows: any = await db.execute(sql`
@@ -60,6 +98,7 @@ socialRouter.patch('/:companyId/posts/:id', zValidator('json', z.object({
 });
 
 socialRouter.delete('/:companyId/posts/:id', async (c) => {
+  await ensureSocialScheduleTable();
   const { companyId, id } = c.req.param() as { companyId: string; id: string };
   await db.execute(sql`DELETE FROM social_posts_scheduled WHERE id = ${id} AND company_id = ${companyId}`);
   return c.json({ ok: true });
@@ -68,6 +107,7 @@ socialRouter.delete('/:companyId/posts/:id', async (c) => {
 socialRouter.post('/:companyId/posts/:id/schedule', zValidator('json', z.object({
   scheduledAt: z.string(),
 })), async (c) => {
+  await ensureSocialScheduleTable();
   const { companyId, id } = c.req.param() as { companyId: string; id: string };
   const rows: any = await db.execute(sql`
     UPDATE social_posts_scheduled SET scheduled_at = ${c.req.valid('json').scheduledAt}::timestamp,
@@ -78,6 +118,7 @@ socialRouter.post('/:companyId/posts/:id/schedule', zValidator('json', z.object(
 });
 
 socialRouter.post('/:companyId/posts/:id/publish-now', async (c) => {
+  await ensureSocialScheduleTable();
   const { companyId, id } = c.req.param() as { companyId: string; id: string };
 
   // Load the post first.
@@ -98,7 +139,7 @@ socialRouter.post('/:companyId/posts/:id/publish-now', async (c) => {
     if (platform === 'facebook') {
       const conn = await findActiveFbConnection(companyId);
       if (!conn) {
-        results.push({ platform, ok: false, error: 'No Facebook Page connected — connect one in Channels.' });
+        results.push({ platform, ok: false, error: 'No Facebook Page connected — connect one in Channels or Social Distribution.' });
         continue;
       }
       try {

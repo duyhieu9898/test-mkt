@@ -26,6 +26,8 @@ export interface ChannelConnectionRow {
     appId?: string;
     verifyTokenPreview?: string | null;
     hasAccessToken?: boolean;
+    publishingEnabled?: boolean;
+    messagingEnabled?: boolean;
   };
 }
 
@@ -48,13 +50,11 @@ export interface OmnichannelMessageRow {
   createdAt: string;
 }
 
-export interface ConnectFbInput {
-  pageId: string;
-  pageName?: string;
-  pageAccessToken: string;
-  appId: string;
-  verifyToken: string;
-  aiAutoReply?: boolean;
+export interface FacebookPageOption {
+  id: string;
+  name: string;
+  pictureUrl?: string;
+  canPublish: boolean;
 }
 
 export function useChannelConnections(companyId: string) {
@@ -67,14 +67,31 @@ export function useChannelConnections(companyId: string) {
   });
 }
 
-export function useConnectFbMessenger(companyId: string) {
+export function useStartFacebookOAuth(companyId: string) {
+  const token = useAuthStore((s) => s.token);
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ url: string }>(
+        `/omnichannel/company/${companyId}/facebook/oauth/start`,
+        {},
+        { token: token! },
+      ),
+  });
+}
+
+export function useSelectFacebookPage(companyId: string) {
   const token = useAuthStore((s) => s.token);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: ConnectFbInput) =>
-      api.post<ChannelConnectionRow>(`/omnichannel/company/${companyId}/fb-messenger/connect`, body, { token: token! }),
+    mutationFn: (body: { pageId: string; session: string }) =>
+      api.post<ChannelConnectionRow>(
+        `/omnichannel/company/${companyId}/facebook/oauth/select`,
+        body,
+        { token: token! },
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['omnichannel', 'connections', companyId] });
+      qc.invalidateQueries({ queryKey: ['distribution', 'connections', companyId] });
     },
   });
 }

@@ -14,19 +14,41 @@
  * the founder pastes their page token via the admin UI per existing platform
  * pattern.
  */
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../../lib/db';
 import {
   channelConnections,
+  socialConnections,
   omnichannelMessages,
   chatbotConfig,
   type ChannelConnection,
+  type SocialConnection,
 } from '@1person/core/db';
-import { decryptSecret } from '../../lib/crypto';
+import { decryptMaybe, decryptSecret } from '../../lib/crypto';
 import { llmGenerate } from '../../lib/llm';
 import { buildBusinessContext } from '../business-context';
+import {
+  missingFacebookPublishPermissions,
+  resolveFacebookPageAccess,
+} from '../facebook-page-access';
 
 const GRAPH_API_BASE = 'https://graph.facebook.com/v21.0';
+
+export type FacebookPublishConnection = ChannelConnection | SocialConnection;
+
+export function isFacebookReconnectRequiredError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return [
+    /reconnect facebook/i,
+    /not a page managed by this token/i,
+    /missing pages_[a-z_]+/i,
+    /facebook page connection is incomplete/i,
+    /invalid.*access token/i,
+    /error validating access token/i,
+    /access token.*expired/i,
+    /session has expired/i,
+  ].some((pattern) => pattern.test(message));
+}
 
 export interface NormalizedInbound {
   pageId: string;
@@ -122,8 +144,20 @@ export async function sendMessage(
 }
 
 /** Find the active FB Page connection for a company (for organic publishing). */
-export async function findActiveFbConnection(companyId: string): Promise<ChannelConnection | null> {
-  const rows = await db
+export async function findActiveFbConnections(companyId: string): Promise<FacebookPublishConnection[]> {
+  const socialRows = await db
+    .select()
+    .from(socialConnections)
+    .where(
+      and(
+        eq(socialConnections.companyId, companyId),
+        eq(socialConnections.platform, 'facebook'),
+        eq(socialConnections.status, 'connected'),
+      ),
+    )
+    .orderBy(desc(socialConnections.updatedAt), desc(socialConnections.connectedAt));
+
+  const omnichannelRows = await db
     .select()
     .from(channelConnections)
     .where(
@@ -132,8 +166,107 @@ export async function findActiveFbConnection(companyId: string): Promise<Channel
         eq(channelConnections.channel, 'fb_messenger'),
         eq(channelConnections.status, 'active'),
       ),
+    )
+    .orderBy(desc(channelConnections.connectedAt));
+
+  return [...socialRows, ...omnichannelRows];
+}
+
+export async function findActiveFbConnection(companyId: string): Promise<FacebookPublishConnection | null> {
+  return (await findActiveFbConnections(companyId))[0] ?? null;
+}
+
+function getFacebookPublishCredentials(connection: FacebookPublishConnection): {
+  pageId?: string;
+  accessToken?: string;
+} {
+  if ('connectionData' in connection) {
+    const data = connection.connectionData as Record<string, unknown>;
+    const pageId = data?.pageId as string | undefined;
+    const encrypted = data?.encryptedPageAccessToken as string | undefined;
+    return {
+      pageId,
+      accessToken: encrypted ? decryptSecret(encrypted) : undefined,
+    };
+  }
+
+  return {
+    pageId: connection.platformPageId ?? connection.platformUserId ?? undefined,
+    accessToken: decryptMaybe(connection.accessToken),
+  };
+}
+
+/**
+ * Resolve and validate the Page token once before publishing or reading
+ * insights. Keeping this in the connection service prevents callers from
+ * needing to know whether the token came from Channels or Social Distribution.
+ */
+export async function resolveFacebookPublishAccess(
+  connection: FacebookPublishConnection,
+  options: { requirePublishing?: boolean } = {},
+): Promise<{ pageId: string; accessToken: string }> {
+  const { pageId, accessToken } = getFacebookPublishCredentials(connection);
+  if (!pageId || !accessToken) throw new Error('Facebook Page connection is incomplete');
+  const pageAccess = await resolveFacebookPageAccess(accessToken, pageId);
+  if (!pageAccess.requestedPageFound) {
+    const available = pageAccess.availablePages
+      .map((page) => `${page.name || 'Unnamed Page'} (${page.id})`)
+      .join(', ');
+    throw new Error(
+      `The configured Facebook Page ID ${pageId} is not a Page managed by this token.`
+      + (available ? ` Available Page: ${available}.` : '')
+      + ' Reconnect Facebook with the correct Page ID.',
     );
-  return rows[0] ?? null;
+  }
+  const missingPermissions = options.requirePublishing === false
+    ? (
+      pageAccess.permissions.length > 0
+      && !pageAccess.permissions.includes('pages_read_engagement')
+        ? ['pages_read_engagement']
+        : []
+    )
+    : missingFacebookPublishPermissions(pageAccess.permissions);
+  if (missingPermissions.length > 0) {
+    throw new Error(
+      `Facebook connection is missing ${missingPermissions.join(', ')}. `
+      + 'Reconnect the Page with an admin account and grant the requested permissions.',
+    );
+  }
+  if (
+    options.requirePublishing !== false
+    &&
+    pageAccess.pageTasks?.length
+    && !pageAccess.pageTasks.includes('CREATE_CONTENT')
+  ) {
+    throw new Error(
+      'Your Facebook account does not have permission to create content on this Page. '
+      + 'Ask a Page owner to grant Full control, then reconnect.',
+    );
+  }
+  return { pageId, accessToken: pageAccess.accessToken };
+}
+
+/**
+ * Try every active Facebook connection for a company. This handles legacy
+ * duplicate rows safely: a stale Social Distribution row must not block a
+ * newer valid connection saved by Channels.
+ */
+export async function resolveActiveFacebookAccess(
+  companyId: string,
+  options: { requirePublishing?: boolean } = {},
+): Promise<{ connection: FacebookPublishConnection; pageId: string; accessToken: string }> {
+  const connections = await findActiveFbConnections(companyId);
+  let lastError: unknown;
+  for (const connection of connections) {
+    try {
+      const access = await resolveFacebookPublishAccess(connection, options);
+      return { connection, ...access };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError instanceof Error) throw lastError;
+  throw new Error('No Facebook Page connected. Connect a Facebook Page in Channels first.');
 }
 
 /**
@@ -142,29 +275,61 @@ export async function findActiveFbConnection(companyId: string): Promise<Channel
  * carry `pages_manage_posts`; if it doesn't, Graph returns a clear error we surface.
  */
 export async function publishPagePost(
-  connection: ChannelConnection,
+  connection: FacebookPublishConnection,
   text: string,
-  link?: string,
-): Promise<{ externalId: string }> {
-  const data = connection.connectionData as Record<string, unknown>;
-  const pageId = data?.pageId as string | undefined;
-  const encrypted = data?.encryptedPageAccessToken as string | undefined;
-  if (!pageId || !encrypted) throw new Error('Facebook Page connection is incomplete');
-  const accessToken = decryptSecret(encrypted);
+  options?: string | { link?: string; mediaUrls?: string[] },
+): Promise<{ externalId: string; externalUrl?: string }> {
+  const { pageId, accessToken } = await resolveFacebookPublishAccess(connection);
 
-  const body: Record<string, string> = { message: text.slice(0, 5000), access_token: accessToken };
-  if (link) body.link = link;
+  const link = typeof options === 'string' ? options : options?.link;
+  const mediaUrl = typeof options === 'object'
+    ? options.mediaUrls?.find((url) => typeof url === 'string' && url.trim().length > 0)
+    : undefined;
+  const body: Record<string, string> = {
+    message: text.slice(0, 5000),
+    access_token: accessToken,
+  };
+  if (mediaUrl) body.url = mediaUrl;
+  else if (link) body.link = link;
 
-  const res = await fetch(`${GRAPH_API_BASE}/${encodeURIComponent(pageId)}/feed`, {
+  const endpoint = mediaUrl ? 'photos' : 'feed';
+  const res = await fetch(`${GRAPH_API_BASE}/${encodeURIComponent(pageId)}/${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   const payload = (await res.json().catch(() => ({}))) as any;
   if (!res.ok) {
+    if (payload?.error?.code === 200) {
+      throw new Error(
+        'Facebook rejected this Page token. Reconnect Facebook and grant '
+        + 'pages_read_engagement and pages_manage_posts using a Page admin account.',
+      );
+    }
     throw new Error(`FB page publish failed (${res.status}): ${payload?.error?.message ?? 'unknown'}`);
   }
-  return { externalId: payload?.id ?? '' };
+  const externalId = payload?.post_id ?? payload?.id ?? '';
+  let externalUrl = externalId ? `https://www.facebook.com/${externalId}` : undefined;
+  if (externalId) {
+    try {
+      const permalinkUrl = new URL(`${GRAPH_API_BASE}/${encodeURIComponent(externalId)}`);
+      permalinkUrl.searchParams.set('fields', 'permalink_url');
+      permalinkUrl.searchParams.set('access_token', accessToken);
+      const permalinkResponse = await fetch(permalinkUrl);
+      const permalinkPayload = (await permalinkResponse.json().catch(() => ({}))) as {
+        permalink_url?: string;
+      };
+      if (permalinkResponse.ok && permalinkPayload.permalink_url) {
+        externalUrl = permalinkPayload.permalink_url;
+      }
+    } catch (error) {
+      console.warn('[facebook] Could not resolve published post permalink:', error);
+    }
+  }
+  return {
+    externalId,
+    externalUrl,
+  };
 }
 
 /** Persist inbound + (optionally) generate & send an AI reply. */

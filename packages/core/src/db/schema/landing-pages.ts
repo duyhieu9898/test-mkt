@@ -56,6 +56,7 @@ export const sectionTypeEnum = pgEnum('section_type', [
   'testimonials',
   'faq',
   'cta',
+  'image',
   'footer',
   'custom',
 ]);
@@ -98,8 +99,13 @@ export interface HeroSection {
   headline: string;
   subheadline: string;
   ctaText: string;
+  ctaUrl?: string;
+  ctaOpenInNewTab?: boolean;
   ctaSecondaryText?: string;
+  ctaSecondaryUrl?: string;
+  ctaSecondaryOpenInNewTab?: boolean;
   backgroundImage?: string;
+  backgroundImageAlt?: string;
   alignment: 'left' | 'center' | 'right';
 }
 
@@ -108,6 +114,7 @@ export interface FeatureItem {
   description: string;
   icon?: string;
   image?: string;
+  imageAlt?: string;
 }
 
 export interface PricingTier {

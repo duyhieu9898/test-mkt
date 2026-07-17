@@ -5,6 +5,8 @@ import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
 import { env } from './lib/env';
 import { errorHandler } from './middleware/error';
+import { isObjectStoragePublicUrl, readObjectFromPublicUrl } from './services/object-storage';
+import { renderWidgetScript } from './services/website-widget';
 
 // Routes
 import authRouter from './routes/auth';
@@ -80,6 +82,7 @@ import analyticsRouter from './routes/analytics';
 import marketingSkillsRouter from './routes/marketing-skills';
 import visionRouter from './routes/vision-analyze';
 import autopilotRouter from './routes/autopilot';
+import publishingRouter from './routes/publishing';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -90,6 +93,18 @@ const app = new Hono();
 // Global middleware
 app.use('*', logger());
 app.use('*', prettyJSON());
+// Public website widgets are embedded on customer/hosted domains. Register
+// this before the restricted app CORS middleware so preflight OPTIONS gets
+// Access-Control-Allow-Origin instead of being swallowed without it.
+app.use(
+  '/api/v1/chatbot/widget/*',
+  cors({
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type'],
+    maxAge: 86400,
+  }),
+);
 app.use(
   '*',
   cors({
@@ -104,22 +119,42 @@ app.onError(errorHandler);
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-// Serve uploaded assets (images, videos) as static files
-app.get('/uploads/*', async (c) => {
-  const filePath = c.req.path.replace('/uploads/', '');
+// Public embeddable Website Widget runtime. Landing pages and WordPress pages
+// load this tiny script; the script then calls /api/v1/chatbot/widget/*.
+app.get('/widget.js', (c) => new Response(renderWidgetScript(), {
+  headers: {
+    'Content-Type': 'application/javascript; charset=utf-8',
+    'Cache-Control': 'public, max-age=300, must-revalidate',
+    'Access-Control-Allow-Origin': '*',
+  },
+}));
+
+async function serveDeployFile(
+  relativePath: string,
+  deploySubdir: 'assets' | 'images',
+): Promise<Response> {
   const fs = await import('fs');
   const path = await import('path');
-  const fullPath = path.join(process.cwd(), '..', '..', 'deploy', 'assets', filePath);
+  const safePath = relativePath.replace(/^[/\\]+/, '');
+  if (safePath.split(/[\\/]+/).includes('..')) {
+    return Response.json({ error: 'Invalid file path' }, { status: 400 });
+  }
+  const candidates = [
+    path.join(process.cwd(), 'deploy', deploySubdir, safePath),
+    path.join(process.cwd(), '..', '..', 'deploy', deploySubdir, safePath),
+  ];
+  const fullPath = candidates.find((candidate) => fs.existsSync(candidate));
 
-  if (!fs.existsSync(fullPath)) {
-    return c.json({ error: 'File not found' }, 404);
+  if (!fullPath) {
+    return Response.json({ error: 'File not found' }, { status: 404 });
   }
 
   const ext = path.extname(fullPath).toLowerCase();
   const mimeTypes: Record<string, string> = {
     '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
     '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
-    '.mp4': 'video/mp4', '.webm': 'video/webm',
+    '.mp4': 'video/mp4', '.webm': 'video/webm', '.zip': 'application/zip',
+    '.cesdk': 'application/zip',
   };
 
   const contentType = mimeTypes[ext] || 'application/octet-stream';
@@ -129,6 +164,57 @@ app.get('/uploads/*', async (c) => {
     headers: {
       'Content-Type': contentType,
       'Cache-Control': 'public, max-age=86400',
+    },
+  });
+}
+
+// Serve uploaded assets (images, videos) as static files
+app.get('/uploads/*', async (c) => {
+  const filePath = c.req.path.replace('/uploads/', '');
+  return serveDeployFile(filePath, 'assets');
+});
+
+// Serve generated blog/banner images from deploy/images.
+app.get('/images/*', async (c) => {
+  const filePath = c.req.path.replace('/images/', '');
+  return serveDeployFile(filePath, 'images');
+});
+
+function inferImageContentType(url: string): string {
+  const value = url.toLowerCase().split('?')[0] ?? '';
+  if (value.endsWith('.jpg') || value.endsWith('.jpeg')) return 'image/jpeg';
+  if (value.endsWith('.webp')) return 'image/webp';
+  if (value.endsWith('.gif')) return 'image/gif';
+  if (value.endsWith('.svg')) return 'image/svg+xml';
+  if (value.endsWith('.zip') || value.endsWith('.cesdk')) return 'application/zip';
+  return 'image/png';
+}
+
+function isAllowedAssetProxyUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'https:') return false;
+    return isObjectStoragePublicUrl(rawUrl);
+  } catch {
+    return false;
+  }
+}
+
+// Proxy public object-storage assets for browser editors that need CORS-safe image reads.
+app.get('/asset-proxy', async (c) => {
+  const url = c.req.query('url') || '';
+  if (!isAllowedAssetProxyUrl(url)) {
+    return c.json({ error: 'Asset URL is not allowed' }, 400);
+  }
+
+  const buffer = await readObjectFromPublicUrl(url);
+  if (!buffer) return c.json({ error: 'Asset not found' }, 404);
+
+  return new Response(new Uint8Array(buffer), {
+    headers: {
+      'Content-Type': inferImageContentType(url),
+      'Cache-Control': 'public, max-age=86400',
+      'Access-Control-Allow-Origin': '*',
     },
   });
 });
@@ -228,6 +314,7 @@ api.route('/analytics', analyticsRouter);
 api.route('/marketing-skills', marketingSkillsRouter);
 api.route('/vision', visionRouter);
 api.route('/autopilot', autopilotRouter);
+api.route('/publishing', publishingRouter);
 
 // Mount API
 app.route('/api/v1', api);

@@ -3,9 +3,8 @@
 /**
  * Knowledge → Search tab (doc 10 §7).
  *
- * Unified RAG search across tenant documents (and later meeting
- * transcripts once wired). Uses the existing `/tenant-ai/company/:id/query`
- * endpoint which returns answer + sources[] with chunks.
+ * Unified RAG search across approved company knowledge, including approved
+ * document facts and meeting transcripts.
  */
 
 import { useState } from 'react';
@@ -47,7 +46,7 @@ export default function KnowledgeSearchPage() {
     setResult(null);
     try {
       const res = await api.post<QueryResponse>(
-        `/tenant-ai/company/${companyId}/query`,
+        `/knowledge/company/${companyId}/query`,
         { question: question.trim() },
         { token },
       );
@@ -70,8 +69,8 @@ export default function KnowledgeSearchPage() {
           <Search className="w-6 h-6 text-indigo-500" /> Ask your knowledge
         </h1>
         <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-          Search across all your uploaded documents and meeting transcripts. The AI
-          answers in plain language and shows you exactly which source it used.
+          Ask questions across approved documents and meetings. The AI answers in
+          plain language and shows which approved sources support the answer.
         </p>
       </div>
 

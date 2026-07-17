@@ -7,8 +7,7 @@ import { db } from '../lib/db';
 import { assetLibrary } from '@1person/core/db';
 import { eq, and, desc, ilike, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
-import { writeFile, mkdir, unlink } from 'fs/promises';
-import { join } from 'path';
+import { deleteObjectByPublicUrl, saveObject } from '../services/object-storage';
 
 const assetsLibrary = new Hono();
 
@@ -127,19 +126,16 @@ assetsLibrary.post('/company/:companyId/upload', async (c) => {
     throw new HTTPException(400, { message: 'This file type is not supported.' });
   }
 
-  // Save file to disk
+  // Save file through the configured storage adapter.
   const fileId = randomUUID();
   const filename = `${fileId}.${ext}`;
-  const uploadDir = join(process.cwd(), '..', '..', 'deploy', 'assets', companyId);
-
-  await mkdir(uploadDir, { recursive: true });
-
   const buffer = Buffer.from(await file.arrayBuffer());
-  const filePath = join(uploadDir, filename);
-  await writeFile(filePath, buffer);
-
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') || 'http://localhost:8004';
-  const url = `${apiUrl}/uploads/${companyId}/${filename}`;
+  const stored = await saveObject({
+    key: `assets/${companyId}/${filename}`,
+    body: buffer,
+    contentType: file.type || 'application/octet-stream',
+  });
+  const url = stored.url;
   const name = (body['name'] as string) || file.name.replace(/\.[^/.]+$/, '');
   const tags = (body['tags'] as string) ? JSON.parse(body['tags'] as string) : [];
   const campaignId = (body['campaignId'] as string) || null;
@@ -160,6 +156,8 @@ assetsLibrary.post('/company/:companyId/upload', async (c) => {
       campaignId,
       metadata: {
         originalFilename: file.name,
+        storageProvider: stored.provider,
+        storageKey: stored.key,
       },
     })
     .returning();
@@ -379,14 +377,12 @@ assetsLibrary.delete('/:assetId', async (c) => {
     throw new HTTPException(403, { message: 'Access denied' });
   }
 
-  // Try to delete the file from disk if it's a local upload
-  if (asset.source === 'upload' && asset.url.includes('/uploads/')) {
+  // Try to delete the file from object storage if it is an uploaded asset.
+  if (asset.source === 'upload') {
     try {
-      const relativePath = asset.url.split('/uploads/').pop() || '';
-      const filePath = join(process.cwd(), '..', '..', 'deploy', 'assets', relativePath);
-      await unlink(filePath);
+      await deleteObjectByPublicUrl(asset.url);
     } catch {
-      // File might already be gone; proceed with DB deletion
+      // File might already be gone; proceed with DB deletion.
     }
   }
 

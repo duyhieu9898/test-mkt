@@ -4,6 +4,11 @@ import { z } from 'zod';
 import { authMiddleware } from '../middleware/auth';
 import { FTUXProcessor } from '../services/ftux-processor';
 import { orchestrator, feedbackLoop } from '../agents';
+import { db } from '../lib/db';
+import { companies, agents as agentsTable, type BusinessPlan } from '@1person/core/db';
+import { eq, and, ne } from 'drizzle-orm';
+import { HTTPException } from 'hono/http-exception';
+import { finalizeFtuxCompany } from '../services/ftux-finalization';
 
 const ftuxRouter = new Hono();
 
@@ -11,7 +16,10 @@ const ftuxRouter = new Hono();
 ftuxRouter.use('*', authMiddleware);
 
 const processSchema = z.object({
-  prompt: z.string().min(10).max(1000),
+  prompt: z.string()
+    .trim()
+    .min(10, 'Describe your business in at least 10 characters')
+    .max(1000),
   websiteOption: z.enum(['has_website', 'new_business', 'skip']).default('skip'),
   websiteUrl: z.string().optional(),
 });
@@ -61,6 +69,69 @@ ftuxRouter.get('/status/:sessionId', async (c) => {
     error: status.error,
   });
 });
+
+const finalizationByCompany = new Map<string, Promise<Awaited<ReturnType<typeof finalizeFtuxCompany>>>>();
+
+ftuxRouter.post(
+  '/finalize',
+  zValidator('json', z.object({ companyId: z.string().uuid() })),
+  async (c) => {
+    const { userId } = c.get('user');
+    const { companyId } = c.req.valid('json');
+    const company = await db.query.companies.findFirst({
+      where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+      columns: { id: true },
+    });
+    if (!company) throw new HTTPException(404, { message: 'Company not found' });
+
+    let finalization = finalizationByCompany.get(companyId);
+    if (!finalization) {
+      finalization = finalizeFtuxCompany(companyId, userId);
+      finalizationByCompany.set(companyId, finalization);
+    }
+
+    try {
+      return c.json(await finalization);
+    } finally {
+      if (finalizationByCompany.get(companyId) === finalization) {
+        finalizationByCompany.delete(companyId);
+      }
+    }
+  },
+);
+
+ftuxRouter.post(
+  '/approve-growth-plan',
+  zValidator('json', z.object({ companyId: z.string().uuid() })),
+  async (c) => {
+    const { userId } = c.get('user');
+    const { companyId } = c.req.valid('json');
+    const company = await db.query.companies.findFirst({
+      where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+    });
+    if (!company) throw new HTTPException(404, { message: 'Company not found' });
+
+    const businessPlan = company.businessPlan as BusinessPlan | null;
+    if (!businessPlan?.growthPlan) {
+      throw new HTTPException(400, { message: 'Generate the Growth Plan before approving it' });
+    }
+
+    const approvedAt = new Date().toISOString();
+    await db
+      .update(companies)
+      .set({
+        businessPlan: {
+          ...businessPlan,
+          growthPlanVersion: businessPlan.growthPlanVersion ?? 1,
+          growthPlanApprovedAt: approvedAt,
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(companies.id, companyId));
+
+    return c.json({ approvedAt });
+  },
+);
 
 // Trigger execution - Orchestrator decides workflow dynamically
 const executeSchema = z.object({
@@ -115,20 +186,34 @@ ftuxRouter.post('/execute', zValidator('json', executeSchema), async (c) => {
       const { marketingAutonomous } = await import('../services/marketing-autonomous');
       const { buildBusinessContext } = await import('../services/business-context');
       const ctx = await buildBusinessContext(companyId);
+      const company = await db.query.companies.findFirst({
+        where: eq(companies.id, companyId),
+        columns: { businessPlan: true },
+      });
+      const growthPlan = (company?.businessPlan as BusinessPlan | null)?.growthPlan;
+      const firstPriority = (items: Array<{ action: string; priority: string }> | undefined) =>
+        items?.find((item) => item.priority === 'high') ?? items?.[0];
+      const contentPriority = firstPriority(growthPlan?.contentPlan.items);
+      const socialPriority = firstPriority(growthPlan?.socialMediaPlan.items);
 
-      // Create 2 campaigns based on business context
+      // Turn the approved executive plan into initial campaigns. Fallbacks
+      // cover companies created before persisted Growth Plans existed.
       const campaigns = [
         {
-          goal: `Get leads for ${ctx.companyName}`,
+          goal: contentPriority?.action || `Get leads for ${ctx.companyName}`,
           audience: (Array.isArray(ctx.targetAudience) ? ctx.targetAudience.join(', ') : ctx.targetAudience) || 'potential customers',
-          reason: 'Initial marketing setup — attract first customers',
+          reason: contentPriority
+            ? `Approved Growth Plan priority: ${contentPriority.action}`
+            : 'Initial marketing setup - attract first customers',
           suggestedBudget: 10,
           channel: 'meta',
         },
         {
-          goal: `Build brand awareness for ${ctx.companyName}`,
+          goal: socialPriority?.action || `Build brand awareness for ${ctx.companyName}`,
           audience: (Array.isArray(ctx.targetAudience) ? ctx.targetAudience.join(', ') : ctx.targetAudience) || 'industry professionals',
-          reason: 'Brand visibility — establish online presence',
+          reason: socialPriority
+            ? `Approved Growth Plan priority: ${socialPriority.action}`
+            : 'Brand visibility - establish online presence',
           suggestedBudget: 5,
           channel: 'linkedin',
         },
@@ -217,13 +302,20 @@ ftuxRouter.post('/feedback', zValidator('json', z.object({ companyId: z.string()
 
 // Customize AI team based on user text description
 const customizeSchema = z.object({
+  companyId: z.string().uuid(),
   currentTeam: z.array(z.any()),
   request: z.string().min(3),
   companyName: z.string().optional(),
 });
 
 ftuxRouter.post('/customize-team', zValidator('json', customizeSchema), async (c) => {
-  const { currentTeam, request, companyName } = c.req.valid('json');
+  const { userId } = c.get('user');
+  const { companyId, currentTeam, request, companyName } = c.req.valid('json');
+  const company = await db.query.companies.findFirst({
+    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+    columns: { id: true },
+  });
+  if (!company) throw new HTTPException(404, { message: 'Company not found' });
   const { llmGenerate, extractJSON } = await import('../lib/llm');
 
   const teamList = currentTeam.map((a: any) =>
@@ -271,14 +363,107 @@ Rules:
 
     const agents = extractJSON(text);
     if (agents && Array.isArray(agents) && agents.length > 0) {
-      return c.json({ agents });
+      const validRoles = new Set([
+        'ceo', 'marketing_manager', 'content_creator', 'ads_specialist',
+        'analyst', 'sales_manager', 'support', 'developer', 'custom',
+      ]);
+      const existing = await db.query.agents.findMany({
+        where: eq(agentsTable.companyId, companyId),
+      });
+      const existingById = new Map(existing.map((agent) => [agent.id, agent]));
+      const sourceToPersistedId = new Map<string, string>();
+      const keptIds = new Set<string>();
+      const candidates = (agents as any[]).map((candidate, index) => ({
+        candidate,
+        sourceId: String(candidate.id || `new-${index}`),
+      }));
+
+      // Persist identity first, then supervisors. AI may reference a newly added
+      // teammate before that teammate has a database UUID.
+      await db.transaction(async (tx) => {
+        for (const { candidate, sourceId } of candidates) {
+          const current = existingById.get(sourceId);
+          const role = validRoles.has(candidate.role) ? candidate.role : 'custom';
+          const responsibilities = Array.isArray(candidate.responsibilities)
+            ? candidate.responsibilities.filter((item: unknown) => typeof item === 'string' && item.trim())
+            : [];
+          const values = {
+            name: String(candidate.name || current?.name || 'AI Teammate').slice(0, 100),
+            role: role as any,
+            title: String(candidate.title || current?.title || role.replaceAll('_', ' ')).slice(0, 100),
+            description: responsibilities.join('. ') || current?.description,
+            capabilities: responsibilities.map((name: string) => ({
+              name,
+              level: 'advanced' as const,
+              description: name,
+            })),
+            color: /^#[0-9a-f]{6}$/i.test(String(candidate.color))
+              ? String(candidate.color)
+              : current?.color || '#6366f1',
+            status: 'ready' as const,
+            level: role === 'ceo' ? 0 : role.includes('manager') ? 1 : 2,
+            updatedAt: new Date(),
+          };
+
+          if (current) {
+            await tx.update(agentsTable).set(values).where(eq(agentsTable.id, current.id));
+            sourceToPersistedId.set(sourceId, current.id);
+            keptIds.add(current.id);
+          } else {
+            const [created] = await tx.insert(agentsTable).values({
+              companyId,
+              ...values,
+              supervisorId: null,
+              budgetLimit: '100',
+            } as any).returning();
+            if (created) {
+              sourceToPersistedId.set(sourceId, created.id);
+              keptIds.add(created.id);
+            }
+          }
+        }
+
+        for (const { candidate, sourceId } of candidates) {
+          const persistedId = sourceToPersistedId.get(sourceId);
+          if (!persistedId) continue;
+          const supervisorId = candidate.role === 'ceo'
+            ? null
+            : sourceToPersistedId.get(String(candidate.supervisorId || '')) || null;
+          await tx.update(agentsTable).set({ supervisorId }).where(eq(agentsTable.id, persistedId));
+        }
+
+        for (const current of existing) {
+          if (!keptIds.has(current.id)) {
+            await tx.update(agentsTable).set({ status: 'archived', updatedAt: new Date() })
+              .where(eq(agentsTable.id, current.id));
+          }
+        }
+      });
+
+      const persisted = await db.query.agents.findMany({
+        where: and(eq(agentsTable.companyId, companyId), ne(agentsTable.status, 'archived')),
+      });
+      return c.json({
+        agents: persisted.map((agent) => ({
+          id: agent.id,
+          name: agent.name,
+          role: agent.role,
+          title: agent.title || agent.role.replaceAll('_', ' '),
+          emoji: '',
+          color: agent.color || '#6366f1',
+          supervisorId: agent.supervisorId,
+          responsibilities: Array.isArray(agent.capabilities)
+            ? agent.capabilities.map((capability) => capability.name)
+            : [],
+        })),
+      });
     }
   } catch (err) {
     console.warn('[FTUX] Team customization failed:', err);
+    return c.json({ message: 'Your AI team could not be updated' }, 500);
   }
 
-  // Fallback: return current team unchanged
-  return c.json({ agents: currentTeam, message: 'Could not process request' });
+  return c.json({ message: 'AI did not return a valid team structure' }, 422);
 });
 
 export default ftuxRouter;

@@ -6,7 +6,7 @@
  *
  * Flow:
  * 1. Create campaign in 'planned' state
- * 2. Transition to 'generating' — create banners + posts
+ * 2. Transition to 'generating' — create blog + banners + posts
  * 3. Transition to 'ready' — waiting for user approval or auto-launch
  */
 
@@ -18,6 +18,19 @@ import { buildBusinessContext } from './business-context';
 import { validateBanner } from './creative-quality';
 import { snapshotToPromptBlock } from '@1person/ai-tenant';
 import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
+import {
+  CAMPAIGN_BANNER_PALETTE,
+  renderContextualCampaignBanner,
+} from './campaign-banner-creative';
+import {
+  applyBrandKitToBannerTheme,
+  brandCreativeKitSnapshot,
+  buildBrandCreativeKit,
+  buildBrandFitSummary,
+  renderBrandCreativeKitPrompt,
+} from './brand-creative-kit';
+import { createCampaignBlog } from './campaign-blog';
+import { buildCampaignName } from './campaign-name';
 
 /**
  * Load the Business Brain snapshot (W0.2) for the given company and
@@ -44,6 +57,7 @@ export interface AutonomousOpportunity {
   goal: string;
   audience: string;
   reason: string;
+  offer?: string;
   suggestedBudget?: number;
   channel?: string;
 }
@@ -113,13 +127,17 @@ export class MarketingAutonomous {
 
       const result = await db.insert(campaigns).values({
         companyId,
-        name: `AI: ${opportunity.goal.substring(0, 80)}`,
+        name: buildCampaignName(opportunity.goal),
         goal: goalType,
         platform,
         budgetDaily: opportunity.suggestedBudget?.toString() || '10',
         targeting: {
           audience: opportunity.audience,
-          source: { type: 'ai_autonomous', reasoning: opportunity.reason },
+          source: {
+            type: 'ai_autonomous',
+            requestedGoal: opportunity.goal,
+            reasoning: opportunity.reason,
+          },
         } as any,
         status: 'planned',
         aiMode: true,
@@ -144,19 +162,38 @@ export class MarketingAutonomous {
 
     try {
       // 3. Build business context (brain snapshot)
-      await runStep('build_business_context', async () => {
-        await buildBusinessContext(companyId);
+      const businessContext = await runStep('build_business_context', async () => {
+        return buildBusinessContext(companyId);
       });
 
-      // 4. Generate banners
-      await runStep('generate_banners', () => this.generateBanners(companyId, campaign.id));
+      // 4. Generate and attach the supporting blog draft.
+      await runStep('generate_blog_post', () =>
+        createCampaignBlog({
+          companyId,
+          campaignId: campaign.id,
+          goal: opportunity.goal,
+          audience: opportunity.audience,
+          sourceContext: [
+            businessContext.fullContext,
+            `CAMPAIGN GOAL: ${opportunity.goal}`,
+            `TARGET AUDIENCE: ${opportunity.audience}`,
+            `WHY THIS CAMPAIGN EXISTS NOW: ${opportunity.reason}`,
+            opportunity.channel ? `CHANNEL: ${opportunity.channel}` : '',
+          ].filter(Boolean).join('\n').slice(0, 6000),
+        }),
+      );
 
-      // 5. Generate social posts
+      // 5. Generate banners
+      await runStep('generate_banners', () =>
+        this.generateBanners(companyId, campaign.id, opportunity),
+      );
+
+      // 6. Generate social posts
       await runStep('generate_social_posts', () =>
         this.generatePosts(companyId, campaign.id, opportunity.audience),
       );
 
-      // 6. Transition to 'ready'
+      // 7. Transition to 'ready'
       await runStep('finalize_ready', async () => {
         await db.update(campaigns)
           .set({ status: 'ready', updatedAt: new Date() })
@@ -183,21 +220,42 @@ export class MarketingAutonomous {
    * Brain snapshot (W0.2/P0-B3) and injects it into the prompt so
    * banners follow brand voice, persona pain points, and product context.
    */
-  private async generateBanners(companyId: string, campaignId: string): Promise<void> {
-    const [ctx, brainBlock] = await Promise.all([
+  private async generateBanners(
+    companyId: string,
+    campaignId: string,
+    opportunity: AutonomousOpportunity,
+  ): Promise<void> {
+    const [ctx, brainBlock, brandKit] = await Promise.all([
       buildBusinessContext(companyId),
       loadBrainPromptBlock(companyId),
+      buildBrandCreativeKit(companyId),
     ]);
-    const brandPrimary = ctx.brandColors.primary || '#6366f1';
-    const brandSecondary = ctx.brandColors.secondary || '#8b5cf6';
+    const brandPrimary = brandKit.colors.primary || ctx.brandColors.primary || '#6366f1';
     const brainSection = brainBlock ? `\n\n${brainBlock}\n` : '';
+    const brandCreativePrompt = renderBrandCreativeKitPrompt(brandKit);
 
     const { text } = await llmGenerate([{
       role: 'system',
       content: `You are a creative director. Create 3 banner ad concepts. Headlines MAX 8 words, CTA 2-4 words. Follow the brand voice strictly — tone, preferred words, and avoided words are non-negotiable.`,
     }, {
       role: 'user',
-      content: `Create 3 banner variants for this business.${brainSection}\n\nBUSINESS CONTEXT:\n${ctx.fullContext.substring(0, 800)}\n\nReturn ONLY JSON:\n{"variants":[{"headline":"Max 8 words","subheadline":"Max 15 words","cta":"2-4 words","angle":"aspiration|pain|benefit"}]}`,
+      content: `Create exactly 3 banner variants for this campaign.${brainSection}
+
+${brandCreativePrompt}
+
+CAMPAIGN GOAL: ${opportunity.goal}
+TARGET AUDIENCE: ${opportunity.audience}
+WHY THIS CAMPAIGN EXISTS NOW: ${opportunity.reason}
+${opportunity.offer ? `OFFER OR PRODUCT: ${opportunity.offer}` : ''}
+CHANNEL: ${opportunity.channel ?? 'manual'}
+
+BUSINESS CONTEXT:
+${ctx.fullContext.substring(0, 2400)}
+
+Each visualDirection must describe a concrete, text-free photographic scene that directly represents the campaign goal, audience, offer, product, place, or activity and matches the Brand Creative Kit visual mood. Make all 3 scenes meaningfully different while still feeling like one brand campaign. Never default to generic office, abstract technology, or unrelated lifestyle imagery.
+
+Return ONLY JSON:
+{"variants":[{"headline":"Max 8 words","subheadline":"Max 15 words","cta":"2-4 words","angle":"aspiration|pain|benefit","visualDirection":"Concrete scene, subject, setting, mood and composition with no text"}]}`,
     }], {
       featureKey: 'campaign_banner_copy',
       tier: 'balanced',
@@ -206,23 +264,50 @@ export class MarketingAutonomous {
     });
 
     const parsed = extractJSON(text) || {};
-    const variants = (parsed.variants || []).slice(0, 3);
+    const generatedVariants = Array.isArray(parsed.variants) ? parsed.variants.slice(0, 3) : [];
+    const fallbackVariants = [
+      {
+        headline: opportunity.goal,
+        subheadline: `Created for ${opportunity.audience}`,
+        cta: 'Learn More',
+        angle: 'benefit',
+        visualDirection: `A concrete commercial scene showing ${opportunity.audience} experiencing the main benefit of ${opportunity.goal}`,
+      },
+      {
+        headline: `A Better Way Forward`,
+        subheadline: opportunity.reason,
+        cta: 'Explore Now',
+        angle: 'aspiration',
+        visualDirection: `An aspirational real-world scene that visualizes the desired outcome of ${opportunity.goal} for ${opportunity.audience}`,
+      },
+      {
+        headline: `Make It Happen`,
+        subheadline: `Built around what matters to ${opportunity.audience}`,
+        cta: 'Get Started',
+        angle: 'pain',
+        visualDirection: `An authentic problem-to-solution scene relevant to ${opportunity.audience}, focused on the need behind ${opportunity.goal}`,
+      },
+    ];
+    const variants = Array.from({ length: 3 }, (_, index) => ({
+      ...fallbackVariants[index]!,
+      ...(generatedVariants[index] ?? {}),
+    }));
 
-    const angleThemes: Record<string, any> = {
-      aspiration: { primary: brandPrimary, secondary: '#10b981', text: '#ffffff', ctaBg: '#ffffff', ctaText: brandPrimary },
-      pain: { primary: '#dc2626', secondary: '#f97316', text: '#ffffff', ctaBg: '#fbbf24', ctaText: '#1e293b' },
-      benefit: { primary: brandPrimary, secondary: brandSecondary, text: '#ffffff', ctaBg: '#ffffff', ctaText: brandPrimary },
-    };
-
-    for (const variant of variants) {
+    const createdBanners: Array<typeof banners.$inferSelect> = [];
+    for (const [index, variant] of variants.entries()) {
       const angle = variant.angle || 'benefit';
-      const theme = angleThemes[angle] || angleThemes.benefit;
+      const theme = applyBrandKitToBannerTheme(
+        CAMPAIGN_BANNER_PALETTE[index % CAMPAIGN_BANNER_PALETTE.length]!,
+        brandKit,
+        index,
+      );
       const headline = (variant.headline || '').split(' ').slice(0, 8).join(' ');
       const subheadline = (variant.subheadline || '').split(' ').slice(0, 15).join(' ');
       const cta = (variant.cta || 'Get Started').split(' ').slice(0, 4).join(' ');
+      const visualDirection = String(variant.visualDirection || '').slice(0, 400);
 
       try {
-        await db.insert(banners).values({
+        const [created] = await db.insert(banners).values({
           companyId,
           campaignId,
           name: headline,
@@ -232,18 +317,22 @@ export class MarketingAutonomous {
           angle,
           copy: { headline, subheadline, cta, brandColor: brandPrimary } as any,
           design: {
-            layout: 'center',
+            layout: theme.layout,
             backgroundType: 'gradient',
-            backgroundValue: `linear-gradient(135deg, ${theme.primary}, ${theme.secondary})`,
-            colorTheme: theme,
+            backgroundValue: theme.backgroundValue,
+            colorTheme: theme.colors,
+            brandKit: brandCreativeKitSnapshot(brandKit),
+            brandFit: buildBrandFitSummary(brandKit, false),
             typography: { headlineSize: 'lg', headlineWeight: 800, alignment: 'center' },
             overlayOpacity: 0.6,
+            visualDirection,
           } as any,
           strategyTag: angle === 'pain' ? 'urgency' : 'value',
-        });
+        }).returning();
+        if (created) createdBanners.push(created);
       } catch {
         // Fallback without new columns
-        await db.insert(banners).values({
+        const [created] = await db.insert(banners).values({
           companyId,
           campaignId,
           name: headline,
@@ -251,7 +340,72 @@ export class MarketingAutonomous {
           status: 'draft',
           copy: { headline, subheadline, cta, brandColor: brandPrimary } as any,
           strategyTag: angle === 'pain' ? 'urgency' : 'value',
+        }).returning();
+        if (created) createdBanners.push(created);
+      }
+    }
+
+    const campaignContext = [
+      ctx.fullContext,
+      `CAMPAIGN GOAL: ${opportunity.goal}`,
+      `TARGET AUDIENCE: ${opportunity.audience}`,
+      `WHY THIS CAMPAIGN EXISTS NOW: ${opportunity.reason}`,
+      opportunity.offer ? `OFFER OR PRODUCT: ${opportunity.offer}` : '',
+      opportunity.channel ? `CHANNEL: ${opportunity.channel}` : '',
+    ].filter(Boolean).join('\n');
+
+    for (const [index, banner] of createdBanners.entries()) {
+      const copy = (banner.copy ?? {}) as {
+        headline?: string;
+        subheadline?: string;
+        cta?: string;
+      };
+      const design = (banner.design ?? {}) as Record<string, any>;
+      try {
+        const creative = await renderContextualCampaignBanner({
+          companyId,
+          bannerId: banner.id,
+          size: banner.size,
+          goal: opportunity.goal,
+          audience: opportunity.audience,
+          reason: opportunity.reason,
+          offer: opportunity.offer,
+          businessContext: campaignContext,
+          angle: banner.angle ?? banner.strategyTag ?? undefined,
+          visualDirection: design.visualDirection,
+          headline: copy.headline || banner.name,
+          subheadline: copy.subheadline,
+          cta: copy.cta || 'Get Started',
+          variantIndex: index,
+          brandKit,
         });
+
+        await db.update(banners)
+          .set({
+            imageUrl: creative.rendered.imageUrl,
+            design: {
+              ...design,
+              layout: creative.theme.layout,
+              backgroundType: creative.backgroundImageUrl ? 'image' : 'gradient',
+              backgroundValue: creative.backgroundImageUrl ?? creative.theme.backgroundValue,
+              backgroundPrompt: creative.backgroundPrompt,
+              backgroundImageProvider: creative.backgroundImageProvider,
+              backgroundImageModel: creative.backgroundImageModel,
+              backgroundQuality: creative.backgroundQuality,
+              backgroundGenerationAttempts: creative.generationAttempts,
+              colorTheme: creative.theme.colors,
+              brandKit: brandCreativeKitSnapshot(brandKit),
+              brandFit: buildBrandFitSummary(brandKit, Boolean(creative.rendered.brandLogoApplied)),
+              imglyScene: creative.rendered.imglyScene,
+              renderedImageUrl: creative.rendered.imageUrl,
+              renderProvider: creative.rendered.renderer,
+              renderedAt: new Date().toISOString(),
+            } as any,
+            updatedAt: new Date(),
+          })
+          .where(eq(banners.id, banner.id));
+      } catch (error) {
+        console.warn('[MarketingAutonomous] banner render failed:', (error as Error).message);
       }
     }
   }
@@ -289,6 +443,7 @@ export class MarketingAutonomous {
         platform: post.platform || 'facebook',
         content: post.content || '',
         hashtags: (post.hashtags || []) as any,
+        mediaUrls: [],
         status: 'draft',
       });
     }

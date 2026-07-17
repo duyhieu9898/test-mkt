@@ -15,7 +15,8 @@ channelsRouter.get('/oauth/facebook/callback', async (c) => {
   if (!code || !state) return c.json({ error: 'Missing code or state' }, 400);
   const botId = state.replace('botId:', '');
   const appId = process.env.FACEBOOK_APP_ID, appSecret = process.env.FACEBOOK_APP_SECRET;
-  const redirectUri = `${process.env.API_PUBLIC_URL || 'http://localhost:8004'}/api/v1/channels/oauth/facebook/callback`;
+  const apiBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1').replace(/\/api\/v1\/?$/, '');
+  const redirectUri = `${apiBase}/api/v1/channels/oauth/facebook/callback`;
   if (!appId || !appSecret) return c.json({ error: 'Facebook not configured' }, 503);
   try {
     const tokenRes = await fetch(`https://graph.facebook.com/v21.0/oauth/access_token?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${appSecret}&code=${code}`);

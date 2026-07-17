@@ -34,13 +34,15 @@ export const authMiddleware = async (c: Context, next: Next) => {
     throw new HTTPException(401, { message: 'Missing or invalid authorization header' });
   }
 
+  let payload: JwtPayload;
   try {
-    const payload = verifyToken(token);
-    c.set('user', payload);
-    await next();
+    payload = verifyToken(token);
   } catch (error) {
     throw new HTTPException(401, { message: 'Invalid or expired token' });
   }
+
+  c.set('user', payload);
+  await next();
 };
 
 // Get companies that a user has access to

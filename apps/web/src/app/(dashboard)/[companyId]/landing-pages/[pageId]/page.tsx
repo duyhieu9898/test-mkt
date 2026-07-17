@@ -32,6 +32,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api/client';
 import { toast } from 'sonner';
 import { PublishDialog } from '@/components/landing-pages/publish-dialog';
+import { BlockRenderer } from '@/components/landing-pages/blocks/block-renderer';
 
 // Icon mapping for features
 const iconMap: Record<string, React.ReactNode> = {
@@ -63,9 +64,11 @@ export default function LandingPagePreview() {
   const { data: page, isLoading, error, refetch } = useLandingPage(pageId);
 
   const handleCopyUrl = () => {
-    if (page?.slug) {
-      navigator.clipboard.writeText(`${window.location.origin}/lp/${page.slug}`);
+    if (page?.status === 'published' && page.publishedUrl) {
+      navigator.clipboard.writeText(page.publishedUrl);
       toast.success('URL copied to clipboard');
+    } else {
+      toast.info('Publish this page first to create a public URL.');
     }
   };
 
@@ -87,6 +90,10 @@ export default function LandingPagePreview() {
   }
 
   const primaryColor = page.primaryColor || '#3b82f6';
+  const isWordPressDraft = page.status !== 'published'
+    && page.deploymentProvider === 'wordpress'
+    && !!(page.wordpressReviewUrl || page.publishedUrl);
+  const wordpressDraftUrl = page.wordpressReviewUrl || page.publishedUrl;
 
   return (
     <div className="min-h-screen bg-background">
@@ -117,7 +124,7 @@ export default function LandingPagePreview() {
                 ) : (
                   <Eye className="w-3 h-3 mr-1" />
                 )}
-                {page.status}
+                {isWordPressDraft ? 'WordPress draft' : page.status}
               </Badge>
             </div>
           </div>
@@ -130,17 +137,26 @@ export default function LandingPagePreview() {
               <Edit className="w-4 h-4 mr-2" />
               Edit
             </Button>
-            <Button variant="outline" size="sm" onClick={handleCopyUrl}>
-              <Copy className="w-4 h-4 mr-2" />
-              Copy URL
-            </Button>
-            {page.status === 'ready' && (
+            {isWordPressDraft ? (
+              <Button variant="outline" size="sm" asChild>
+                <a href={wordpressDraftUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  Review draft
+                </a>
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" onClick={handleCopyUrl}>
+                <Copy className="w-4 h-4 mr-2" />
+                Copy URL
+              </Button>
+            )}
+            {page.status !== 'generating' && page.status !== 'archived' && (
               <Button
                 size="sm"
                 onClick={() => setPublishDialogOpen(true)}
               >
                 <Globe className="w-4 h-4 mr-2" />
-                Publish
+                {page.status === 'published' ? 'Manage publishing' : 'Publish'}
               </Button>
             )}
           </div>
@@ -160,14 +176,24 @@ export default function LandingPagePreview() {
       {/* Landing Page Preview */}
       <div className="bg-white text-gray-900">
         {/* Render sections */}
-        {page.sections?.map((section, index) => (
+        {page.sections?.filter((section) => section.isVisible !== 0).map((section, index) => (
           <motion.div
             key={section.id || index}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.1 }}
           >
-            {renderSection(section, primaryColor)}
+            <BlockRenderer
+              block={{
+                id: section.id,
+                type: section.type,
+                content: section.content || {},
+                order: section.order,
+                isVisible: section.isVisible !== 0,
+                backgroundColor: section.backgroundColor,
+              }}
+              primaryColor={primaryColor}
+            />
           </motion.div>
         ))}
 

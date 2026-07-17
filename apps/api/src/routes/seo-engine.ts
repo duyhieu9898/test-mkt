@@ -9,13 +9,83 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { companies, landingPages, banners, socialPosts } from '@1person/core/db';
+import { blogPosts, campaignLaunches, companies, landingPages, banners, socialPosts } from '@1person/core/db';
 import { CMSIntegration } from '../services/cms-integration';
 import { encryptSecret, decryptMaybe } from '../lib/crypto';
 import { authMiddleware } from '../middleware/auth';
+import { getWebsitePublishingSettings, isPlaceholderEndpointUrl, publishWebsitePost } from '../services/website-publisher';
 
 const seoEngineRouter = new Hono();
 seoEngineRouter.use('*', authMiddleware);
+
+type WebsitePublishImage = { url: string; alt?: string; role?: 'hero' | 'inline' };
+
+function extractImageTagsFromHtml(html: string, fallbackAlt: string): WebsitePublishImage[] {
+  const images: WebsitePublishImage[] = [];
+  const imageRegex = /<img\b[^>]*\bsrc=(["'])(.*?)\1[^>]*>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = imageRegex.exec(html)) !== null) {
+    const tag = match[0] || '';
+    const url = match[2]?.trim();
+    if (!url) continue;
+    const alt = tag.match(/\balt=(["'])(.*?)\1/i)?.[2]?.trim() || fallbackAlt;
+    images.push({ url, alt, role: 'inline' });
+  }
+
+  return images;
+}
+
+async function resolveBlogPublishImages(args: {
+  companyId: string;
+  blogPostId: string;
+  title: string;
+  contentHtml: string;
+}): Promise<WebsitePublishImage[]> {
+  const launch = await db.query.campaignLaunches.findFirst({
+    where: and(
+      eq(campaignLaunches.companyId, args.companyId),
+      eq(campaignLaunches.blogPostId, args.blogPostId),
+    ),
+    orderBy: desc(campaignLaunches.createdAt),
+  });
+
+  const imagesByUrl = new Map<string, WebsitePublishImage>();
+  const addImage = (image: WebsitePublishImage) => {
+    if (!image.url || imagesByUrl.has(image.url)) return;
+    imagesByUrl.set(image.url, image);
+  };
+
+  if (launch?.heroImageUrl) {
+    addImage({ url: launch.heroImageUrl, alt: args.title, role: 'hero' });
+  }
+
+  const steps = Array.isArray(launch?.steps) ? launch.steps as Array<Record<string, any>> : [];
+  const imageStep = steps.find((step) => step.key === 'images')?.result as Record<string, any> | undefined;
+  const websiteStep = steps.find((step) => step.key === 'wordpress')?.result as Record<string, any> | undefined;
+
+  if (typeof imageStep?.heroUrl === 'string') {
+    addImage({ url: imageStep.heroUrl, alt: args.title, role: 'hero' });
+  }
+  if (Array.isArray(imageStep?.inContentUrls)) {
+    imageStep.inContentUrls.forEach((url: unknown, index: number) => {
+      if (typeof url === 'string') {
+        addImage({ url, alt: `${args.title} - supporting image ${index + 1}`, role: 'inline' });
+      }
+    });
+  }
+  if (Array.isArray(websiteStep?.imageUrls)) {
+    websiteStep.imageUrls.forEach((url: unknown, index: number) => {
+      if (typeof url === 'string') {
+        const role = url === launch?.heroImageUrl ? 'hero' : 'inline';
+        addImage({ url, alt: role === 'hero' ? args.title : `${args.title} - supporting image ${index + 1}`, role });
+      }
+    });
+  }
+
+  extractImageTagsFromHtml(args.contentHtml, args.title).forEach(addImage);
+  return Array.from(imagesByUrl.values());
+}
 
 // ===============================================================
 // START SEO PIPELINE
@@ -342,17 +412,52 @@ seoEngineRouter.get('/company/:companyId/wordpress/categories', async (c) => {
   }
 });
 
+seoEngineRouter.get('/company/:companyId/wordpress/pages', async (c) => {
+  const companyId = c.req.param('companyId');
+
+  try {
+    const company = await db.query.companies.findFirst({
+      where: eq(companies.id, companyId),
+    });
+
+    if (!company) {
+      return c.json({ error: 'Company not found' }, 404);
+    }
+
+    const wpSettings = (company?.settings as any)?.wordpress;
+    if (!wpSettings?.siteUrl || !wpSettings?.username || !wpSettings?.appPassword) {
+      return c.json({ pages: [] });
+    }
+
+    const cms = new CMSIntegration();
+    const pages = await cms.getPages(
+      wpSettings.siteUrl,
+      wpSettings.username,
+      decryptMaybe(wpSettings.appPassword),
+    );
+    return c.json({ pages });
+  } catch (err: any) {
+    return c.json({ pages: [], error: err.message || 'Could not load pages' }, 500);
+  }
+});
+
 // ===============================================================
-// WORDPRESS — PUBLISH BLOG POSTS
+// WEBSITE DESTINATION — PUBLISH REVIEWED BLOG DRAFTS
 // ===============================================================
 
 seoEngineRouter.post(
   '/company/:companyId/publish-blogs',
   zValidator('json', z.object({
     blogPostIds: z.array(z.string()).min(1),
-    status: z.enum(['draft', 'publish']).default('draft'),
     categoryId: z.number().optional(),
     categoryName: z.string().optional(),
+    placement: z.object({
+      type: z.enum(['post_category', 'child_page']),
+      categoryId: z.number().optional(),
+      categoryName: z.string().optional(),
+      parentPageId: z.number().optional(),
+    }).optional(),
+    status: z.enum(['draft', 'publish']).default('draft'),
   })),
   async (c) => {
     const companyId = c.req.param('companyId');
@@ -369,56 +474,132 @@ seoEngineRouter.post(
       }
 
       const settings = (company.settings || {}) as Record<string, any>;
+      const publishing = getWebsitePublishingSettings(settings);
       const wp = settings.wordpress;
 
-      if (!wp) {
-        return c.json({ error: 'WordPress is not connected. Connect first.' }, 400);
+      if (publishing.destinationType === 'wordpress' && (!wp?.siteUrl || !wp?.username || !wp?.appPassword)) {
+        return c.json({
+          error: 'WordPress is not connected. Check Website Publishing settings.',
+          settingsUrl: `/${companyId}/settings?tab=publishing`,
+        }, 400);
+      }
+      if (publishing.destinationType === 'custom_api' && !publishing.customApi?.endpointUrl) {
+        return c.json({
+          error: 'Custom API endpoint is missing. Check Website Publishing settings.',
+          settingsUrl: `/${companyId}/settings?tab=publishing`,
+        }, 400);
+      }
+      if (publishing.destinationType === 'custom_api' && isPlaceholderEndpointUrl(publishing.customApi?.endpointUrl)) {
+        return c.json({
+          error: 'Custom API endpoint is still using a sample URL. Enter the real website API endpoint in Website Publishing settings.',
+          settingsUrl: `/${companyId}/settings?tab=publishing`,
+        }, 400);
+      }
+      if (publishing.destinationType === 'github' && (!publishing.github?.repository || !publishing.github?.token)) {
+        return c.json({
+          error: 'GitHub repository or access token is missing. Check Website Publishing settings.',
+          settingsUrl: `/${companyId}/settings?tab=publishing`,
+        }, 400);
       }
 
-      const seoData = settings.seo || {};
-      const blogPostsList: any[] = seoData.blogPosts || [];
-
       const cms = new CMSIntegration();
-      const results: Array<{ id: string; title: string; success: boolean; wpUrl?: string; error?: string }> = [];
+      const results: Array<{
+        id: string;
+        title: string;
+        success: boolean;
+        destinationType?: string;
+        destinationName?: string;
+        wpUrl?: string;
+        url?: string;
+        message?: string;
+        error?: string;
+      }> = [];
 
-      // Resolve category once for all posts
-      let categoryId = body.categoryId;
-      if (!categoryId && body.categoryName) {
+      const placement = body.placement ?? {
+        type: 'post_category' as const,
+        categoryId: body.categoryId,
+        categoryName: body.categoryName,
+      };
+      if (publishing.destinationType === 'wordpress' && placement.type === 'child_page' && !placement.parentPageId) {
+        return c.json({ error: 'Choose the WordPress page where this content should appear.' }, 400);
+      }
+
+      // Resolve category once for all posts when publishing as WordPress posts.
+      let categoryId = placement.type === 'post_category'
+        ? placement.categoryId ?? body.categoryId
+        : undefined;
+      const categoryName = placement.type === 'post_category'
+        ? placement.categoryName ?? body.categoryName
+        : undefined;
+      if (publishing.destinationType === 'wordpress' && wp && !categoryId && categoryName) {
         try {
-          categoryId = await cms.resolveOrCreateCategory(wp.siteUrl, wp.username, decryptMaybe(wp.appPassword), body.categoryName);
+          categoryId = await cms.resolveOrCreateCategory(wp.siteUrl, wp.username, decryptMaybe(wp.appPassword), categoryName);
         } catch (catErr) {
           console.error('[SEO Engine] Category resolution failed:', catErr);
         }
       }
 
       for (const postId of blogPostIds) {
-        const blogPost = blogPostsList.find((p: any) => p.id === postId);
+        const blogPost = await db.query.blogPosts.findFirst({
+          where: and(eq(blogPosts.id, postId), eq(blogPosts.companyId, companyId)),
+        });
         if (!blogPost) {
           results.push({ id: postId, title: 'Unknown', success: false, error: 'Post not found' });
           continue;
         }
 
         try {
-          const result = await cms.publishPost(wp.siteUrl, wp.username, decryptMaybe(wp.appPassword), {
-            title: blogPost.title,
-            content: blogPost.content || blogPost.body || '',
-            excerpt: blogPost.excerpt || '',
-            status: body.status || 'draft',
-            categories: categoryId ? [categoryId] : undefined,
-            tags: (blogPost.tags || []) as string[],
+          const result = await publishWebsitePost({
+            companySettings: settings,
+            input: {
+              title: blogPost.title,
+              slug: blogPost.slug || postId,
+              contentHtml: blogPost.content || '',
+              excerpt: blogPost.excerpt || '',
+              metaDescription: blogPost.metaDescription || '',
+              status: body.status,
+              tags: (blogPost.tags || []) as string[],
+              categories: categoryId ? [categoryId] : undefined,
+              wordpressPlacement: publishing.destinationType === 'wordpress'
+                ? {
+                  type: placement.type,
+                  parentPageId: placement.parentPageId,
+                }
+                : undefined,
+              images: await resolveBlogPublishImages({
+                companyId,
+                blogPostId: postId,
+                title: blogPost.title,
+                contentHtml: blogPost.content || '',
+              }),
+            },
           });
+          await db.update(blogPosts)
+            .set({
+              status: 'pushed_to_cms',
+              cmsPostId: typeof result.externalId === 'number' ? result.externalId : null,
+              cmsPostUrl: result.url || null,
+              updatedAt: new Date(),
+            })
+            .where(and(eq(blogPosts.id, postId), eq(blogPosts.companyId, companyId)));
 
           results.push({
             id: postId,
             title: blogPost.title,
             success: true,
-            wpUrl: result.url,
+            destinationType: result.destinationType,
+            destinationName: result.destinationName,
+            wpUrl: result.destinationType === 'wordpress' ? result.url : undefined,
+            url: result.url,
+            message: result.message,
           });
         } catch (pubErr: any) {
           results.push({
             id: postId,
             title: blogPost.title,
             success: false,
+            destinationType: publishing.destinationType,
+            destinationName: publishing.destinationName,
             error: pubErr.message || 'Publishing failed',
           });
         }
@@ -427,12 +608,16 @@ seoEngineRouter.post(
       const successCount = results.filter(r => r.success).length;
 
       return c.json({
-        message: `${successCount} of ${blogPostIds.length} posts published to WordPress`,
+        message: `${successCount} of ${blogPostIds.length} posts sent to website destination`,
         results,
+        settingsUrl: `/${companyId}/settings?tab=publishing`,
       });
     } catch (err) {
       console.error('[SEO Engine] Publish blogs failed:', err);
-      return c.json({ error: 'Could not publish to WordPress.' }, 500);
+      return c.json({
+        error: 'Could not publish to website destination. Check Website Publishing settings.',
+        settingsUrl: `/${companyId}/settings?tab=publishing`,
+      }, 500);
     }
   }
 );

@@ -4,7 +4,10 @@ import { useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { InlineEditableText } from '../../editor/inline-editable-text';
-import type { CTAContent } from '@1person/workflow/landing-pages/blocks';
+import {
+  normalizeLandingPageLink,
+  type CTAContent,
+} from '@1person/workflow/landing-pages/blocks';
 
 interface CTABlockProps {
   content: CTAContent;
@@ -31,6 +34,11 @@ export function CTABlock({ content, primaryColor, isEditing, onFieldClick, onCon
     },
     [onContentChange]
   );
+  const actionProps = (url?: string, openInNewTab?: boolean) => ({
+    href: normalizeLandingPageLink(url),
+    target: !isEditing && openInNewTab ? '_blank' : undefined,
+    rel: !isEditing && openInNewTab ? 'noopener noreferrer' : undefined,
+  });
 
   return (
     <section className="py-20 px-4" style={{ backgroundColor: primaryColor }}>
@@ -60,48 +68,63 @@ export function CTABlock({ content, primaryColor, isEditing, onFieldClick, onCon
               placeholder={content.emailPlaceholder || 'Enter your email'}
               className="bg-white/10 border-white/20 text-white placeholder:text-white/50"
             />
-            <Button className="bg-white hover:bg-gray-100" style={{ color: primaryColor }}>
-              <InlineEditableText
-                value={content.ctaText || 'Subscribe'}
-                onChange={(value) => handleTextChange('ctaText', value)}
-                isEditing={!!isEditing}
-                as="span"
-                placeholder="Button text"
-              />
+            <Button asChild className="bg-white hover:bg-gray-100" style={{ color: primaryColor }}>
+              <a
+                {...actionProps(content.ctaUrl, content.ctaOpenInNewTab)}
+                onClick={isEditing ? handleFieldClick(['ctaText']) : undefined}
+              >
+                <InlineEditableText
+                  value={content.ctaText || 'Subscribe'}
+                  onChange={(value) => handleTextChange('ctaText', value)}
+                  isEditing={!!isEditing}
+                  as="span"
+                  placeholder="Button text"
+                />
+              </a>
             </Button>
           </div>
         ) : (
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             {(content.ctaText || isEditing) && (
               <Button
+                asChild
                 size="lg"
                 className="bg-white hover:bg-gray-100"
                 style={{ color: primaryColor }}
-                onClick={isEditing ? handleFieldClick(['ctaText']) : undefined}
               >
-                <InlineEditableText
-                  value={content.ctaText || ''}
-                  onChange={(value) => handleTextChange('ctaText', value)}
-                  isEditing={!!isEditing}
-                  as="span"
-                  placeholder="Button text"
-                />
+                <a
+                  {...actionProps(content.ctaUrl, content.ctaOpenInNewTab)}
+                  onClick={isEditing ? handleFieldClick(['ctaText']) : undefined}
+                >
+                  <InlineEditableText
+                    value={content.ctaText || ''}
+                    onChange={(value) => handleTextChange('ctaText', value)}
+                    isEditing={!!isEditing}
+                    as="span"
+                    placeholder="Button text"
+                  />
+                </a>
               </Button>
             )}
             {(content.ctaSecondaryText || isEditing) && (
               <Button
+                asChild
                 size="lg"
                 variant="outline"
                 className="border-white/30 text-white hover:bg-white/10"
-                onClick={isEditing ? handleFieldClick(['ctaSecondaryText']) : undefined}
               >
-                <InlineEditableText
-                  value={content.ctaSecondaryText || ''}
-                  onChange={(value) => handleTextChange('ctaSecondaryText', value)}
-                  isEditing={!!isEditing}
-                  as="span"
-                  placeholder="Secondary button"
-                />
+                <a
+                  {...actionProps(content.ctaSecondaryUrl, content.ctaSecondaryOpenInNewTab)}
+                  onClick={isEditing ? handleFieldClick(['ctaSecondaryText']) : undefined}
+                >
+                  <InlineEditableText
+                    value={content.ctaSecondaryText || ''}
+                    onChange={(value) => handleTextChange('ctaSecondaryText', value)}
+                    isEditing={!!isEditing}
+                    as="span"
+                    placeholder="Secondary button"
+                  />
+                </a>
               </Button>
             )}
           </div>
