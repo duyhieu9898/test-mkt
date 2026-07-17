@@ -56,7 +56,14 @@ RUN pnpm --filter @1person/workflow build
 # Build api
  
 RUN pnpm --filter @1person/api build
- 
+
+# ---------- Migrator ----------
+FROM builder AS migrator
+
+WORKDIR /app
+
+CMD ["pnpm", "db:migrate:all"] \
+
 # ---------- Production Runner ----------
  
 FROM node:20-alpine AS runner

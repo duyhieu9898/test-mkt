@@ -1,174 +1,204 @@
-  version: "3.8"
+services:
+  # =========================================================
+  # PostgreSQL
+  # =========================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: 1person-postgres
+    restart: unless-stopped
 
-  services:
-    # =========================================================
-    # PostgreSQL
-    # =========================================================
-    postgres:
-      image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-oneperson}
 
-      container_name: 1person-postgres
+    volumes:
+      - /srv/storage/1person/postgres:/var/lib/postgresql/data
 
-      restart: unless-stopped
+    mem_limit: 2g
+    cpus: 2
 
-      environment:
-        POSTGRES_USER: ${DB_USER:-postgres}
-        POSTGRES_PASSWORD: ${DB_PASSWORD}
-        POSTGRES_DB: ${DB_NAME:-oneperson}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-      volumes:
-        - /srv/storage/1person/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-oneperson}"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-      mem_limit: 2g
-      cpus: 2
+    networks:
+      - 1person-network
 
-      logging:
-        driver: json-file
-        options:
-          max-size: "10m"
-          max-file: "3"
+  # =========================================================
+  # Redis
+  # =========================================================
+  redis:
+    image: redis:7-alpine
+    container_name: 1person-redis
+    restart: unless-stopped
 
-      healthcheck:
-        test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
-        interval: 10s
-        timeout: 5s
-        retries: 5
+    command:
+      [
+        "redis-server",
+        "--requirepass",
+        "${REDIS_PASSWORD}",
+        "--appendonly",
+        "yes"
+      ]
 
-      networks:
-        - 1person-network
+    volumes:
+      - /srv/storage/1person/redis:/data
 
-    # =========================================================
-    # Redis
-    # =========================================================
-    redis:
-      image: redis:7-alpine
+    mem_limit: 512m
+    cpus: 0.5
 
-      container_name: 1person-redis
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-      restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-      command: redis-server --requirepass ${REDIS_PASSWORD}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
 
-      volumes:
-        - /srv/storage/1person/redis:/data
+    networks:
+      - 1person-network
 
-      mem_limit: 512m
-      cpus: 0.5
+  # =========================================================
+  # Database Migration
+  # =========================================================
+  migrate:
+    image: 1person-api-migrator:${IMAGE_TAG}
+    container_name: 1person-migrate
+    restart: "no"
 
-      logging:
-        driver: json-file
-        options:
-          max-size: "10m"
-          max-file: "3"
+    env_file:
+      - .env.production
 
-      healthcheck:
-        test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
-        interval: 10s
-        timeout: 5s
-        retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
 
-      networks:
-        - 1person-network
+    profiles:
+      - tools
 
-    # =========================================================
-    # API Backend
-    # =========================================================
-    api:
-      image: 1person-api:${IMAGE_TAG}
+    networks:
+      - 1person-network
 
-      container_name: 1person-api
+  # =========================================================
+  # API Backend
+  # =========================================================
+  api:
+    image: 1person-api:${IMAGE_TAG}
+    container_name: 1person-api
+    restart: unless-stopped
 
-      restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
-      depends_on:
-        postgres:
-          condition: service_healthy
+    env_file:
+      - .env.production
 
-        redis:
-          condition: service_healthy
+    environment:
+      NODE_ENV: production
+      API_PORT: ${API_PORT}
 
-      env_file:
-        - .env.production
+    ports:
+      - "${BIND_IP}:${API_PORT}:${API_PORT}"
 
-      environment:
-        NODE_ENV: production
-        API_PORT: ${API_PORT}
+    mem_limit: 2g
+    cpus: 2
 
-      ports:
-        - "${BIND_IP}:${API_PORT}:${API_PORT}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-      mem_limit: 2g
-      cpus: 2
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8004/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-      logging:
-        driver: json-file
-        options:
-          max-size: "10m"
-          max-file: "3"
+    networks:
+      - 1person-network
 
-      healthcheck:
-        test:
-          [
-            "CMD",
-            "node",
-            "-e",
-            "fetch('http://127.0.0.1:8004/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-          ]
-        interval: 30s
-        timeout: 10s
-        retries: 3
+  # =========================================================
+  # Next.js Web Frontend
+  # =========================================================
+  web:
+    image: 1person-web:${IMAGE_TAG}
+    container_name: 1person-web
+    restart: unless-stopped
 
-      networks:
-        - 1person-network
+    depends_on:
+      api:
+        condition: service_healthy
 
-    # =========================================================
-    # Next.js Web Frontend
-    # =========================================================
-    web:
-      image: 1person-web:${IMAGE_TAG}
+    env_file:
+      - .env.production
 
-      container_name: 1person-web
+    environment:
+      NODE_ENV: production
+      PORT: 3000
 
-      restart: unless-stopped
+    ports:
+      - "${BIND_IP}:${WEB_PORT}:3000"
 
-      depends_on:
-        api:
-          condition: service_healthy
+    mem_limit: 1g
+    cpus: 1
 
-      env_file:
-        - .env.production
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-      environment:
-        NODE_ENV: production
-        PORT: 3000
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-      ports:
-        - "${BIND_IP}:${WEB_PORT}:3000"
+    networks:
+      - 1person-network
 
-      mem_limit: 1g
-      cpus: 1
-
-      logging:
-        driver: json-file
-        options:
-          max-size: "10m"
-          max-file: "3"
-
-      healthcheck:
-        test:
-          [
-            "CMD",
-            "node",
-            "-e",
-            "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-          ]
-        interval: 30s
-        timeout: 10s
-        retries: 3
-
-      networks:
-        - 1person-network
-
-  networks:
-    1person-network:
-      driver: bridge
+networks:
+  1person-network:
+    driver: bridge

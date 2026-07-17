@@ -22,6 +22,7 @@
     "db:studio": "pnpm --filter @1person/core db:studio",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
+    "db:migrate:all": "pnpm --filter @1person/core db:migrate && pnpm --filter @1person/ai-tenant db:migrate",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "devDependencies": {
