@@ -112,8 +112,6 @@ services:
     restart: unless-stopped
 
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
