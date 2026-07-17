@@ -95,6 +95,21 @@ deploy:
         .
 
     # =========================
+    # BUILD DB MIGRATOR IMAGE
+    # =========================
+    - |
+      docker build \
+        -f apps/api/Dockerfile \
+        --target migrator \
+        --build-arg CI_COMMIT_SHA="$CI_COMMIT_SHORT_SHA" \
+        --build-arg BUILD_TIME="$BUILD_TIME" \
+        --build-arg BRANCH="$CI_COMMIT_REF_SLUG" \
+        --build-arg RELEASE_VERSION="v1.0.0" \
+        --build-arg TAG="$IMAGE_TAG" \
+        -t "1person-api-migrator:$IMAGE_TAG" \
+        .
+
+    # =========================
     # BUILD WEB IMAGE
     # =========================
     - |
@@ -134,6 +149,21 @@ deploy:
     # =========================
     # DEPLOY
     # =========================
+    - |
+      docker compose \
+        -f docker-compose.prod.yml \
+        --env-file /srv/1person/.env.production \
+        up -d postgres redis \
+        --wait \
+        --wait-timeout 180
+
+    - |
+      docker compose \
+        -f docker-compose.prod.yml \
+        --env-file /srv/1person/.env.production \
+        --profile tools \
+        run --rm migrate
+
     - |
       docker compose \
         -f docker-compose.prod.yml \

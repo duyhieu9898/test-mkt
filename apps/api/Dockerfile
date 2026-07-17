@@ -62,7 +62,7 @@ FROM builder AS migrator
 
 WORKDIR /app
 
-CMD ["pnpm", "db:migrate:all"] \
+CMD ["pnpm", "db:migrate:all"]
 
 # ---------- Production Runner ----------
  
