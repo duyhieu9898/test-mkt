@@ -90,6 +90,9 @@ services:
     container_name: 1person-migrate
     restart: "no"
 
+    profiles:
+      - tools
+
     env_file:
       - .env.production
 
