@@ -1,93 +1,151 @@
-  stages:
-    - deploy
+stages:
+  - deploy
 
-  variables:
-    API_IMAGE: 1person-api
-    WEB_IMAGE: 1person-web
+variables:
+  API_IMAGE: "1person-api"
+  WEB_IMAGE: "1person-web"
 
-  deploy:
-    stage: deploy
+deploy:
+  stage: deploy
 
-    tags:
-      - 1person
+  tags:
+    - 1person
 
-    script:
-      # =========================
-      # SYNC SOURCE
-      # =========================
-      - cd /srv/1person
+  environment:
+    name: production
 
-      - git fetch origin
-      - git reset --hard origin/develop
+  # Prevent multiple production pipelines from deploying at the same time
+  resource_group: 1person-production
 
-      # =========================
-      # LOAD ENV
-      # =========================
-      - export $(grep -v '^#' .env.production | xargs)
+  script:
+    # Stop the job immediately if any command fails
+    - set -e
 
-      # =========================
-      # BUILD METADATA
-      # =========================
-      - export BUILD_DATE="$(date +%Y%m%d)"
-      - export IMAGE_TAG="${CI_COMMIT_REF_SLUG}-${BUILD_DATE}-${CI_COMMIT_SHORT_SHA}"
-      - export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # Restrict newly created files to owner read/write permissions only
+    - umask 077
 
-      # =========================
-      # BUILD API IMAGE
-      # =========================
-      - |
-        docker build \
-          -f apps/api/Dockerfile \
-          --build-arg CI_COMMIT_SHA=$CI_COMMIT_SHORT_SHA \
-          --build-arg BUILD_TIME=$BUILD_TIME \
-          --build-arg BRANCH=$CI_COMMIT_REF_SLUG \
-          --build-arg RELEASE_VERSION=v1.0.0 \
-          --build-arg TAG=$IMAGE_TAG \
-          -t $API_IMAGE:$IMAGE_TAG \
-          .
+    # =========================
+    # SYNC SOURCE
+    # =========================
+    - cd /srv/1person
+    - git fetch origin
+    - git reset --hard origin/develop
 
-      # =========================
-      # BUILD WEB IMAGE
-      # =========================
-      - |
-        docker build \
-          -f apps/web/Dockerfile \
-          --build-arg NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
-          --build-arg CI_COMMIT_SHA=$CI_COMMIT_SHORT_SHA \
-          --build-arg BUILD_TIME=$BUILD_TIME \
-          --build-arg BRANCH=$CI_COMMIT_REF_SLUG \
-          --build-arg RELEASE_VERSION=v1.0.0 \
-          --build-arg TAG=$IMAGE_TAG \
-          -t $WEB_IMAGE:$IMAGE_TAG \
-          .
+    # =========================
+    # UPDATE ENV FROM GITLAB
+    # =========================
+    - echo "Updating production environment..."
 
-      # =========================
-      # UPDATE DEPLOY ENV
-      # =========================
-      - sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/" .env.production
-      - export IMAGE_TAG=$IMAGE_TAG
-#       =========================
-#       DEPLOY
-#       =========================
-      - |
-        docker compose \
-          -f docker-compose.prod.yml \
-          --env-file .env.production \
-          up -d --force-recreate
+    # Verify that the GitLab File Variable exists
+    - test -n "${ENV_PRODUCTION:-}"
+    - test -f "$ENV_PRODUCTION"
+    - test -s "$ENV_PRODUCTION"
 
-      # =========================
-      # WAIT FOR SERVICES
-      # =========================
-      - sleep 15
+    # Back up the current environment file without exposing its contents in the logs
+    - |
+      if [ -f /srv/1person/.env.production ]; then
+        cp -p \
+          /srv/1person/.env.production \
+          /srv/1person/.env.production.backup
+      fi
 
-      # =========================
-      # VERIFY
-      # =========================
-      - |
-        docker compose \
-          -f docker-compose.prod.yml \
-          --env-file .env.production \
-          ps
+    # Copy the GitLab File Variable contents to the server environment file
+    - install -m 600 "$ENV_PRODUCTION" /srv/1person/.env.production
 
-    only:
-      - develop
+    # Verify that the destination file was created and is not empty
+    - test -s /srv/1person/.env.production
+    - echo ".env.production updated successfully"
+
+    # =========================
+    # LOAD ENV
+    # =========================
+    - set -a
+    - source /srv/1person/.env.production
+    - set +a
+
+    # Verify the required variable for the web build
+    - test -n "${NEXT_PUBLIC_API_URL:-}"
+
+    # =========================
+    # BUILD METADATA
+    # =========================
+    - export BUILD_DATE="$(date +%Y%m%d)"
+    - export IMAGE_TAG="${CI_COMMIT_REF_SLUG}-${BUILD_DATE}-${CI_COMMIT_SHORT_SHA}"
+    - export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    - echo "Building image tag: $IMAGE_TAG"
+
+    # =========================
+    # BUILD API IMAGE
+    # =========================
+    - |
+      docker build \
+        -f apps/api/Dockerfile \
+        --build-arg CI_COMMIT_SHA="$CI_COMMIT_SHORT_SHA" \
+        --build-arg BUILD_TIME="$BUILD_TIME" \
+        --build-arg BRANCH="$CI_COMMIT_REF_SLUG" \
+        --build-arg RELEASE_VERSION="v1.0.0" \
+        --build-arg TAG="$IMAGE_TAG" \
+        -t "$API_IMAGE:$IMAGE_TAG" \
+        .
+
+    # =========================
+    # BUILD WEB IMAGE
+    # =========================
+    - |
+      docker build \
+        -f apps/web/Dockerfile \
+        --build-arg NEXT_PUBLIC_API_URL="$NEXT_PUBLIC_API_URL" \
+        --build-arg CI_COMMIT_SHA="$CI_COMMIT_SHORT_SHA" \
+        --build-arg BUILD_TIME="$BUILD_TIME" \
+        --build-arg BRANCH="$CI_COMMIT_REF_SLUG" \
+        --build-arg RELEASE_VERSION="v1.0.0" \
+        --build-arg TAG="$IMAGE_TAG" \
+        -t "$WEB_IMAGE:$IMAGE_TAG" \
+        .
+
+    # =========================
+    # UPDATE IMAGE TAG IN ENV
+    # =========================
+    - |
+      if grep -q '^IMAGE_TAG=' /srv/1person/.env.production; then
+        sed -i \
+          "s/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/" \
+          /srv/1person/.env.production
+      else
+        printf '\nIMAGE_TAG=%s\n' "$IMAGE_TAG" \
+          >> /srv/1person/.env.production
+      fi
+
+    # =========================
+    # VALIDATE COMPOSE
+    # =========================
+    - |
+      docker compose \
+        -f docker-compose.prod.yml \
+        --env-file /srv/1person/.env.production \
+        config >/dev/null
+
+    # =========================
+    # DEPLOY
+    # =========================
+    - |
+      docker compose \
+        -f docker-compose.prod.yml \
+        --env-file /srv/1person/.env.production \
+        up -d \
+        --remove-orphans \
+        --wait \
+        --wait-timeout 180
+
+    # =========================
+    # VERIFY
+    # =========================
+    - |
+      docker compose \
+        -f docker-compose.prod.yml \
+        --env-file /srv/1person/.env.production \
+        ps
+
+  only:
+    - develop
