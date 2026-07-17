@@ -1,7 +1,7 @@
 -- Brain Hub Phase B — Watchers + Reactions.
 -- Builds on 0007_brain_hub.sql. No new extensions required.
 
-CREATE TABLE "brain_watchers" (
+CREATE TABLE IF NOT EXISTS "brain_watchers" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,
 	"slug" varchar(80) NOT NULL,
@@ -18,16 +18,20 @@ CREATE TABLE "brain_watchers" (
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "brain_watchers" ADD CONSTRAINT "brain_watchers_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;
+DO $$ BEGIN
+ ALTER TABLE "brain_watchers" ADD CONSTRAINT "brain_watchers_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
 --> statement-breakpoint
-CREATE INDEX "brain_watchers_company_idx" ON "brain_watchers" ("company_id");
+CREATE INDEX IF NOT EXISTS "brain_watchers_company_idx" ON "brain_watchers" ("company_id");
 --> statement-breakpoint
-CREATE INDEX "brain_watchers_slug_idx" ON "brain_watchers" ("company_id","slug");
+CREATE INDEX IF NOT EXISTS "brain_watchers_slug_idx" ON "brain_watchers" ("company_id","slug");
 --> statement-breakpoint
-CREATE INDEX "brain_watchers_status_idx" ON "brain_watchers" ("company_id","status");
+CREATE INDEX IF NOT EXISTS "brain_watchers_status_idx" ON "brain_watchers" ("company_id","status");
 --> statement-breakpoint
 
-CREATE TABLE "brain_reactions" (
+CREATE TABLE IF NOT EXISTS "brain_reactions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,
 	"watcher_id" uuid NOT NULL,
@@ -42,16 +46,24 @@ CREATE TABLE "brain_reactions" (
 	"expires_at" timestamp
 );
 --> statement-breakpoint
-ALTER TABLE "brain_reactions" ADD CONSTRAINT "brain_reactions_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;
+DO $$ BEGIN
+ ALTER TABLE "brain_reactions" ADD CONSTRAINT "brain_reactions_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
 --> statement-breakpoint
-ALTER TABLE "brain_reactions" ADD CONSTRAINT "brain_reactions_watcher_id_brain_watchers_id_fk" FOREIGN KEY ("watcher_id") REFERENCES "public"."brain_watchers"("id") ON DELETE cascade ON UPDATE no action;
+DO $$ BEGIN
+ ALTER TABLE "brain_reactions" ADD CONSTRAINT "brain_reactions_watcher_id_brain_watchers_id_fk" FOREIGN KEY ("watcher_id") REFERENCES "public"."brain_watchers"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
 --> statement-breakpoint
-CREATE INDEX "brain_reactions_company_idx" ON "brain_reactions" ("company_id");
+CREATE INDEX IF NOT EXISTS "brain_reactions_company_idx" ON "brain_reactions" ("company_id");
 --> statement-breakpoint
-CREATE INDEX "brain_reactions_watcher_idx" ON "brain_reactions" ("company_id","watcher_id");
+CREATE INDEX IF NOT EXISTS "brain_reactions_watcher_idx" ON "brain_reactions" ("company_id","watcher_id");
 --> statement-breakpoint
-CREATE INDEX "brain_reactions_status_idx" ON "brain_reactions" ("company_id","status");
+CREATE INDEX IF NOT EXISTS "brain_reactions_status_idx" ON "brain_reactions" ("company_id","status");
 --> statement-breakpoint
-CREATE INDEX "brain_reactions_fired_idx" ON "brain_reactions" ("company_id","fired_at");
+CREATE INDEX IF NOT EXISTS "brain_reactions_fired_idx" ON "brain_reactions" ("company_id","fired_at");
 --> statement-breakpoint
-CREATE INDEX "brain_reactions_groupkey_idx" ON "brain_reactions" ("company_id","watcher_id","group_key");
+CREATE INDEX IF NOT EXISTS "brain_reactions_groupkey_idx" ON "brain_reactions" ("company_id","watcher_id","group_key");

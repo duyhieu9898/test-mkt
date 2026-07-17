@@ -2,7 +2,7 @@
 -- images → WP/social orchestration. steps[] is updated as each step
 -- runs so the UI can render progress.
 
-CREATE TABLE "campaign_launches" (
+CREATE TABLE IF NOT EXISTS "campaign_launches" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,
 	"keyword" varchar(255) NOT NULL,
@@ -16,8 +16,12 @@ CREATE TABLE "campaign_launches" (
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "campaign_launches" ADD CONSTRAINT "campaign_launches_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;
+DO $$ BEGIN
+ ALTER TABLE "campaign_launches" ADD CONSTRAINT "campaign_launches_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
 --> statement-breakpoint
-CREATE INDEX "campaign_launches_company_idx" ON "campaign_launches" ("company_id");
+CREATE INDEX IF NOT EXISTS "campaign_launches_company_idx" ON "campaign_launches" ("company_id");
 --> statement-breakpoint
-CREATE INDEX "campaign_launches_status_idx" ON "campaign_launches" ("company_id","status");
+CREATE INDEX IF NOT EXISTS "campaign_launches_status_idx" ON "campaign_launches" ("company_id","status");

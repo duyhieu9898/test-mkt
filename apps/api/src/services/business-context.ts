@@ -51,6 +51,29 @@ function allowedVisibilities(level: VisibilityLevel): string[] {
   }
 }
 
+type KnowledgeContextEntry = {
+  category: string;
+  title: string;
+  content: string;
+  tags: string[];
+};
+
+function isMissingKnowledgeTagsColumn(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const err = current as { code?: string; message?: string; cause?: unknown };
+    if (err.code === '42703' || err.message?.includes('column "tags" does not exist')) {
+      return true;
+    }
+    current = err.cause;
+  }
+
+  return false;
+}
+
 export interface BusinessContext {
   companyName: string;
   industry: string;
@@ -103,21 +126,40 @@ export async function buildBusinessContext(
 
   // 2. Knowledge entries filtered by visibility. If a chatbot has tags,
   // empty-tag entries stay global and tagged entries must overlap.
-  const rawKnowledge = await db
-    .select({
-      category: knowledgeBase.category,
-      title: knowledgeBase.title,
-      content: knowledgeBase.content,
-      tags: knowledgeBase.tags,
-    })
-    .from(knowledgeBase)
-    .where(and(
-      eq(knowledgeBase.companyId, companyId),
-      // Filter by visibility — the column is varchar, so use sql`...IN (...)`
-      sql`${knowledgeBase.visibility} = ANY(${sql.raw(`ARRAY[${allowed.map((v) => `'${v}'`).join(',')}]`)})`,
-    ))
-    .orderBy(desc(knowledgeBase.updatedAt))
-    .limit(80);
+  const knowledgeWhere = and(
+    eq(knowledgeBase.companyId, companyId),
+    sql`${knowledgeBase.visibility} = ANY(${sql.raw(`ARRAY[${allowed.map((v) => `'${v}'`).join(',')}]`)})`,
+  );
+
+  let rawKnowledge: KnowledgeContextEntry[];
+  try {
+    rawKnowledge = await db
+      .select({
+        category: knowledgeBase.category,
+        title: knowledgeBase.title,
+        content: knowledgeBase.content,
+        tags: knowledgeBase.tags,
+      })
+      .from(knowledgeBase)
+      .where(knowledgeWhere)
+      .orderBy(desc(knowledgeBase.updatedAt))
+      .limit(80);
+  } catch (error) {
+    if (!isMissingKnowledgeTagsColumn(error)) throw error;
+
+    const legacyKnowledge = await db
+      .select({
+        category: knowledgeBase.category,
+        title: knowledgeBase.title,
+        content: knowledgeBase.content,
+      })
+      .from(knowledgeBase)
+      .where(knowledgeWhere)
+      .orderBy(desc(knowledgeBase.updatedAt))
+      .limit(80);
+
+    rawKnowledge = legacyKnowledge.map((entry) => ({ ...entry, tags: [] }));
+  }
 
   const tagSet = new Set((knowledgeTags || []).map((tag) => tag.trim()).filter(Boolean));
   const knowledge = rawKnowledge

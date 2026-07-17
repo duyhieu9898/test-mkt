@@ -29,6 +29,83 @@
       "when": 1779667200000,
       "tag": "0003_omnichannel",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779753600000,
+      "tag": "0004_brand_iq",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779840000000,
+      "tag": "0005_team",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779926400000,
+      "tag": "0006_launches",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780012800000,
+      "tag": "0007_brain_hub",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780099200000,
+      "tag": "0008_brain_hub_phase_b",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780185600000,
+      "tag": "0009_brand_iq_pmm",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780272000000,
+      "tag": "0010_content_autopilot",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784280000000,
+      "tag": "0011_social_posts_scheduled",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784280060000,
+      "tag": "0012_landing_page_image_section",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784280120000,
+      "tag": "0013_chatbot_intelligence",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784280180000,
+      "tag": "0014_campaign_focus_text",
+      "breakpoints": true
     }
   ]
 }
