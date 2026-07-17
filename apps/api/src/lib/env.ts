@@ -31,8 +31,9 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
 
   // Langfuse (W0.3 / ADR-01) — LLM observability
-  LANGFUSE_PUBLIC_KEY: z.string().default('pk-lf-dev-1person'),
-  LANGFUSE_SECRET_KEY: z.string().default('sk-lf-dev-1person'),
+  LANGFUSE_ENABLED: z.string().default('false').transform((value) => value === 'true'),
+  LANGFUSE_PUBLIC_KEY: z.string().optional(),
+  LANGFUSE_SECRET_KEY: z.string().optional(),
   LANGFUSE_BASE_URL: z.string().default('http://localhost:5050'),
 
   // FTUX (First Time User Experience) AI Config

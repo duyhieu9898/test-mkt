@@ -17,6 +17,14 @@ let warned = false;
 
 export function getLangfuse(): Langfuse | null {
   if (instance) return instance;
+  if (!env.LANGFUSE_ENABLED) return null;
+  if (!env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY || !env.LANGFUSE_BASE_URL) {
+    if (!warned) {
+      console.warn('[langfuse] LANGFUSE_ENABLED=true but keys/base URL are incomplete; observability disabled.');
+      warned = true;
+    }
+    return null;
+  }
   try {
     instance = new Langfuse({
       publicKey: env.LANGFUSE_PUBLIC_KEY,
