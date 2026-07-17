@@ -34,7 +34,8 @@ deploy:
     # =========================
     # UPDATE ENV FROM GITLAB
     # =========================
-    - echo "Updating production environment..."
+    - |
+      echo "Updating production environment..."
 
     # Verify that the GitLab File Variable exists
     - test -n "${ENV_PRODUCTION:-}"
@@ -54,14 +55,17 @@ deploy:
 
     # Verify that the destination file was created and is not empty
     - test -s /srv/1person/.env.production
-    - echo ".env.production updated successfully"
+
+    - |
+      echo ".env.production updated successfully"
 
     # =========================
     # LOAD ENV
     # =========================
-    - set -a
-    - source /srv/1person/.env.production
-    - set +a
+    - |
+      set -a
+      source /srv/1person/.env.production
+      set +a
 
     # Verify the required variable for the web build
     - test -n "${NEXT_PUBLIC_API_URL:-}"
@@ -73,7 +77,8 @@ deploy:
     - export IMAGE_TAG="${CI_COMMIT_REF_SLUG}-${BUILD_DATE}-${CI_COMMIT_SHORT_SHA}"
     - export BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-    - echo "Building image tag: $IMAGE_TAG"
+    - |
+      echo "Building image tag: $IMAGE_TAG"
 
     # =========================
     # BUILD API IMAGE
