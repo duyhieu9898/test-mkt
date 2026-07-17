@@ -24,6 +24,8 @@ export interface LaunchTargets {
   facebook: boolean;
   linkedin: boolean;
   instagram: boolean;
+  imageMode?: 'ai' | 'uploaded';
+  uploadedAssetIds?: string[];
 }
 
 export interface CampaignLaunch {
@@ -38,6 +40,21 @@ export interface CampaignLaunch {
   heroImageUrl: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LaunchSuggestion {
+  id: string;
+  title: string;
+  keyword: string;
+  brief: string;
+  reason: string;
+  audience: string;
+}
+
+export interface LaunchSuggestionPack {
+  suggestions: LaunchSuggestion[];
+  contextSummary: string;
+  sources: string[];
 }
 
 export function useLaunches(companyId: string) {
@@ -65,11 +82,37 @@ export function useLaunch(companyId: string, launchId: string | null) {
   });
 }
 
+export function useLaunchSuggestions(companyId: string) {
+  const token = useAuthStore((s) => s.token);
+  return useQuery({
+    queryKey: ['launch-suggestions', companyId],
+    queryFn: () =>
+      api.get<{ data: LaunchSuggestionPack }>(`/launches/${companyId}/suggestions`, {
+        token: token!,
+      }),
+    enabled: !!token && !!companyId,
+    select: (response) => response.data,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+}
+
 export function useStartLaunch(companyId: string) {
   const token = useAuthStore((s) => s.token);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { keyword: string; brief?: string; targets: LaunchTargets }) =>
+    mutationFn: (body: {
+      keyword: string;
+      brief?: string;
+      googleDriveFileId?: string;
+      googleDriveFileName?: string;
+      googleDriveUrl?: string;
+      oneDriveFileId?: string;
+      oneDriveFileName?: string;
+      imageMode?: 'ai' | 'uploaded';
+      assetIds?: string[];
+      targets: LaunchTargets;
+    }) =>
       api.post<{ data: { launchId: string } }>(`/launches/${companyId}`, body, { token: token! }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['launches', companyId] }),
   });

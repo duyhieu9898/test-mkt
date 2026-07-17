@@ -7,16 +7,83 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, desc } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { eq, and, desc, inArray } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { meetings, knowledgeBase, tasks } from '@1person/core/db';
+import { meetings, tasks } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { buildBusinessContext } from '../services/business-context';
 import { resolveTranscriptionProvider } from '../lib/config-resolver';
+import { assertCompanyAccess } from '../lib/company-access';
+import { replaceApprovedKnowledge } from '../services/knowledge-lifecycle';
+import {
+  deleteObjectByStorageReference,
+  isObjectStorageReference,
+  objectStorageReference,
+  readObjectFromStorageReference,
+  saveObject,
+} from '../services/object-storage';
 
 const meetingsRouter = new Hono();
 meetingsRouter.use('*', authMiddleware);
+meetingsRouter.use('/company/:companyId', async (c, next) => {
+  await assertCompanyAccess(c.req.param('companyId'), c.get('user').userId);
+  await next();
+});
+meetingsRouter.use('/company/:companyId/*', async (c, next) => {
+  await assertCompanyAccess(c.req.param('companyId'), c.get('user').userId);
+  await next();
+});
+
+function sanitizeFileName(name?: string): string {
+  return (name || 'audio.mp3').replace(/[/\\]/g, '_').replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function inferAudioContentType(value?: string | null): string {
+  const lower = (value || '').toLowerCase();
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.m4a')) return 'audio/mp4';
+  if (lower.endsWith('.ogg')) return 'audio/ogg';
+  if (lower.endsWith('.webm')) return 'audio/webm';
+  return 'audio/mpeg';
+}
+
+async function resolveLegacyAudioPath(companyId: string, audioUrl: string): Promise<string | null> {
+  const path = await import('node:path');
+  const storageRoot = path.resolve(process.cwd(), '..', '..', 'deploy', 'meetings', companyId);
+  const resolvedPath = path.resolve(audioUrl);
+  const relativePath = path.relative(storageRoot, resolvedPath);
+
+  if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return null;
+  }
+  return resolvedPath;
+}
+
+async function readStoredAudio(companyId: string, audioUrl: string): Promise<Buffer | null> {
+  const storedBuffer = await readObjectFromStorageReference(audioUrl).catch(() => null);
+  if (storedBuffer) return storedBuffer;
+
+  const audioPath = await resolveLegacyAudioPath(companyId, audioUrl);
+  if (!audioPath) return null;
+  const fs = await import('node:fs/promises');
+  return fs.readFile(audioPath).catch(() => null);
+}
+
+async function deleteStoredAudio(companyId: string, audioUrl?: string | null): Promise<void> {
+  if (!audioUrl) return;
+  if (isObjectStorageReference(audioUrl)) {
+    await deleteObjectByStorageReference(audioUrl).catch(() => undefined);
+    return;
+  }
+
+  const audioPath = await resolveLegacyAudioPath(companyId, audioUrl);
+  if (audioPath) {
+    const fs = await import('node:fs/promises');
+    await fs.unlink(audioPath).catch(() => undefined);
+  }
+}
 
 // Upload audio file
 meetingsRouter.post('/company/:companyId/upload', async (c) => {
@@ -29,16 +96,14 @@ meetingsRouter.post('/company/:companyId/upload', async (c) => {
     return c.json({ error: 'No audio file provided' }, 400);
   }
 
-  // Save file to disk
-  const fs = await import('fs');
-  const path = await import('path');
-  const uploadDir = path.join(process.cwd(), '..', '..', 'deploy', 'meetings', companyId);
-  fs.mkdirSync(uploadDir, { recursive: true });
-
-  const fileName = `${Date.now()}-${file.name || 'audio.mp3'}`;
-  const filePath = path.join(uploadDir, fileName);
+  const fileName = `${randomUUID()}-${sanitizeFileName(file.name || 'audio.mp3')}`;
   const buffer = Buffer.from(await file.arrayBuffer());
-  fs.writeFileSync(filePath, buffer);
+  const stored = await saveObject({
+    key: `meetings/${companyId}/${fileName}`,
+    body: buffer,
+    contentType: file.type || inferAudioContentType(fileName),
+    cacheControl: 'private, max-age=0, no-store',
+  });
 
   // Create meeting record
   const [meeting] = await db
@@ -46,10 +111,11 @@ meetingsRouter.post('/company/:companyId/upload', async (c) => {
     .values({
       companyId,
       title,
-      audioUrl: filePath,
+      audioUrl: objectStorageReference(stored.key),
       status: 'uploading',
     })
     .returning();
+  if (!meeting) return c.json({ error: 'Could not create meeting' }, 500);
 
   // Resolve active transcription provider via admin config (doc 10 §7).
   // Picks Local (free) if faster-whisper-server is enabled, else OpenAI
@@ -69,10 +135,9 @@ meetingsRouter.post('/company/:companyId/upload', async (c) => {
         baseURL: transcriptionProvider.baseUrl || undefined,
       });
 
-      // Read file for Whisper (shape works for both OpenAI and
-      // faster-whisper-server since the latter is OpenAI-compatible)
-      const fileData = fs.readFileSync(filePath);
-      const audioFile = new File([fileData], fileName, { type: 'audio/mpeg' });
+      // Reuse the uploaded bytes for Whisper. The source file is already in S3,
+      // so no large recording is written into the local repo/deploy folder.
+      const audioFile = new File([buffer], fileName, { type: file.type || inferAudioContentType(fileName) });
 
       const transcription = await openai.audio.transcriptions.create({
         model: transcriptionProvider.model,
@@ -93,15 +158,6 @@ meetingsRouter.post('/company/:companyId/upload', async (c) => {
           updatedAt: new Date(),
         })
         .where(eq(meetings.id, meeting.id));
-
-      // Doc 10 §7 / Task 11.6 — push the learnings into the Brain so the
-      // next campaign + Deal Assistant + CEO Advisor benefit. Non-fatal.
-      extractMeetingBrainLearnings({
-        companyId,
-        meetingId: meeting.id,
-        meetingTitle: title,
-        insights,
-      }).catch(() => {});
 
       return c.json({ id: meeting.id, status: 'analyzed', title });
     } catch (err) {
@@ -134,11 +190,22 @@ meetingsRouter.post(
     let id = meetingId;
 
     if (meetingId) {
+      const existing = await db.query.meetings.findFirst({
+        where: and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)),
+        columns: { id: true },
+      });
+      if (!existing) return c.json({ error: 'Meeting not found' }, 404);
+
       // Update existing meeting
       await db
         .update(meetings)
-        .set({ transcript, status: 'transcribing', updatedAt: new Date() })
-        .where(eq(meetings.id, meetingId));
+        .set({
+          transcript,
+          ...(title ? { title } : {}),
+          status: 'transcribing',
+          updatedAt: new Date(),
+        })
+        .where(and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)));
     } else {
       // Create new meeting with transcript
       const [meeting] = await db
@@ -150,6 +217,7 @@ meetingsRouter.post(
           status: 'transcribing',
         })
         .returning();
+      if (!meeting) return c.json({ error: 'Could not create meeting' }, 500);
       id = meeting.id;
     }
 
@@ -164,17 +232,7 @@ meetingsRouter.post(
           status: 'analyzed',
           updatedAt: new Date(),
         })
-        .where(eq(meetings.id, id!));
-
-      // Doc 10 §7 / Task 11.6 — push learnings into Brain. Non-fatal.
-      if (id) {
-        extractMeetingBrainLearnings({
-          companyId,
-          meetingId: id,
-          meetingTitle: title || 'Meeting Transcript',
-          insights,
-        }).catch(() => {});
-      }
+        .where(and(eq(meetings.id, id!), eq(meetings.companyId, companyId)));
 
       return c.json({ id, status: 'analyzed', insights });
     } catch (err) {
@@ -200,16 +258,70 @@ meetingsRouter.get('/company/:companyId', async (c) => {
   return c.json({ data });
 });
 
+// Fetch a private recording for authenticated in-dashboard playback.
+meetingsRouter.get('/company/:companyId/:id/audio', async (c) => {
+  const companyId = c.req.param('companyId');
+  const meetingId = c.req.param('id');
+  const meeting = await db.query.meetings.findFirst({
+    where: and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)),
+    columns: { audioUrl: true },
+  });
+
+  if (!meeting?.audioUrl) return c.json({ error: 'Recording not found' }, 404);
+  const audio = await readStoredAudio(companyId, meeting.audioUrl);
+  if (!audio) return c.json({ error: 'Recording not found' }, 404);
+
+  try {
+    const contentType = inferAudioContentType(meeting.audioUrl);
+
+    return new Response(Uint8Array.from(audio).buffer, {
+      headers: {
+        'Content-Type': contentType,
+        'Content-Length': String(audio.length),
+        'Cache-Control': 'private, max-age=300',
+      },
+    });
+  } catch {
+    return c.json({ error: 'Recording file is unavailable' }, 404);
+  }
+});
+
 // Get meeting detail
 meetingsRouter.get('/company/:companyId/:id', async (c) => {
+  const companyId = c.req.param('companyId');
   const meetingId = c.req.param('id');
 
   const meeting = await db.query.meetings.findFirst({
-    where: eq(meetings.id, meetingId),
+    where: and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)),
   });
 
   if (!meeting) return c.json({ error: 'Meeting not found' }, 404);
   return c.json(meeting);
+});
+
+// Discard a recording and its draft insights before they enter Knowledge/Brain.
+meetingsRouter.delete('/company/:companyId/:id', async (c) => {
+  const companyId = c.req.param('companyId');
+  const meetingId = c.req.param('id');
+  const meeting = await db.query.meetings.findFirst({
+    where: and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)),
+  });
+
+  if (!meeting) return c.json({ error: 'Meeting not found' }, 404);
+  if (meeting.status === 'approved') {
+    return c.json({
+      error: 'Approved meetings cannot be discarded because their insights are already in Knowledge Hub.',
+    }, 409);
+  }
+
+  await db.delete(meetings).where(and(
+    eq(meetings.id, meetingId),
+    eq(meetings.companyId, companyId),
+  ));
+
+  await deleteStoredAudio(companyId, meeting.audioUrl);
+
+  return c.json({ discarded: true });
 });
 
 // Approve insights → save to knowledge_base + create tasks
@@ -218,57 +330,72 @@ meetingsRouter.patch('/company/:companyId/:id/approve', async (c) => {
   const meetingId = c.req.param('id');
 
   const meeting = await db.query.meetings.findFirst({
-    where: eq(meetings.id, meetingId),
+    where: and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)),
   });
 
   if (!meeting) return c.json({ error: 'Meeting not found' }, 404);
   if (!meeting.insights) return c.json({ error: 'No insights to approve' }, 400);
+  if (meeting.status === 'approved') {
+    return c.json({ approved: true, alreadyApproved: true, knowledgeSaved: 0, tasksSaved: 0 });
+  }
 
   const insights = meeting.insights as any;
-  let knowledgeSaved = 0;
-  let tasksSaved = 0;
-
-  // Save summary as knowledge
-  if (insights.summary) {
-    await db.insert(knowledgeBase).values({
-      companyId,
+  const knowledgeItems = [
+    ...(meeting.transcript ? [{
+      category: 'meeting_transcript',
+      title: `Transcript: ${meeting.title}`,
+      content: meeting.transcript,
+    }] : []),
+    ...(insights.summary ? [{
       category: 'meeting_insight',
-      title: `Meeting: ${meeting.title}`,
-      content: insights.summary,
-      source: `meeting:${meetingId}`,
-    });
-    knowledgeSaved++;
-  }
+      title: `Meeting summary: ${meeting.title}`,
+      content: String(insights.summary),
+    }] : []),
+    ...(Array.isArray(insights.decisions) ? insights.decisions.map((decision: string) => ({
+      category: 'decision',
+      title: `Decision from ${meeting.title}`,
+      content: decision,
+    })) : []),
+    ...(Array.isArray(insights.strategies) ? insights.strategies.map((strategy: string) => ({
+      category: 'strategy',
+      title: `Strategy from ${meeting.title}`,
+      content: strategy,
+    })) : []),
+    ...(Array.isArray(insights.marketInsights) ? insights.marketInsights.map((insight: string) => ({
+      category: 'market',
+      title: `Market insight from ${meeting.title}`,
+      content: insight,
+    })) : []),
+    ...(Array.isArray(insights.salesObjections) ? insights.salesObjections.map((objection: string) => ({
+      category: 'sales_objection',
+      title: `Sales objection from ${meeting.title}`,
+      content: objection,
+    })) : []),
+  ].map((item) => ({ ...item, visibility: 'internal' as const, tags: ['meeting'] }));
 
-  // Save decisions as knowledge
-  if (insights.decisions?.length) {
-    for (const decision of insights.decisions) {
-      await db.insert(knowledgeBase).values({
-        companyId,
-        category: 'decision',
-        title: `Decision from ${meeting.title}`,
-        content: decision,
-        source: `meeting:${meetingId}`,
-      });
-      knowledgeSaved++;
-    }
-  }
-
-  // Save strategies as knowledge
-  if (insights.strategies?.length) {
-    for (const strategy of insights.strategies) {
-      await db.insert(knowledgeBase).values({
-        companyId,
-        category: 'strategy',
-        title: `Strategy from ${meeting.title}`,
-        content: strategy,
-        source: `meeting:${meetingId}`,
-      });
-      knowledgeSaved++;
-    }
-  }
+  const sync = await replaceApprovedKnowledge({
+    companyId,
+    source: `meeting:${meetingId}`,
+    verifiedByUserId: c.get('user').userId,
+    items: knowledgeItems,
+  });
 
   // Create tasks from action items
+  const previousTasks = await db
+    .select({ id: tasks.id, input: tasks.input })
+    .from(tasks)
+    .where(eq(tasks.companyId, companyId));
+  const previousTaskIds = previousTasks
+    .filter((task) => (task.input as any)?.meetingId === meetingId)
+    .map((task) => task.id);
+  if (previousTaskIds.length > 0) {
+    await db.delete(tasks).where(and(
+      eq(tasks.companyId, companyId),
+      inArray(tasks.id, previousTaskIds),
+    ));
+  }
+
+  let tasksSaved = 0;
   if (insights.tasks?.length) {
     for (const task of insights.tasks) {
       await db.insert(tasks).values({
@@ -288,9 +415,23 @@ meetingsRouter.patch('/company/:companyId/:id/approve', async (c) => {
   await db
     .update(meetings)
     .set({ status: 'approved', approvedAt: new Date(), updatedAt: new Date() })
-    .where(eq(meetings.id, meetingId));
+    .where(and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)));
 
-  return c.json({ approved: true, knowledgeSaved, tasksSaved });
+  // Only user-approved meeting insights may influence future recommendations.
+  await extractMeetingBrainLearnings({
+    companyId,
+    meetingId,
+    meetingTitle: meeting.title,
+    insights,
+  });
+
+  return c.json({
+    approved: true,
+    knowledgeSaved: sync.saved,
+    tasksSaved,
+    searchEntriesIndexed: sync.indexed,
+    indexingFailed: sync.indexingFailed,
+  });
 });
 
 // ============================================

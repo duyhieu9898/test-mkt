@@ -14,6 +14,9 @@ import { companies, campaignLaunches } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { startLaunch, getLaunch } from '../services/launch-orchestrator';
+import { buildEffectiveSourceContext } from '../services/source-content-import';
+import { ensureTenantForCompany } from '../lib/tenant-ai';
+import { generateLaunchSuggestions } from '../services/launch-suggestions';
 
 const launchesRouter = new Hono();
 
@@ -22,10 +25,11 @@ launchesRouter.use('*', authMiddleware);
 async function verifyOwnership(companyId: string, userId: string) {
   const company = await db.query.companies.findFirst({
     where: eq(companies.id, companyId),
-    columns: { id: true, ownerId: true },
+    columns: { id: true, name: true, ownerId: true },
   });
   if (!company) throw new HTTPException(404, { message: 'Company not found' });
   if (company.ownerId !== userId) throw new HTTPException(403, { message: 'Access denied' });
+  return company;
 }
 
 launchesRouter.post(
@@ -33,8 +37,15 @@ launchesRouter.post(
   zValidator(
     'json',
     z.object({
-      keyword: z.string().min(3).max(200),
+      keyword: z.string().trim().min(3).max(1200),
       brief: z.string().max(2000).optional(),
+      googleDriveFileId: z.string().min(5).max(200).optional(),
+      googleDriveFileName: z.string().max(255).optional(),
+      googleDriveUrl: z.string().url().max(1000).optional(),
+      oneDriveFileId: z.string().min(5).max(200).optional(),
+      oneDriveFileName: z.string().max(255).optional(),
+      imageMode: z.enum(['ai', 'uploaded']).default('ai').optional(),
+      assetIds: z.array(z.string().uuid()).max(3).optional(),
       targets: z.object({
         wordpress: z.boolean().default(false),
         facebook: z.boolean().default(false),
@@ -48,10 +59,18 @@ launchesRouter.post(
     const companyId = c.req.param('companyId');
     await verifyOwnership(companyId, userId);
     const body = c.req.valid('json');
+    const effectiveBrief = await buildEffectiveSourceContext({
+      companyId,
+      userId,
+      input: body,
+    });
+
     const result = await startLaunch({
       companyId,
       keyword: body.keyword,
-      brief: body.brief,
+      brief: effectiveBrief,
+      imageMode: body.imageMode,
+      assetIds: body.assetIds,
       targets: body.targets,
     });
     return c.json({ data: result });
@@ -69,6 +88,15 @@ launchesRouter.get('/:companyId', async (c) => {
     .orderBy(desc(campaignLaunches.createdAt))
     .limit(50);
   return c.json({ data: rows });
+});
+
+launchesRouter.get('/:companyId/suggestions', async (c) => {
+  const { userId } = c.get('user');
+  const companyId = c.req.param('companyId');
+  const company = await verifyOwnership(companyId, userId);
+  const tenantId = await ensureTenantForCompany(company.id, company.name);
+  const suggestions = await generateLaunchSuggestions({ companyId, tenantId });
+  return c.json({ data: suggestions });
 });
 
 launchesRouter.get('/:companyId/:id', async (c) => {

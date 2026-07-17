@@ -1,8 +1,18 @@
 import { config } from 'dotenv';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { z } from 'zod';
 
 // Load .env file from project root
-config({ path: '../../.env' });
+for (const path of [
+  join(process.cwd(), '.env'),
+  join(process.cwd(), '..', '..', '.env'),
+]) {
+  if (existsSync(path)) {
+    config({ path });
+    break;
+  }
+}
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

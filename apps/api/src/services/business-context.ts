@@ -20,6 +20,8 @@ import {
   knowledgeBase,
   brandIdentities,
   agentMemories,
+  type BusinessPlan,
+  type GrowthMasterPlan,
 } from '@1person/core/db';
 import { getActiveBrandIq, renderBrandIqContext } from './brand-iq-extractor';
 
@@ -66,6 +68,8 @@ export interface BusinessContext {
   brandColors: { primary?: string; secondary?: string };
   brandVoice: string[];
   brandStyle: string;
+  growthPlan?: GrowthMasterPlan;
+  businessPlan?: BusinessPlan;
 
   // From meetings
   strategies: string[];
@@ -87,17 +91,25 @@ export interface BusinessContext {
 export async function buildBusinessContext(
   companyId: string,
   visibilityFilter: VisibilityLevel = 'all',
+  knowledgeTags: string[] = [],
 ): Promise<BusinessContext> {
   const allowed = allowedVisibilities(visibilityFilter);
+  const canUseInternalContext = visibilityFilter !== 'public';
 
   // 1. Company profile
   const company = await db.query.companies.findFirst({
     where: eq(companies.id, companyId),
   });
 
-  // 2. Knowledge entries filtered by visibility (max 30)
-  const knowledge = await db
-    .select({ category: knowledgeBase.category, title: knowledgeBase.title, content: knowledgeBase.content })
+  // 2. Knowledge entries filtered by visibility. If a chatbot has tags,
+  // empty-tag entries stay global and tagged entries must overlap.
+  const rawKnowledge = await db
+    .select({
+      category: knowledgeBase.category,
+      title: knowledgeBase.title,
+      content: knowledgeBase.content,
+      tags: knowledgeBase.tags,
+    })
     .from(knowledgeBase)
     .where(and(
       eq(knowledgeBase.companyId, companyId),
@@ -105,20 +117,33 @@ export async function buildBusinessContext(
       sql`${knowledgeBase.visibility} = ANY(${sql.raw(`ARRAY[${allowed.map((v) => `'${v}'`).join(',')}]`)})`,
     ))
     .orderBy(desc(knowledgeBase.updatedAt))
-    .limit(30);
+    .limit(80);
+
+  const tagSet = new Set((knowledgeTags || []).map((tag) => tag.trim()).filter(Boolean));
+  const knowledge = rawKnowledge
+    .filter((entry) => {
+      if (tagSet.size === 0) return true;
+      const entryTags = Array.isArray(entry.tags) ? entry.tags : [];
+      if (entryTags.length === 0) return true;
+      return entryTags.some((tag) => tagSet.has(tag));
+    })
+    .slice(0, 30);
 
   // 3. Brand identity
   const brand = await db.query.brandIdentities.findFirst({
     where: eq(brandIdentities.companyId, companyId),
   });
 
-  // 4. Agent memories (strategies, performance)
-  const memories = await db
-    .select({ type: agentMemories.type, title: agentMemories.title, content: agentMemories.content })
-    .from(agentMemories)
-    .where(eq(agentMemories.companyId, companyId))
-    .orderBy(desc(agentMemories.createdAt))
-    .limit(15);
+  // 4. Agent memories (strategies, performance). These are internal
+  // operating notes, so public widgets must not receive them.
+  const memories = canUseInternalContext
+    ? await db
+        .select({ type: agentMemories.type, title: agentMemories.title, content: agentMemories.content })
+        .from(agentMemories)
+        .where(eq(agentMemories.companyId, companyId))
+        .orderBy(desc(agentMemories.createdAt))
+        .limit(15)
+    : [];
 
   // Categorize knowledge
   const byCategory = (cat: string) =>
@@ -130,6 +155,11 @@ export async function buildBusinessContext(
   const faqs = byCategory('faq');
   const policies = byCategory('policy');
   const general = byCategory('general');
+  const meetingSummaries = byCategory('meeting_insight');
+  const meetingStrategies = byCategory('strategy');
+  const meetingDecisions = byCategory('decision');
+  const marketInsights = byCategory('market');
+  const salesObjections = byCategory('sales_objection');
 
   // Extract meeting strategies from memories
   const strategyMemories = memories
@@ -138,6 +168,8 @@ export async function buildBusinessContext(
   const decisionMemories = memories
     .filter((m) => m.type === 'decision')
     .map((m) => m.title);
+  const approvedStrategies = [...meetingStrategies, ...strategyMemories];
+  const approvedDecisions = [...meetingDecisions, ...decisionMemories];
 
   // Brand info
   const brandColors = {
@@ -146,13 +178,16 @@ export async function buildBusinessContext(
   };
   const brandVoice = (brand?.voice as any)?.tone || ['professional'];
   const brandStyle = (brand as any)?.visualStyle || 'modern';
+  const growthPlan = canUseInternalContext ? company?.businessPlan?.growthPlan : undefined;
 
   // Build comprehensive context string for LLM
   const contextParts: string[] = [];
 
   // Brand IQ first — every agent reads this before anything else (Block 2).
   // Falls back silently if the founder hasn't set one up yet.
-  const brandIq = await getActiveBrandIq(companyId).catch(() => null);
+  const brandIq = canUseInternalContext
+    ? await getActiveBrandIq(companyId).catch(() => null)
+    : null;
   if (brandIq) {
     contextParts.push(renderBrandIqContext(brandIq));
     contextParts.push('');
@@ -161,6 +196,9 @@ export async function buildBusinessContext(
   contextParts.push(`COMPANY: ${company?.name || 'Unknown'}`);
   contextParts.push(`INDUSTRY: ${company?.industry || 'Unknown'}`);
   contextParts.push(`DESCRIPTION: ${company?.description || 'No description'}`);
+  if (canUseInternalContext && company?.businessPlan) {
+    contextParts.push(`\nAPPROVED BUSINESS & GROWTH PLAN:\n${JSON.stringify(company.businessPlan, null, 2).slice(0, 6000)}`);
+  }
 
   if (products.length > 0) {
     contextParts.push(`\nPRODUCTS & SERVICES:\n${products.join('\n')}`);
@@ -174,11 +212,26 @@ export async function buildBusinessContext(
   if (faqs.length > 0) {
     contextParts.push(`\nFAQs:\n${faqs.join('\n')}`);
   }
+  if (policies.length > 0) {
+    contextParts.push(`\nPOLICIES:\n${policies.join('\n')}`);
+  }
   if (general.length > 0) {
     contextParts.push(`\nBUSINESS INFO:\n${general.join('\n')}`);
   }
-  if (strategyMemories.length > 0) {
-    contextParts.push(`\nSTRATEGY (from meetings):\n${strategyMemories.join('\n')}`);
+  if (meetingSummaries.length > 0) {
+    contextParts.push(`\nAPPROVED MEETING INSIGHTS:\n${meetingSummaries.join('\n')}`);
+  }
+  if (approvedStrategies.length > 0) {
+    contextParts.push(`\nSTRATEGY (from approved meetings):\n${approvedStrategies.join('\n')}`);
+  }
+  if (approvedDecisions.length > 0) {
+    contextParts.push(`\nDECISIONS (from approved meetings):\n${approvedDecisions.join('\n')}`);
+  }
+  if (marketInsights.length > 0) {
+    contextParts.push(`\nMARKET INSIGHTS (from approved meetings):\n${marketInsights.join('\n')}`);
+  }
+  if (salesObjections.length > 0) {
+    contextParts.push(`\nSALES OBJECTIONS (from approved meetings):\n${salesObjections.join('\n')}`);
   }
 
   contextParts.push(`\nBRAND: Voice=${brandVoice.join(',')}, Style=${brandStyle}, Colors=${brandColors.primary}/${brandColors.secondary}`);
@@ -196,8 +249,10 @@ export async function buildBusinessContext(
     brandColors,
     brandVoice,
     brandStyle,
-    strategies: strategyMemories,
-    decisions: decisionMemories,
+    growthPlan,
+    businessPlan: canUseInternalContext ? company?.businessPlan ?? undefined : undefined,
+    strategies: canUseInternalContext ? approvedStrategies : [],
+    decisions: canUseInternalContext ? approvedDecisions : [],
     fullContext: contextParts.join('\n'),
   };
 }

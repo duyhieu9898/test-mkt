@@ -16,6 +16,7 @@ import {
   channelConnections,
   omnichannelMessages,
   companies,
+  socialConnections,
 } from '@1person/core/db';
 import { encryptSecret, maskSecret, decryptSecret } from '../lib/crypto';
 import {
@@ -25,8 +26,81 @@ import {
   handleInboundMessage,
   sendMessage,
 } from '../services/channels/fb-messenger';
+import {
+  canCreateFacebookPageContent,
+  missingFacebookPublishPermissions,
+  resolveFacebookPageAccess,
+} from '../services/facebook-page-access';
+import {
+  FacebookOAuthProvider,
+  getFacebookClientId,
+} from '../services/platforms/providers/facebook';
+import { env } from '../lib/env';
 
 const router = new Hono();
+const facebookOAuthProvider = new FacebookOAuthProvider();
+const FACEBOOK_OAUTH_TTL_MS = 10 * 60 * 1000;
+
+interface FacebookOAuthState {
+  companyId: string;
+  userId: string;
+  expiresAt: number;
+}
+
+interface FacebookPageSession extends FacebookOAuthState {
+  userAccessToken: string;
+}
+
+function publicApiBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1').replace(/\/+$/, '');
+}
+
+function facebookCallbackUrl(): string {
+  return `${publicApiBaseUrl()}/omnichannel/facebook/oauth/callback`;
+}
+
+function encodeSecurePayload(payload: FacebookOAuthState | FacebookPageSession): string {
+  return Buffer.from(encryptSecret(JSON.stringify(payload)), 'utf8').toString('base64url');
+}
+
+function decodeSecurePayload<T extends FacebookOAuthState>(payload: string): T {
+  try {
+    const encrypted = Buffer.from(payload, 'base64url').toString('utf8');
+    const decoded = JSON.parse(decryptSecret(encrypted)) as T;
+    if (!decoded.companyId || !decoded.userId || decoded.expiresAt < Date.now()) {
+      throw new Error('Expired OAuth session');
+    }
+    return decoded;
+  } catch {
+    throw new HTTPException(400, { message: 'Facebook connection session is invalid or expired.' });
+  }
+}
+
+function facebookPopupHtml(
+  type: 'facebook_pages_ready' | 'facebook_oauth_error',
+  data: Record<string, unknown>,
+): string {
+  const payload = JSON.stringify({ type, ...data }).replace(/</g, '\\u003c');
+  const targetOrigin = JSON.stringify(env.WEB_URL);
+  const isSuccess = type === 'facebook_pages_ready';
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Facebook connection</title></head>
+<body style="font-family:Arial,sans-serif;padding:24px;color:#111827">
+  <h2>${isSuccess ? 'Facebook connected' : 'Connection failed'}</h2>
+  <p>${isSuccess ? 'Return to 1Person to choose your Page.' : 'Please return to 1Person and try again.'}</p>
+  <script>
+    if (window.opener) window.opener.postMessage(${payload}, ${targetOrigin});
+    setTimeout(function () { window.close(); }, ${isSuccess ? 800 : 2500});
+  </script>
+</body></html>`;
+}
+
+async function assertUserCompanyAccess(userId: string, companyId: string) {
+  const company = await db.query.companies.findFirst({
+    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+  });
+  if (!company) throw new HTTPException(404, { message: 'Company not found' });
+}
 
 // ---------- Public webhook (NO auth — Meta calls this) ----------
 // Mounted via webhook router in index.ts.
@@ -67,15 +141,61 @@ messengerWebhookRouter.post('/messenger', async (c) => {
   return c.text('EVENT_RECEIVED', 200);
 });
 
+// Meta redirects here without the 1Person Bearer token. The encrypted state
+// carries the short-lived user/company context and is validated before use.
+router.get('/facebook/oauth/callback', async (c) => {
+  const code = c.req.query('code');
+  const stateParam = c.req.query('state');
+  if (!code || !stateParam) {
+    return c.html(facebookPopupHtml('facebook_oauth_error', {
+      error: 'Facebook did not return an authorization code.',
+    }), 400);
+  }
+
+  try {
+    const state = decodeSecurePayload<FacebookOAuthState>(stateParam);
+    await assertUserCompanyAccess(state.userId, state.companyId);
+    const tokens = await facebookOAuthProvider.exchangeCode(code, facebookCallbackUrl());
+    const pages = ((tokens.extra?.pages ?? []) as Array<{
+      id?: string;
+      name?: string;
+      picture?: { data?: { url?: string } };
+      tasks?: string[];
+    }>)
+      .filter((page): page is typeof page & { id: string } => Boolean(page.id))
+      .map((page) => ({
+        id: page.id,
+        name: page.name || 'Facebook Page',
+        pictureUrl: page.picture?.data?.url,
+        canPublish: canCreateFacebookPageContent(page.tasks),
+      }));
+
+    if (!pages.length) {
+      return c.html(facebookPopupHtml('facebook_oauth_error', {
+        error: 'No Facebook Pages were found for this account.',
+      }), 400);
+    }
+
+    const session = encodeSecurePayload({
+      ...state,
+      expiresAt: Date.now() + FACEBOOK_OAUTH_TTL_MS,
+      userAccessToken: tokens.accessToken,
+    });
+    return c.html(facebookPopupHtml('facebook_pages_ready', { session, pages }));
+  } catch (error) {
+    console.error('[omnichannel] Facebook OAuth callback failed', error);
+    return c.html(facebookPopupHtml('facebook_oauth_error', {
+      error: error instanceof Error ? error.message : 'Facebook connection failed.',
+    }), 400);
+  }
+});
+
 // ---------- Authenticated routes ----------
 router.use('*', authMiddleware);
 
 async function assertCompanyAccess(c: any, companyId: string) {
   const userId = (c.get('user') as any).userId;
-  const company = await db.query.companies.findFirst({
-    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
-  });
-  if (!company) throw new HTTPException(404, { message: 'Company not found' });
+  await assertUserCompanyAccess(userId, companyId);
 }
 
 function sanitize(conn: typeof channelConnections.$inferSelect) {
@@ -95,6 +215,8 @@ function sanitize(conn: typeof channelConnections.$inferSelect) {
       appId: data.appId,
       verifyTokenPreview: data.verifyToken ? maskSecret(data.verifyToken) : null,
       hasAccessToken: !!data.encryptedPageAccessToken,
+      publishingEnabled: data.publishingEnabled !== false,
+      messagingEnabled: data.messagingEnabled === true || !!data.verifyToken,
     },
   };
 }
@@ -109,35 +231,125 @@ router.get('/company/:companyId', async (c) => {
   return c.json({ data: rows.map(sanitize) });
 });
 
-// Connect FB Messenger
+router.post('/company/:companyId/facebook/oauth/start', async (c) => {
+  const { companyId } = c.req.param();
+  await assertCompanyAccess(c, companyId);
+  if (!facebookOAuthProvider.isConfigured()) {
+    throw new HTTPException(503, { message: 'Facebook connection is not configured.' });
+  }
+  const userId = (c.get('user') as any).userId as string;
+  const state = encodeSecurePayload({
+    companyId,
+    userId,
+    expiresAt: Date.now() + FACEBOOK_OAUTH_TTL_MS,
+  });
+  return c.json({
+    url: facebookOAuthProvider.getPageAuthorizationUrl(state, facebookCallbackUrl()),
+  });
+});
+
 router.post(
-  '/company/:companyId/fb-messenger/connect',
+  '/company/:companyId/facebook/oauth/select',
   zValidator('json', z.object({
     pageId: z.string().min(1),
-    pageName: z.string().optional(),
-    pageAccessToken: z.string().min(20),
-    appId: z.string().min(1),
-    verifyToken: z.string().min(8),
-    aiAutoReply: z.boolean().optional(),
+    session: z.string().min(20),
   })),
   async (c) => {
     const { companyId } = c.req.param();
     await assertCompanyAccess(c, companyId);
     const body = c.req.valid('json');
-    const [created] = await db.insert(channelConnections).values({
-      companyId,
-      channel: 'fb_messenger',
-      status: 'active',
-      aiAutoReply: body.aiAutoReply ?? false,
-      connectionData: {
-        pageId: body.pageId,
-        pageName: body.pageName,
-        appId: body.appId,
-        verifyToken: body.verifyToken,
-        encryptedPageAccessToken: encryptSecret(body.pageAccessToken),
-      },
-    }).returning();
-    return c.json(sanitize(created!));
+    const session = decodeSecurePayload<FacebookPageSession>(body.session);
+    const userId = (c.get('user') as any).userId as string;
+    if (session.companyId !== companyId || session.userId !== userId) {
+      throw new HTTPException(403, { message: 'This Facebook session belongs to another account.' });
+    }
+    const pageAccess = await resolveFacebookPageAccess(
+      session.userAccessToken,
+      body.pageId,
+    );
+    if (!pageAccess.requestedPageFound) {
+      const available = pageAccess.availablePages
+        .map((page) => `${page.name || 'Unnamed Page'} (${page.id})`)
+        .join(', ');
+      throw new HTTPException(400, {
+        message: `Page ID ${body.pageId} does not belong to a Page managed by this token.`
+          + (available ? ` Use: ${available}.` : ''),
+      });
+    }
+    const missingPermissions = missingFacebookPublishPermissions(pageAccess.permissions);
+    if (missingPermissions.length > 0) {
+      throw new HTTPException(400, {
+        message: `Facebook token is missing: ${missingPermissions.join(', ')}.`,
+      });
+    }
+    if (!canCreateFacebookPageContent(pageAccess.pageTasks)) {
+      throw new HTTPException(400, {
+        message: 'This Facebook account cannot create content on the selected Page.',
+      });
+    }
+
+    const connectionData = {
+      pageId: body.pageId,
+      pageName: pageAccess.pageName,
+      appId: getFacebookClientId(),
+      encryptedPageAccessToken: encryptSecret(pageAccess.accessToken),
+      publishingEnabled: true,
+      messagingEnabled: false,
+      connectionSource: 'oauth',
+    };
+    const existingConnections = await db.select().from(channelConnections).where(
+      and(
+        eq(channelConnections.companyId, companyId),
+        eq(channelConnections.channel, 'fb_messenger'),
+      ),
+    );
+    const existing = existingConnections.find(
+      (connection) => (connection.connectionData as Record<string, unknown>).pageId === body.pageId,
+    ) ?? existingConnections.find(
+      (connection) => (connection.connectionData as Record<string, unknown>).connectionSource === 'oauth',
+    );
+    const [saved] = existing
+      ? await db.update(channelConnections)
+        .set({ connectionData, status: 'active' })
+        .where(eq(channelConnections.id, existing.id))
+        .returning()
+      : await db.insert(channelConnections).values({
+        companyId,
+        channel: 'fb_messenger',
+        status: 'active',
+        aiAutoReply: false,
+        connectionData,
+      }).returning();
+
+    const socialValues = {
+      accessToken: pageAccess.accessToken,
+      platformPageId: body.pageId,
+      platformAccountName: pageAccess.pageName,
+      permissions: pageAccess.permissions,
+      status: 'connected' as const,
+      connectedAt: new Date(),
+      lastError: null,
+      updatedAt: new Date(),
+    };
+    const socialConnection = await db.query.socialConnections.findFirst({
+      where: and(
+        eq(socialConnections.companyId, companyId),
+        eq(socialConnections.platform, 'facebook'),
+      ),
+    });
+    if (socialConnection) {
+      await db.update(socialConnections)
+        .set(socialValues)
+        .where(eq(socialConnections.id, socialConnection.id));
+    } else {
+      await db.insert(socialConnections).values({
+        companyId,
+        platform: 'facebook',
+        ...socialValues,
+      });
+    }
+
+    return c.json(sanitize(saved!));
   },
 );
 
@@ -164,7 +376,17 @@ router.delete('/:id', async (c) => {
   const conn = await db.query.channelConnections.findFirst({ where: eq(channelConnections.id, id) });
   if (!conn) throw new HTTPException(404, { message: 'Connection not found' });
   await assertCompanyAccess(c, conn.companyId);
+  const data = conn.connectionData as Record<string, unknown>;
   await db.delete(channelConnections).where(eq(channelConnections.id, id));
+  if (conn.channel === 'fb_messenger' && data.pageId) {
+    await db.update(socialConnections)
+      .set({ status: 'revoked', accessToken: '', updatedAt: new Date() })
+      .where(and(
+        eq(socialConnections.companyId, conn.companyId),
+        eq(socialConnections.platform, 'facebook'),
+        eq(socialConnections.platformPageId, String(data.pageId)),
+      ));
+  }
   return c.json({ deleted: true });
 });
 

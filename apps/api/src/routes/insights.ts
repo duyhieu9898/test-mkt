@@ -17,12 +17,17 @@ import {
   banners,
   socialPosts,
   landingPages,
+  agents,
+  departments,
 } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
-import { ensureSufficientCredits, chargeFixedCredits } from '../lib/credits';
-import { generateCeoBrief } from '../services/ceo-advisor';
+import {
+  generateAndSaveCeoBrief,
+  assignAdvisorTeamTasks,
+  mergeCampaignReviewActions,
+} from '../services/ceo-advisor';
 
 const insightsRouter = new Hono();
 insightsRouter.use('*', authMiddleware);
@@ -44,40 +49,90 @@ insightsRouter.get('/:companyId/advisor/latest', async (c) => {
   const companyId = c.req.param('companyId');
   const { tenantId } = await requireOwnedCompany(companyId);
   const brief = await getTenantAI().ceoAdvisor.latest(tenantId);
-  return c.json({ brief });
+  if (!brief) return c.json({ brief: null });
+
+  const [recentCampaigns, teamRows] = await Promise.all([
+    db.select()
+      .from(campaigns)
+      .where(eq(campaigns.companyId, companyId))
+      .orderBy(desc(campaigns.createdAt))
+      .limit(10),
+    db.select({
+      id: agents.id,
+      name: agents.name,
+      role: agents.role,
+      title: agents.title,
+      department: departments.name,
+      capabilities: agents.capabilities,
+    })
+      .from(agents)
+      .leftJoin(departments, eq(agents.departmentId, departments.id))
+      .where(eq(agents.companyId, companyId)),
+  ]);
+  const campaignFacts = recentCampaigns.map((campaign) => {
+    const targeting = (campaign.targeting ?? {}) as Record<string, unknown>;
+    const source = targeting.source;
+    const sourceRecord = source && typeof source === 'object'
+      ? source as Record<string, unknown>
+      : null;
+    return {
+      id: campaign.id,
+      name: campaign.name,
+      status: campaign.status,
+      aiMode: campaign.aiMode,
+      sourceType: typeof sourceRecord?.type === 'string'
+        ? sourceRecord.type
+        : typeof source === 'string'
+          ? source
+          : null,
+      blogPostId: typeof targeting.blogPostId === 'string' ? targeting.blogPostId : null,
+      createdAt: campaign.createdAt.toISOString(),
+    };
+  });
+
+  return c.json({
+    brief: {
+      ...brief,
+      actions: assignAdvisorTeamTasks(
+        mergeCampaignReviewActions({
+          actions: brief.actions,
+          campaigns: campaignFacts,
+          companyId,
+        }),
+        teamRows.map((member) => ({
+          id: member.id,
+          name: member.name,
+          role: member.role,
+          title: member.title ?? undefined,
+          department: member.department ?? undefined,
+          capabilities: (member.capabilities ?? []).map((capability) => capability.name),
+        })),
+      ),
+    },
+  });
 });
 
 insightsRouter.post('/:companyId/advisor/refresh', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  const { tenantId } = await requireOwnedCompany(companyId);
+  try {
+    const { company } = await requireOwnedCompany(companyId);
+    const saved = await generateAndSaveCeoBrief({
+      companyId,
+      companyName: company.name,
+      actor: userId ?? 'system',
+    });
 
-  await ensureSufficientCredits(companyId, 10);
-
-  const result = await generateCeoBrief({ companyId, tenantId });
-
-  const saved = await getTenantAI().ceoAdvisor.append(
-    tenantId,
-    {
-      headline: result.headline,
-      actions: result.actions,
-      wins: result.wins,
-      alerts: result.alerts,
-      sourcesUsed: result.sourcesUsed,
-      model: result.model,
-      traceId: result.traceId,
-    },
-    userId ?? 'system',
-  );
-
-  await chargeFixedCredits(companyId, 10, {
-    featureKey: 'ceo_advisor_brief',
-    refKind: 'ceo_brief',
-    refId: saved.id,
-    actor: userId ?? 'system',
-  });
-
-  return c.json({ brief: saved });
+    return c.json({ brief: saved });
+  } catch (err) {
+    if (err instanceof HTTPException) throw err;
+    console.error('[insights.advisor.refresh] failed:', {
+      companyId,
+      userId: userId ?? 'system',
+      error: err,
+    });
+    throw err;
+  }
 });
 
 // ─── GET /insights/:companyId — full advisor snapshot ───────────────

@@ -14,9 +14,9 @@
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { FileText, Mic, Search } from 'lucide-react';
+import { FileText, Globe2, Mic, Search } from 'lucide-react';
 
-type TabKey = 'documents' | 'meetings' | 'search';
+type TabKey = 'documents' | 'meetings' | 'search' | 'crawl';
 
 const TABS: Array<{
   key: TabKey;
@@ -45,6 +45,13 @@ const TABS: Array<{
     icon: Search,
     href: (id) => `/${id}/knowledge/search`,
     match: (p) => p.endsWith('/knowledge/search'),
+  },
+  {
+    key: 'crawl',
+    label: 'Crawl Data',
+    icon: Globe2,
+    href: (id) => `/${id}/knowledge/crawl`,
+    match: (p) => p.endsWith('/knowledge/crawl'),
   },
 ];
 

@@ -43,7 +43,7 @@ export default function EditLandingPage() {
         name: page.name,
         slug: page.slug,
         primaryColor: page.primaryColor || '#3b82f6',
-        secondaryColor: page.secondaryColor,
+        secondaryColor: page.secondaryColor ?? undefined,
         status: page.status,
         sections: page.sections?.map((s: any) => ({
           id: s.id,
@@ -51,7 +51,8 @@ export default function EditLandingPage() {
           content: s.content || {},
           order: s.order,
           isVisible: s.isVisible,
-          backgroundColor: s.backgroundColor,
+          backgroundColor: s.backgroundColor ?? undefined,
+          customStyles: s.customStyles ?? undefined,
         })),
       }}
       companyId={companyId}

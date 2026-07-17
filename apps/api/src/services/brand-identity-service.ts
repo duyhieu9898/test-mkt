@@ -161,6 +161,7 @@ export class BrandIdentityService {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; 1PersonBot/1.0)',
         },
+        signal: AbortSignal.timeout(15_000),
       });
 
       if (!response.ok) {
@@ -605,7 +606,7 @@ Choose voice/tone that:
     };
 
     const normalizedIndustry = industry?.toLowerCase().replace(/[^a-z]/g, '_') || 'default';
-    const colors = industryColors[normalizedIndustry] || industryColors['default'];
+    const colors = industryColors[normalizedIndustry] || industryColors.default!;
 
     const brandId = await this.upsertBrandIdentity(companyId, {
       colors: {

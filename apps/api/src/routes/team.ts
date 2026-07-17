@@ -48,14 +48,19 @@ teamRouter.get('/:companyId', async (c) => {
 
   const enriched = await Promise.all(
     employees.map(async (e) => ({
+      id: e.id,
       slug: e.slug,
       name: e.name,
+      role: e.role,
       roleTitle: e.roleTitle,
       department: e.department,
       avatarEmoji: e.avatarEmoji,
       accentColor: e.accentColor,
       intro: e.intro,
-      specialties: getEmployeeSpecialties(e.slug),
+      status: e.status,
+      supervisorId: e.supervisorId,
+      responsibilities: e.responsibilities,
+      specialties: getEmployeeSpecialties(e.templateSlug),
       kpis: await resolveEmployeeKpis(companyId, e),
     })),
   );
@@ -79,14 +84,19 @@ teamRouter.get('/:companyId/:slug', async (c) => {
 
   return c.json({
     data: {
+      id: employee.id,
       slug: employee.slug,
       name: employee.name,
+      role: employee.role,
       roleTitle: employee.roleTitle,
       department: employee.department,
       avatarEmoji: employee.avatarEmoji,
       accentColor: employee.accentColor,
       intro: employee.intro,
-      specialties: getEmployeeSpecialties(employee.slug),
+      status: employee.status,
+      supervisorId: employee.supervisorId,
+      responsibilities: employee.responsibilities,
+      specialties: getEmployeeSpecialties(employee.templateSlug),
       kpis,
       thread,
     },

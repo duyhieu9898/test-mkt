@@ -90,3 +90,19 @@
 .shimmer {
   @apply animate-pulse bg-gradient-to-r from-muted via-muted-foreground/10 to-muted;
 }
+
+@keyframes navigation-progress {
+  0% {
+    transform: translateX(-120%);
+  }
+  60% {
+    transform: translateX(70%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.animate-navigation-progress {
+  animation: navigation-progress 1.1s ease-in-out infinite;
+}

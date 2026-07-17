@@ -12,12 +12,18 @@ import { OrgChartView } from '@/components/ftux/org-chart-view';
 import { MasterPlanView } from '@/components/ftux/master-plan-view';
 import { ExecutionTriggerView } from '@/components/ftux/execution-trigger-view';
 import { CelebrationView } from '@/components/ftux/celebration-view';
-import { MeetYourBrainView } from '@/components/ftux/meet-your-brain-view';
 import { SetupChecklist } from '@/components/setup-checklist';
 import { Button } from '@/components/ui/button';
 import { STEP_LABELS } from '@/lib/ftux/processing-simulation';
 import { api } from '@/lib/api/client';
-import type { ProcessingStep, FTUXAgent, FTUXStrategy, MasterPlan, WebsiteAnalysis, FTUXStep } from '@/lib/ftux/types';
+import type {
+  DetectedBusinessInfo,
+  ProcessingStep,
+  FTUXAgent,
+  FTUXStrategy,
+  MasterPlan,
+  WebsiteAnalysis,
+} from '@/lib/ftux/types';
 
 interface FTUXStatusResponse {
   status: 'processing' | 'complete' | 'error';
@@ -72,6 +78,7 @@ export default function FTUXWelcomePage() {
     setMasterPlan,
     company,
     agents,
+    setAgents,
     strategy,
     startProcessing,
     updateProcessingStep,
@@ -79,6 +86,7 @@ export default function FTUXWelcomePage() {
     setAiThinking,
     setProgress,
     setDetectedInfo,
+    updateBusinessDetails,
     setResults,
     startExecution,
     reset,
@@ -89,6 +97,10 @@ export default function FTUXWelcomePage() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [finalizationError, setFinalizationError] = useState<string | null>(null);
+  const [isApprovingPlan, setIsApprovingPlan] = useState(false);
+  const [planApprovalError, setPlanApprovalError] = useState<string | null>(null);
   const token = useAuthStore((state) => state.token);
 
   // Redirect to login if not authenticated
@@ -120,12 +132,15 @@ export default function FTUXWelcomePage() {
       setting_up_brand: 'Setting up brand identity...',
     };
 
+    let consecutivePollFailures = 0;
+
     pollingRef.current = setInterval(async () => {
       try {
         const status = await api.get<FTUXStatusResponse>(
           `/ftux/status/${sessionId}`,
           { token }
         );
+        consecutivePollFailures = 0;
 
         // Update real step
         if (status.currentStep) {
@@ -203,6 +218,12 @@ export default function FTUXWelcomePage() {
         }
       } catch (err) {
         console.error('Polling error:', err);
+        consecutivePollFailures += 1;
+        if (consecutivePollFailures >= 3) {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          setError(err instanceof Error ? err.message : 'Could not read onboarding status');
+          processingRef.current = false;
+        }
       }
     }, 1500); // Poll every 1.5 seconds
   }, [
@@ -236,7 +257,7 @@ export default function FTUXWelcomePage() {
       const response = await api.post<{ sessionId: string; status: string }>('/ftux/process', {
         prompt,
         websiteUrl: url,
-        websiteOption: url ? 'has_website' : 'skip',
+        websiteOption: url ? 'has_website' : 'new_business',
       }, { token });
 
       // Start polling real backend status
@@ -249,9 +270,55 @@ export default function FTUXWelcomePage() {
   }, [token, setUserPrompt, setWebsiteUrl, setInputType, startProcessing, pollStatus]);
 
   // Handle business confirmation
-  const handleBusinessConfirm = useCallback(() => {
-    setStep('org-chart');
-  }, [setStep]);
+  const handleBusinessConfirm = useCallback(async () => {
+    if (!company || !token || isFinalizing) return;
+
+    setIsFinalizing(true);
+    setFinalizationError(null);
+    try {
+      const result = await api.post<{
+        masterPlan: MasterPlan;
+        brandIqReady: boolean;
+        advisorReady: boolean;
+      }>('/ftux/finalize', { companyId: company.id }, { token });
+      setMasterPlan(result.masterPlan);
+      setStep('org-chart');
+    } catch (err) {
+      setFinalizationError(
+        err instanceof Error
+          ? err.message
+          : 'Could not prepare your company intelligence. Please try again.',
+      );
+    } finally {
+      setIsFinalizing(false);
+    }
+  }, [company, isFinalizing, setMasterPlan, setStep, token]);
+
+  const handleBusinessDetailsSave = useCallback(async (details: DetectedBusinessInfo) => {
+    if (!company || !token) return;
+
+    await api.patch(`/companies/${company.id}`, {
+      name: details.companyName,
+      industry: details.industry || details.market,
+      businessType: details.model,
+      businessPlan: {
+        vision: details.strategy,
+        mission: details.valueProposition,
+        targetAudience: {
+          demographics: [details.audience],
+          painPoints: [],
+        },
+        valueProposition: details.valueProposition,
+        revenueModel: details.model,
+        competitors: [],
+        suggestedAgents: [],
+        offerings: details.offerings,
+        growthPlan: masterPlan || undefined,
+      },
+    }, { token });
+
+    updateBusinessDetails(details);
+  }, [company, masterPlan, token, updateBusinessDetails]);
 
   // Handle org chart continue
   const handleOrgChartContinue = useCallback(() => {
@@ -263,9 +330,22 @@ export default function FTUXWelcomePage() {
   }, [setStep, masterPlan]);
 
   // Handle master plan approval
-  const handleMasterPlanApprove = useCallback(() => {
-    setStep('execution-trigger');
-  }, [setStep]);
+  const handleMasterPlanApprove = useCallback(async () => {
+    if (!company || !token || isApprovingPlan) return;
+
+    setIsApprovingPlan(true);
+    setPlanApprovalError(null);
+    try {
+      await api.post('/ftux/approve-growth-plan', { companyId: company.id }, { token });
+      setStep('execution-trigger');
+    } catch (err) {
+      setPlanApprovalError(
+        err instanceof Error ? err.message : 'Could not approve the Growth Plan. Please try again.',
+      );
+    } finally {
+      setIsApprovingPlan(false);
+    }
+  }, [company, isApprovingPlan, setStep, token]);
 
   // Handle execution trigger
   const handleExecutionTrigger = useCallback(async () => {
@@ -357,6 +437,14 @@ export default function FTUXWelcomePage() {
             detectedInfo={detectedInfo}
             progress={progress}
             aiThinking={aiThinking}
+            error={error}
+            onRetry={() => {
+              if (pollingRef.current) clearInterval(pollingRef.current);
+              processingRef.current = false;
+              setError(null);
+              reset();
+              setStep('landing');
+            }}
           />
         </motion.div>
       )}
@@ -374,6 +462,9 @@ export default function FTUXWelcomePage() {
             websiteAnalysis={websiteAnalysis}
             companyName={company.name}
             onConfirm={handleBusinessConfirm}
+            onSave={handleBusinessDetailsSave}
+            isConfirming={isFinalizing}
+            confirmError={finalizationError}
             onBack={() => {
               reset();
               setStep('landing');
@@ -392,8 +483,10 @@ export default function FTUXWelcomePage() {
         >
           <OrgChartView
             agents={agents}
+            companyId={company.id}
             companyName={company.name}
             onContinue={handleOrgChartContinue}
+            onAgentsUpdated={setAgents}
           />
         </motion.div>
       )}
@@ -410,6 +503,8 @@ export default function FTUXWelcomePage() {
             masterPlan={displayMasterPlan}
             companyName={company.name}
             onApprove={handleMasterPlanApprove}
+            isApproving={isApprovingPlan}
+            approvalError={planApprovalError}
           />
         </motion.div>
       )}
@@ -443,22 +538,7 @@ export default function FTUXWelcomePage() {
             agentCount={agents.length}
             taskCount={strategy?.days.reduce((sum, d) => sum + d.activities.length, 0) || 0}
             budget={500}
-            onComplete={() => setStep(('meet-brain' as unknown as FTUXStep))}
-          />
-        </motion.div>
-      )}
-
-      {(step as string) === 'meet-brain' && company && (
-        <motion.div
-          key="meet-brain"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -20 }}
-          transition={{ duration: 0.3 }}
-        >
-          <MeetYourBrainView
-            companyId={company.id}
-            onContinue={() => router.push(`/${company.id}`)}
+            onComplete={() => router.push(`/${company.id}?tour=1`)}
           />
         </motion.div>
       )}

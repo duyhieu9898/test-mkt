@@ -32,6 +32,11 @@ import { renderSkillKnowledge } from '@1person/core';
 
 // Expert CRO playbook injected into the highest-leverage section copy (skill K06).
 const CRO_FRAMEWORK = renderSkillKnowledge('cro');
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function asPersistedSectionId(id?: string) {
+  return id && UUID_RE.test(id) ? id : undefined;
+}
 
 // =============================================================================
 // TYPES
@@ -203,14 +208,6 @@ export class LandingPageService {
           });
         }
 
-        // Update page content with hero image URL if provided
-        const heroImage = input.images.find(i => i.role === 'hero');
-        if (heroImage) {
-          const currentContent = (page.content || {}) as Record<string, unknown>;
-          await db.update(landingPages).set({
-            content: { ...currentContent, heroImage: heroImage.url },
-          }).where(eq(landingPages.id, page.id));
-        }
       }
 
       // Mark task as completed
@@ -501,7 +498,7 @@ Return ONLY valid JSON, no other text.`,
   ): Promise<HeroSection> {
     const heroImage = images?.find(i => i.role === 'hero');
     const imageInstruction = heroImage
-      ? `\nA hero image has been provided. Include this in the section: imageUrl: "${heroImage.url}"`
+      ? `\nA hero image has been provided. Include it as backgroundImage: "${heroImage.url}" and backgroundImageAlt: "${heroImage.alt || 'Hero image'}".`
       : '';
 
     const response = await this.anthropic.messages.create({
@@ -523,9 +520,11 @@ Return JSON with:
 - headline: Main headline (max 10 words, powerful)
 - subheadline: Supporting text (max 25 words)
 - ctaText: Primary button text (max 4 words)
+- ctaUrl: Button destination, normally "#contact"
 - ctaSecondaryText: Secondary action text (optional)
+- ctaSecondaryUrl: Secondary destination (optional)
 - alignment: "center" or "left"
-${heroImage ? '- imageUrl: "' + heroImage.url + '"' : ''}
+${heroImage ? '- backgroundImage: "' + heroImage.url + '"\n- backgroundImageAlt: "' + (heroImage.alt || 'Hero image') + '"' : ''}
 ${langInstruction}
 
 Return ONLY valid JSON.`,
@@ -545,17 +544,23 @@ Return ONLY valid JSON.`,
       }
       const result = JSON.parse(jsonStr);
       // Ensure hero image URL is included in content
-      if (heroImage && !result.imageUrl) {
-        result.imageUrl = heroImage.url;
+      if (heroImage && !result.backgroundImage) {
+        result.backgroundImage = heroImage.url;
+        result.backgroundImageAlt = heroImage.alt || 'Hero image';
       }
+      result.ctaUrl ||= '#contact';
       return result;
     } catch {
       return {
         headline: `Transform Your ${context.industry} Business`,
         subheadline: context.valueProposition,
         ctaText: 'Get Started',
+        ctaUrl: '#contact',
         alignment: 'center',
-        ...(heroImage ? { imageUrl: heroImage.url } : {}),
+        ...(heroImage ? {
+          backgroundImage: heroImage.url,
+          backgroundImageAlt: heroImage.alt || 'Hero image',
+        } : {}),
       } as HeroSection;
     }
   }
@@ -668,7 +673,7 @@ Return ONLY valid JSON.`,
   ): Promise<{ title: string; features: FeatureItem[] }> {
     const featureImages = images?.filter(i => i.role === 'feature' || i.role === 'screenshot') || [];
     const imageNote = featureImages.length > 0
-      ? `\nFeature images are available. You may reference them by including an imageUrl field for matching features.\nAvailable images: ${featureImages.map((img, i) => `${i + 1}. ${img.alt || img.role} (${img.url})`).join(', ')}`
+      ? `\nFeature images are available. You may reference them with image and imageAlt fields.\nAvailable images: ${featureImages.map((img, i) => `${i + 1}. ${img.alt || img.role} (${img.url})`).join(', ')}`
       : '';
 
     const response = await this.anthropic.messages.create({
@@ -691,7 +696,7 @@ Return JSON with:
   - title: Feature name
   - description: Feature benefit (1-2 sentences)
   - icon: Suggested icon name (from lucide icons)
-  ${featureImages.length > 0 ? '- imageUrl: (optional) URL of a matching feature image' : ''}
+  ${featureImages.length > 0 ? '- image: (optional) URL of a matching feature image\n  - imageAlt: accessible image description' : ''}
 
 Return ONLY valid JSON.`,
         },
@@ -1117,32 +1122,40 @@ Return ONLY valid JSON.`,
       content: Record<string, unknown>;
       order: number;
       isVisible?: number;
-      backgroundColor?: string;
-    }>
+      backgroundColor?: string | null;
+      customStyles?: Record<string, string> | null;
+    }>,
+    pageSettings?: {
+      primaryColor: string;
+      secondaryColor?: string | null;
+    },
   ) {
-    // Delete existing sections
-    await db.delete(landingPageSections).where(eq(landingPageSections.pageId, pageId));
+    await db.transaction(async (tx) => {
+      await tx.delete(landingPageSections).where(eq(landingPageSections.pageId, pageId));
 
-    // Insert new sections
-    if (sections.length > 0) {
-      await db.insert(landingPageSections).values(
-        sections.map((section) => ({
-          id: section.id || undefined, // Let DB generate if not provided
-          pageId,
-          type: section.type as any,
-          content: section.content,
-          order: section.order,
-          isVisible: section.isVisible ?? 1,
-          backgroundColor: section.backgroundColor,
-        }))
-      );
-    }
+      if (sections.length > 0) {
+        await tx.insert(landingPageSections).values(
+          sections.map((section) => ({
+            id: asPersistedSectionId(section.id),
+            pageId,
+            type: section.type as any,
+            content: section.content,
+            order: section.order,
+            isVisible: section.isVisible ?? 1,
+            backgroundColor: section.backgroundColor,
+            customStyles: section.customStyles,
+          }))
+        );
+      }
 
-    // Update page timestamp
-    await db
-      .update(landingPages)
-      .set({ updatedAt: new Date() })
-      .where(eq(landingPages.id, pageId));
+      await tx
+        .update(landingPages)
+        .set({
+          ...(pageSettings ?? {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(landingPages.id, pageId));
+    });
 
     // Return updated page with sections
     return this.getPage(pageId);

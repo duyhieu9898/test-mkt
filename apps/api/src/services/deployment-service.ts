@@ -14,6 +14,7 @@ import {
   landingPageVersions,
 } from '@1person/core/db';
 import { pageRendererService } from './page-renderer-service';
+import { deleteObjectByKey, saveObject } from './object-storage';
 
 // =============================================================================
 // TYPES
@@ -79,7 +80,7 @@ export class DeploymentService {
       secondaryColor: page.secondaryColor ?? undefined,
       fontFamily: page.fontFamily ?? undefined,
       style: page.style ?? undefined,
-      seo: page.seo as Record<string, unknown> | undefined,
+      seo: page.seo as unknown as Record<string, unknown> | undefined,
     };
 
     const [version] = await db
@@ -94,6 +95,7 @@ export class DeploymentService {
         publishedAt: new Date(),
       })
       .returning();
+    if (!version) throw new Error('Could not create a landing page version.');
 
     return version.id;
   }
@@ -128,6 +130,7 @@ export class DeploymentService {
         status: 'pending',
       })
       .returning();
+    if (!deployment) throw new Error('Could not create a landing page deployment.');
 
     try {
       // Generate static HTML
@@ -141,7 +144,7 @@ export class DeploymentService {
           result = await this.deployToVercel(bundle, subdomain);
           break;
         case 'cloudflare':
-          result = await this.deployToCloudflare(bundle, subdomain);
+          result = await this.deployToCloudflare(bundle, subdomain, versionId);
           break;
         default:
           // For custom/development, just mark as live with a local URL
@@ -158,16 +161,23 @@ export class DeploymentService {
           status: 'live',
           url: result.url,
           externalDeploymentId: result.externalId,
+          buildLogs: JSON.stringify({ publicationStatus: 'publish' }),
           deployedAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(landingPageDeployments.id, deployment.id));
+      if (page.deploymentId && page.deploymentId !== deployment.id) {
+        await db.update(landingPageDeployments)
+          .set({ status: 'rolled_back', updatedAt: new Date() })
+          .where(eq(landingPageDeployments.id, page.deploymentId));
+      }
 
       // Update page status and URL
       await db
         .update(landingPages)
         .set({
           status: 'published',
+          subdomain,
           publishedUrl: result.url,
           deploymentProvider: options.provider,
           deploymentId: deployment.id,
@@ -220,19 +230,108 @@ export class DeploymentService {
   }
 
   /**
-   * Deploy to Cloudflare Pages (placeholder - needs actual API integration)
+   * Publish static HTML to object storage. A single Cloudflare Worker maps the requested
+   * subdomain to sites/<subdomain>/index.html, so publishing does not create
+   * one Cloudflare project per customer page.
    */
   private async deployToCloudflare(
     bundle: { html: string; assets: Array<{ filename: string; content: string }> },
-    subdomain: string
+    subdomain: string,
+    versionId: string,
   ): Promise<{ url: string; externalId: string }> {
-    // TODO: Implement Cloudflare Pages API integration
-    console.log(`[DeploymentService] Would deploy to Cloudflare: ${subdomain}`);
+    const publicBaseUrl = process.env.LANDING_PAGE_PUBLIC_BASE_URL
+      ?.trim()
+      .replace(/\/+$/, '');
+    const urlMode = process.env.LANDING_PAGE_PUBLIC_URL_MODE?.trim().toLowerCase()
+      || (publicBaseUrl ? 'path' : 'subdomain');
+    const baseDomain = process.env.LANDING_PAGE_PUBLIC_BASE_DOMAIN
+      ?.trim()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '');
+    if (urlMode === 'path' && !publicBaseUrl) {
+      throw new Error('Missing LANDING_PAGE_PUBLIC_BASE_URL for path-based hosted landing pages.');
+    }
+    if (urlMode === 'subdomain' && !baseDomain) {
+      throw new Error('Missing LANDING_PAGE_PUBLIC_BASE_DOMAIN for subdomain-based hosted landing pages.');
+    }
+
+    await saveObject({
+      key: `sites/${subdomain}/versions/${versionId}/index.html`,
+      body: Buffer.from(bundle.html, 'utf8'),
+      contentType: 'text/html; charset=utf-8',
+      cacheControl: 'public, max-age=31536000, immutable',
+    });
+    const current = await saveObject({
+      key: `sites/${subdomain}/index.html`,
+      body: Buffer.from(bundle.html, 'utf8'),
+      contentType: 'text/html; charset=utf-8',
+      cacheControl: 'public, max-age=60, must-revalidate',
+    });
+
+    const url = urlMode === 'path'
+      ? `${publicBaseUrl}/${subdomain}`
+      : `https://${subdomain}.${baseDomain}`;
+    await this.verifyHostedWebsite(url, subdomain, versionId);
 
     return {
-      url: `https://${subdomain}.pages.dev`,
-      externalId: `cf_${Date.now()}`,
+      url,
+      externalId: current.key,
     };
+  }
+
+  private async verifyHostedWebsite(
+    url: string,
+    subdomain: string,
+    versionId: string,
+  ): Promise<void> {
+    let lastStatus: number | undefined;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 500));
+      try {
+        const separator = url.includes('?') ? '&' : '?';
+        const response = await fetch(
+          `${url}${separator}_1person_version=${encodeURIComponent(versionId)}`,
+          {
+            headers: { Accept: 'text/html' },
+            signal: AbortSignal.timeout(10000),
+          },
+        );
+        lastStatus = response.status;
+        if (
+          response.ok
+          && response.headers.get('x-1person-landing-site') === subdomain
+        ) {
+          return;
+        }
+      } catch {
+        // Retry short-lived propagation and network errors.
+      }
+    }
+
+    throw new Error(
+      `Landing Page HTML was uploaded to object storage, but the public Worker did not serve it`
+      + `${lastStatus ? ` (HTTP ${lastStatus})` : ''}. Deploy the Worker from `
+      + 'apps/landing-site-worker and confirm URL_MODE, SITE_STORAGE_PREFIX, and SITE_STORAGE_PUBLIC_BASE_URL.',
+    );
+  }
+
+  async unpublishHostedPage(pageId: string): Promise<void> {
+    const page = await db.query.landingPages.findFirst({
+      where: eq(landingPages.id, pageId),
+    });
+    if (!page) throw new Error('Page not found');
+
+    const deployment = page.deploymentId
+      ? await db.query.landingPageDeployments.findFirst({
+        where: eq(landingPageDeployments.id, page.deploymentId),
+      })
+      : null;
+    if (deployment?.provider === 'cloudflare' && deployment.externalDeploymentId) {
+      await deleteObjectByKey(deployment.externalDeploymentId);
+      await db.update(landingPageDeployments)
+        .set({ status: 'rolled_back', updatedAt: new Date() })
+        .where(eq(landingPageDeployments.id, deployment.id));
+    }
   }
 
   /**

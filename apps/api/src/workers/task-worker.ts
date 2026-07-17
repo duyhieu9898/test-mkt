@@ -569,18 +569,30 @@ ${body}
 
     try {
       const { knowledgeExtractionService } = await import('../services/knowledge-extraction');
+      const { readObjectFromStorageReference } = await import('../services/object-storage');
+      const readDocumentBuffer = async (fileRef: string) => {
+        const storedBuffer = await readObjectFromStorageReference(fileRef).catch(() => null);
+        if (storedBuffer) return storedBuffer;
+        const fs = await import('fs');
+        return fs.readFileSync(fileRef);
+      };
       let rawText = '';
 
       if (doc.type === 'pdf' && doc.fileUrl) {
-        const fs = await import('fs');
-        const buffer = fs.readFileSync(doc.fileUrl);
-        rawText = await knowledgeExtractionService.extractFromPDF(buffer);
+        const buffer = await readDocumentBuffer(doc.fileUrl);
+        rawText = await knowledgeExtractionService.extractFromDocument(buffer, doc.name, 'pdf');
+      } else if (doc.type === 'doc' && doc.fileUrl) {
+        const buffer = await readDocumentBuffer(doc.fileUrl);
+        rawText = await knowledgeExtractionService.extractFromDocument(buffer, doc.fileUrl, 'doc');
+      } else if (doc.type === 'text' && doc.fileUrl) {
+        const buffer = await readDocumentBuffer(doc.fileUrl);
+        rawText = await knowledgeExtractionService.extractFromDocument(buffer, doc.name, 'text');
       } else if (doc.type === 'url' && doc.sourceUrl) {
         rawText = await knowledgeExtractionService.extractFromURL(doc.sourceUrl);
       } else if (doc.rawContent) {
         rawText = doc.rawContent;
       } else {
-        return { success: false, error: 'No content to extract' };
+        throw new Error('No readable content was found for this document');
       }
 
       const entries = await knowledgeExtractionService.structureContent(rawText, doc.name);
@@ -597,6 +609,7 @@ ${body}
       await db.update(documents).set({
         status: 'failed',
         errorMessage: err instanceof Error ? err.message : 'Extraction failed',
+        updatedAt: new Date(),
       }).where(eq(documents.id, documentId));
       return { success: false, error: err instanceof Error ? err.message : 'Extraction failed' };
     }

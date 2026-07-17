@@ -32,7 +32,7 @@ async function getTenantIdFromCompanyId(companyId: string): Promise<string | nul
       columns: { id: true, name: true },
     });
     if (!company) return null;
-    return ensureTenantForCompany(company.id, company.name);
+    return await ensureTenantForCompany(company.id, company.name);
   } catch (err) {
     console.warn('[credits] tenant lookup failed:', err);
     return null;

@@ -19,7 +19,7 @@ import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Sparkles, Rocket, Loader2, Plus, Zap, Star, Gem, Brain, Users, Package, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Sparkles, Rocket, Loader2, Plus, Zap, Star, Gem, Brain, Users, Package, CheckCircle2, ArrowRight, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth-store';
@@ -29,7 +29,12 @@ import { friendlyError } from '@/lib/friendly-errors';
 import { GuidedTour } from '@/components/guided-tour';
 import { OutOfCreditsModal } from '@/components/out-of-credits-modal';
 import { cn } from '@/lib/utils';
-import { MarketingTabs } from '@/components/marketing/marketing-tabs';
+import { campaignDisplayTitle } from '@/lib/campaign-title';
+import {
+  DriveSourcePicker,
+  driveSourceRequestBody,
+  type DriveSourceSelection,
+} from '@/components/marketing/drive-source-picker';
 
 type Tier = 'fast' | 'balanced' | 'premium';
 
@@ -46,6 +51,11 @@ interface CampaignRow {
   platform: string;
   status: string;
   createdAt: string;
+  targeting?: {
+    source?: {
+      requestedGoal?: unknown;
+    };
+  } | null;
 }
 
 const statusVariant: Record<string, string> = {
@@ -69,12 +79,13 @@ export default function CampaignsPage() {
   const [goal, setGoal] = useState('');
   const [audience, setAudience] = useState('');
   const [tier, setTier] = useState<Tier>('balanced');
+  const [sourceSelection, setSourceSelection] = useState<DriveSourceSelection>({});
   const [submitting, setSubmitting] = useState(false);
   const [oocOpen, setOocOpen] = useState(false);
   const [oocReq, setOocReq] = useState<number | undefined>();
   const [oocAvail, setOocAvail] = useState<number | undefined>();
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['campaigns', companyId],
     queryFn: () =>
       api.get<{ data: CampaignRow[] }>(`/campaigns/${companyId}`, { token: token! }),
@@ -95,12 +106,18 @@ export default function CampaignsPage() {
     try {
       const res = await api.post<{ campaignId: string; estimatedCost: number; tier: Tier }>(
         `/campaigns/${companyId}/generate`,
-        { goal: goal.trim(), audience: audience.trim(), tier },
+        {
+          goal: goal.trim(),
+          audience: audience.trim(),
+          tier,
+          ...driveSourceRequestBody(sourceSelection),
+        },
         { token },
       );
       setDialogOpen(false);
       setGoal('');
       setAudience('');
+      setSourceSelection({});
       toast.success(
         `AI is building your campaign · ${res.estimatedCost} credits used`,
       );
@@ -129,7 +146,6 @@ export default function CampaignsPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <MarketingTabs />
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2">
@@ -163,6 +179,24 @@ export default function CampaignsPage() {
             <div className="h-20 bg-slate-100 rounded-lg animate-pulse" />
             <div className="h-20 bg-slate-100 rounded-lg animate-pulse" />
           </div>
+        ) : isError && !data ? (
+          <Card className="border-red-200 bg-red-50/60">
+            <CardContent className="p-6 flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-semibold text-slate-900">Campaigns could not be loaded</div>
+                  <p className="text-sm text-slate-600 mt-0.5">
+                    {friendlyError(error, 'Please check your connection and try again.')}
+                  </p>
+                </div>
+              </div>
+              <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
+                {isFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Try again
+              </Button>
+            </CardContent>
+          </Card>
         ) : campaignList.length === 0 ? (
           <Card>
             <CardContent className="p-12 text-center">
@@ -182,17 +216,21 @@ export default function CampaignsPage() {
             </CardContent>
           </Card>
         ) : (
-          campaignList.map((c) => (
-            <Card
-              key={c.id}
-              className="cursor-pointer hover:border-indigo-300 transition-colors"
-              onClick={() => router.push(`/${companyId}/campaigns/${c.id}`)}
-            >
+          campaignList.map((c) => {
+            const title = campaignDisplayTitle(c);
+            return (
+              <Card
+                key={c.id}
+                className="cursor-pointer hover:border-indigo-300 transition-colors"
+                onClick={() => router.push(`/${companyId}/campaigns/${c.id}`)}
+              >
               <CardContent className="p-4 flex items-center justify-between gap-4">
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold text-slate-900 truncate">{c.name}</h3>
-                    <Badge className={statusVariant[c.status] || 'bg-slate-100 text-slate-600'}>
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <h3 className="min-w-0 flex-1 break-words font-semibold leading-snug text-slate-900" title={title}>
+                      {title}
+                    </h3>
+                    <Badge className={`mt-0.5 shrink-0 ${statusVariant[c.status] || 'bg-slate-100 text-slate-600'}`}>
                       {c.status}
                     </Badge>
                   </div>
@@ -202,8 +240,9 @@ export default function CampaignsPage() {
                   </div>
                 </div>
               </CardContent>
-            </Card>
-          ))
+              </Card>
+            );
+          })
         )}
       </div>
 
@@ -243,6 +282,14 @@ export default function CampaignsPage() {
                 rows={3}
               />
             </div>
+
+            <DriveSourcePicker
+              companyId={companyId}
+              token={token}
+              value={sourceSelection}
+              onChange={setSourceSelection}
+              description="Add campaign notes, product docs, offers, or positioning files so the AI can match your intent more closely."
+            />
 
             <div>
               <Label className="mb-1.5 block">How fancy?</Label>
@@ -341,15 +388,39 @@ function BrainReadinessBanner({
   const qc = useQueryClient();
   const [extracting, setExtracting] = useState(false);
 
-  const { data, isLoading } = useQuery<BrainSnapshot>({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<BrainSnapshot>({
     queryKey: ['brain-snapshot', companyId],
     queryFn: () => api.get<BrainSnapshot>(`/brain/${companyId}`, { token: token! }),
     enabled: !!token,
   });
 
-  if (isLoading || !data) {
+  if (!token) return null;
+
+  if (isLoading) {
     return (
       <div className="h-20 bg-slate-100 rounded-lg animate-pulse" />
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <Card className="border-red-200 bg-red-50/60">
+        <CardContent className="p-4 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+            <div>
+              <div className="font-semibold text-slate-900">AI readiness could not be checked</div>
+              <p className="text-xs text-slate-600 mt-0.5">
+                {friendlyError(error, 'Your campaigns are still available. Try checking again.')}
+              </p>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
+            Try again
+          </Button>
+        </CardContent>
+      </Card>
     );
   }
 

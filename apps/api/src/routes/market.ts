@@ -18,6 +18,7 @@ import { generateComparisonPage } from '../services/competitor-comparison';
 import { generateMarketDigest } from '../services/market-digest';
 import { generatePositioningMap } from '../services/positioning-map';
 import { saveScanToBrain } from '../services/market-memory';
+import { generateAndSaveCeoBrief } from '../services/ceo-advisor';
 
 const marketRouter = new Hono();
 marketRouter.use('*', authMiddleware);
@@ -33,6 +34,15 @@ async function verifyOwnership(companyId: string, userId: string): Promise<strin
   return ensureTenantForCompany(company.id, company.name);
 }
 
+async function listCompetitorsSafe(tenantId: string): Promise<Array<{ name: string }>> {
+  try {
+    return await getTenantAI().market.listCompetitors(tenantId);
+  } catch (error) {
+    console.warn('[market] Could not list competitors; continuing with empty list:', error);
+    return [];
+  }
+}
+
 const competitorSchema = z.object({
   name: z.string().min(1).max(255),
   url: z.string().url().max(1000).nullable().optional(),
@@ -43,7 +53,7 @@ const competitorSchema = z.object({
 marketRouter.get('/:companyId/competitors', async (c) => {
   const { userId } = c.get('user');
   const tenantId = await verifyOwnership(c.req.param('companyId'), userId);
-  const data = await getTenantAI().market.listCompetitors(tenantId);
+  const data = await listCompetitorsSafe(tenantId);
   return c.json({ data });
 });
 
@@ -78,7 +88,7 @@ marketRouter.post('/:companyId/competitors/suggest', async (c) => {
   const tenantId = await verifyOwnership(companyId, userId);
 
   // Exclude already-tracked competitors so suggestions are fresh
-  const existing = await getTenantAI().market.listCompetitors(tenantId);
+  const existing = await listCompetitorsSafe(tenantId);
   const excludeNames = existing.map((co) => co.name);
 
   const result = await suggestCompetitors({ companyId, tenantId, excludeNames });
@@ -132,6 +142,7 @@ marketRouter.post('/:companyId/competitors/:id/scan', async (c) => {
 
     // Memory loop: save signals to Brain so CEO Advisor + content generator pick them up
     await saveScanToBrain({
+      companyId,
       tenantId,
       competitorId: competitor.id,
       competitorName: competitor.name,
@@ -144,6 +155,20 @@ marketRouter.post('/:companyId/competitors/:id/scan', async (c) => {
     await chargeFixedCredits(companyId, SCAN_COST, {
       featureKey: 'market_scan', refKind: 'market_scan', refId: scan.id, actor: `user:${userId}`,
     });
+    try {
+      const company = await db.query.companies.findFirst({
+        where: eq(companies.id, companyId),
+        columns: { name: true },
+      });
+      await generateAndSaveCeoBrief({
+        companyId,
+        companyName: company?.name ?? 'Company',
+        actor: 'system:market-intelligence',
+        chargeCredits: false,
+      });
+    } catch (advisorError) {
+      console.warn('[market.scan] CEO Advisor auto-refresh failed:', advisorError);
+    }
     return c.json({ id: scan.id, status: 'completed', ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

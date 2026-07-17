@@ -61,7 +61,8 @@ export default function ChatbotPage() {
   const [primaryColor, setPrimaryColor] = useState('#6366f1');
   const [accessLevel, setAccessLevel] = useState('internal');
   const [embedEnabled, setEmbedEnabled] = useState(false);
-  const [embedAllowedDomains, setEmbedAllowedDomains] = useState('');
+  const [embedAllowedDomains, setEmbedAllowedDomains] = useState<string[]>([]);
+  const [domainInput, setDomainInput] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [poweredByVisible, setPoweredByVisible] = useState(true);
@@ -76,7 +77,6 @@ export default function ChatbotPage() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // === EMBED STATE ===
@@ -113,14 +113,21 @@ export default function ChatbotPage() {
       setEmbedEnabled(selectedBot.embedEnabled || false);
       setEmbedAllowedDomains(
         Array.isArray(selectedBot.embedAllowedDomains)
-          ? selectedBot.embedAllowedDomains.join('\n')
-          : ''
+          ? selectedBot.embedAllowedDomains.filter(Boolean)
+          : []
       );
+      setDomainInput('');
       setLogoUrl(selectedBot.logoUrl || '');
       setAvatarUrl(selectedBot.avatarUrl || '');
       setPoweredByVisible(selectedBot.poweredByVisible !== false);
     }
   }, [selectedBot]);
+
+  useEffect(() => {
+    setMessages([]);
+    setConversationId(null);
+    setChatInput('');
+  }, [selectedBotId]);
 
   // Fetch conversations
   const { data: convsData } = useQuery({
@@ -153,11 +160,6 @@ export default function ChatbotPage() {
     enabled: !!token && !!selectedConvId,
   });
 
-  // Auto-scroll chat
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
-
   // === HANDLERS ===
 
   const handleCreateBot = async () => {
@@ -166,11 +168,26 @@ export default function ChatbotPage() {
       const tags = newBotTags.split(',').map((t) => t.trim()).filter(Boolean);
       const res = await api.post<any>(`/chatbot/company/${companyId}/chatbots`, { name: newBotName, knowledgeTags: tags.length > 0 ? tags : undefined }, { token });
       toast.success(`"${newBotName}" created!`);
+      qc.setQueryData<{ data: any[] }>(['chatbots', companyId], (current) => ({
+        data: [res, ...(current?.data || []).filter((bot: any) => bot.id !== res.id)],
+      }));
       setSelectedBotId(res.id);
+      setName(res.name || 'AI Assistant');
+      setGreeting(res.greeting || 'Hi! How can I help you today?');
+      setTone(res.tone || 'friendly');
+      setMode(res.mode || 'both');
+      setPrimaryColor(res.primaryColor || '#6366f1');
+      setAccessLevel(res.accessLevel || 'internal');
+      setEmbedEnabled(res.embedEnabled || false);
+      setEmbedAllowedDomains(Array.isArray(res.embedAllowedDomains) ? res.embedAllowedDomains.filter(Boolean) : []);
+      setDomainInput('');
+      setLogoUrl(res.logoUrl || '');
+      setAvatarUrl(res.avatarUrl || '');
+      setPoweredByVisible(res.poweredByVisible !== false);
       setNewBotName('');
       setNewBotTags('');
       setCreateDialog(false);
-      qc.invalidateQueries({ queryKey: ['chatbots'] });
+      qc.invalidateQueries({ queryKey: ['chatbots', companyId] });
     } catch (err: any) {
       console.error('Create chatbot error:', err);
       toast.error('Could not create chatbot. Please try again.');
@@ -182,8 +199,10 @@ export default function ChatbotPage() {
     try {
       await api.delete(`/chatbot/company/${companyId}/chatbots/${botId}`, { token });
       toast.success('Deleted');
-      if (selectedBotId === botId) setSelectedBotId(null);
-      qc.invalidateQueries({ queryKey: ['chatbots'] });
+      const remaining = chatbots.filter((bot: any) => bot.id !== botId);
+      qc.setQueryData<{ data: any[] }>(['chatbots', companyId], { data: remaining });
+      if (selectedBotId === botId) setSelectedBotId(remaining[0]?.id || null);
+      qc.invalidateQueries({ queryKey: ['chatbots', companyId] });
     } catch (err: any) {
       console.error('Delete chatbot error:', err);
       toast.error('Could not delete chatbot. Please try again.');
@@ -191,15 +210,18 @@ export default function ChatbotPage() {
   };
 
   const handleSaveConfig = async () => {
-    if (!token) return;
+    if (!token || !selectedBotId) return;
     setIsSaving(true);
     try {
-      await api.post(`/chatbot/company/${companyId}/config`, {
+      const updated = await api.post<any>(`/chatbot/company/${companyId}/chatbots/${selectedBotId}/config`, {
         name, greeting, tone, mode, primaryColor,
         logoUrl: logoUrl || null, avatarUrl: avatarUrl || null, poweredByVisible,
       }, { token });
+      qc.setQueryData<{ data: any[] }>(['chatbots', companyId], (current) => current
+        ? { data: current.data.map((bot: any) => (bot.id === updated.id ? { ...bot, ...updated } : bot)) }
+        : current);
       toast.success('Saved!');
-      qc.invalidateQueries({ queryKey: ['chatbots'] });
+      qc.invalidateQueries({ queryKey: ['chatbots', companyId] });
     } catch (err: any) {
       console.error('Save chatbot config error:', err);
       toast.error('Could not save settings. Please try again.');
@@ -208,25 +230,67 @@ export default function ChatbotPage() {
   };
 
   const handleSaveAccessLevel = async () => {
-    if (!token) return;
+    if (!token || !selectedBotId) return;
     setIsSavingAccess(true);
     try {
-      await api.post(`/chatbot/company/${companyId}/config`, { accessLevel }, { token });
+      const updated = await api.post<any>(`/chatbot/company/${companyId}/chatbots/${selectedBotId}/config`, { accessLevel }, { token });
+      qc.setQueryData<{ data: any[] }>(['chatbots', companyId], (current) => current
+        ? { data: current.data.map((bot: any) => (bot.id === updated.id ? { ...bot, ...updated } : bot)) }
+        : current);
       toast.success('Access level saved!');
-      qc.invalidateQueries({ queryKey: ['chatbots'] });
+      qc.invalidateQueries({ queryKey: ['chatbots', companyId] });
     } catch {
       toast.error('Could not save access level. Please try again.');
     } finally { setIsSavingAccess(false); }
   };
 
+  const normalizeDomainInput = (value: string) => {
+    const cleaned = value.trim().toLowerCase();
+    if (!cleaned) return '';
+    try {
+      const parsed = new URL(cleaned.includes('://') ? cleaned : `https://${cleaned}`);
+      return parsed.host.replace(/\.$/, '');
+    } catch {
+      return cleaned
+        .replace(/^https?:\/\//, '')
+        .replace(/^\/\//, '')
+        .split(/[/?#]/)[0]
+        ?.replace(/\.$/, '') || '';
+    }
+  };
+
+  const handleAddAllowedDomain = () => {
+    const domain = normalizeDomainInput(domainInput);
+    if (!domain) return;
+    const validDomain = /^(?:\*\.)?(?:localhost|127\.0\.0\.1|[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::\d{2,5})?$/.test(domain);
+    if (!validDomain) {
+      toast.error('Enter a valid domain, e.g. mysite.com or app.mysite.com');
+      return;
+    }
+    if (embedAllowedDomains.includes(domain)) {
+      toast.info('This domain is already allowed.');
+      setDomainInput('');
+      return;
+    }
+    setEmbedAllowedDomains((prev) => [...prev, domain]);
+    setDomainInput('');
+  };
+
+  const handleRemoveAllowedDomain = (domain: string) => {
+    setEmbedAllowedDomains((prev) => prev.filter((item) => item !== domain));
+  };
+
   const handleSaveEmbed = async () => {
-    if (!token) return;
+    if (!token || !selectedBotId) return;
     setIsSavingEmbed(true);
     try {
-      const domains = embedAllowedDomains.split('\n').map((d) => d.trim()).filter(Boolean);
-      await api.post(`/chatbot/company/${companyId}/config`, { embedEnabled, embedAllowedDomains: domains }, { token });
+      const domains = embedAllowedDomains.map((d) => normalizeDomainInput(d)).filter(Boolean);
+      const updated = await api.post<any>(`/chatbot/company/${companyId}/chatbots/${selectedBotId}/config`, { embedEnabled, embedAllowedDomains: domains }, { token });
+      qc.setQueryData<{ data: any[] }>(['chatbots', companyId], (current) => current
+        ? { data: current.data.map((bot: any) => (bot.id === updated.id ? { ...bot, ...updated } : bot)) }
+        : current);
       toast.success('Embed settings saved!');
-      qc.invalidateQueries({ queryKey: ['chatbots'] });
+      qc.invalidateQueries({ queryKey: ['chatbots', companyId] });
     } catch {
       toast.error('Could not save embed settings. Please try again.');
     } finally { setIsSavingEmbed(false); }
@@ -234,7 +298,7 @@ export default function ChatbotPage() {
 
   const handleSendMessage = useCallback(async (overrideText?: string) => {
     const text = (overrideText || chatInput).trim();
-    if (!token || !text || isSending) return;
+    if (!token || !selectedBotId || !text || isSending) return;
     const msgId = `msg_${Date.now()}`;
 
     setChatInput('');
@@ -244,7 +308,7 @@ export default function ChatbotPage() {
 
     try {
       const res = await api.post<{ conversationId: string; response: string; quickReplies?: QuickReply[] }>(
-        `/chatbot/company/${companyId}/chat`, { conversationId, message: text }, { token }
+        `/chatbot/company/${companyId}/chat`, { conversationId, botId: selectedBotId, message: text }, { token }
       );
       setConversationId(res.conversationId);
       setMessages((prev) => [
@@ -260,7 +324,7 @@ export default function ChatbotPage() {
       setIsTyping(false);
       inputRef.current?.focus();
     }
-  }, [token, chatInput, isSending, conversationId, companyId]);
+  }, [token, chatInput, isSending, conversationId, companyId, selectedBotId]);
 
   const handleRetryMessage = async (msgId: string) => {
     const msg = messages.find((m) => m.id === msgId);
@@ -311,7 +375,15 @@ export default function ChatbotPage() {
 
   // Embed code
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
-  const embedCode = `<script>\n(function(){var s=document.createElement('script');s.src='${apiUrl.replace('/api/v1', '')}/widget.js';s.dataset.companyId='${companyId}';s.dataset.apiUrl='${apiUrl}';s.async=true;document.body.appendChild(s);})();\n</script>`;
+  const embedUsesLocalApi = /localhost|127\.0\.0\.1/.test(apiUrl);
+  const embedCode = `<script>\n(function(){var s=document.createElement('script');s.src='${apiUrl.replace('/api/v1', '')}/widget.js';s.dataset.companyId='${companyId}';s.dataset.botId='${selectedBotId || ''}';s.dataset.apiUrl='${apiUrl}';s.async=true;document.body.appendChild(s);})();\n</script>`;
+  const previewName = name.trim() || 'AI Assistant';
+  const previewGreeting = greeting.trim() || 'Hi! How can I help you today?';
+  const previewAvatarUrl = avatarUrl.trim();
+  const previewMessages: ChatMessage[] = [
+    { role: 'assistant', content: previewGreeting, status: 'sent', id: 'preview_greeting' },
+    ...messages,
+  ];
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto">
@@ -420,74 +492,107 @@ export default function ChatbotPage() {
 
             {/* Test Chat */}
             <Card className="flex flex-col">
-              <CardHeader className="flex-row items-center justify-between pb-2">
-                <CardTitle className="text-base">Test Chat</CardTitle>
+              <CardHeader className="flex-row items-center justify-between pb-3">
+                <div>
+                  <CardTitle className="text-base">Widget preview & test</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">Matches the chatbox visitors see on your website.</p>
+                </div>
                 <Button variant="ghost" size="sm" onClick={handleNewChat} className="gap-1"><RefreshCw className="w-3 h-3" /> New</Button>
               </CardHeader>
-              <CardContent className="flex flex-col flex-1 p-0">
-                <div className="flex-1 overflow-y-auto px-4 py-2 space-y-2 min-h-[320px] max-h-[420px]">
-                  {messages.length === 0 && (
-                    <div className="text-center text-muted-foreground text-sm py-12">
-                      <Bot className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                      <p>Test your chatbot here</p>
-                      <p className="text-xs mt-1">Uses your Knowledge Base for answers</p>
-                    </div>
-                  )}
-                  {messages.map((msg) => (
-                    <div key={msg.id} className={`flex gap-2 ${msg.role === 'visitor' ? 'justify-end' : ''}`}>
-                      {msg.role === 'assistant' && (
-                        <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
-                          <Bot className="w-3 h-3 text-primary" />
-                        </div>
+              <CardContent className="flex flex-1 justify-center p-4 pt-0">
+                <div className="flex w-full max-w-[390px] flex-col overflow-hidden rounded-[18px] border bg-white shadow-lg">
+                  <div className="flex items-center gap-3 px-4 py-3 text-white" style={{ backgroundColor: primaryColor }}>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/20 font-bold">
+                      {previewAvatarUrl ? (
+                        <img src={previewAvatarUrl} alt="" className="h-full w-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                      ) : (
+                        previewName.slice(0, 1).toUpperCase()
                       )}
-                      <div className={`rounded-lg px-3 py-2 max-w-[80%] text-sm ${
-                        msg.role === 'visitor' ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                      }`}>
-                        {msg.content}
-                        {/* Status indicator */}
-                        {msg.role === 'visitor' && msg.status === 'sending' && (
-                          <span className="text-[10px] opacity-60 block mt-0.5">Sending...</span>
-                        )}
-                        {msg.status === 'error' && (
-                          <div className="flex items-center gap-1 mt-1">
-                            <AlertCircle className="w-3 h-3 text-red-400" />
-                            <span className="text-[10px] text-red-400">Failed</span>
-                            <button onClick={() => handleRetryMessage(msg.id)} className="text-[10px] underline text-red-400 ml-1">Retry</button>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold leading-tight">{previewName}</p>
+                      <p className="text-xs text-white/80">Usually replies instantly</p>
+                    </div>
+                    <div className="ml-auto h-8 w-8 rounded-full bg-white/15" />
+                  </div>
+
+                  <div className="flex min-h-[360px] max-h-[430px] flex-1 flex-col gap-3 overflow-y-auto bg-slate-50 p-4">
+                    {previewMessages.map((msg) => (
+                      <div key={msg.id} className={`flex flex-col ${msg.role === 'visitor' ? 'items-end' : 'items-start'}`}>
+                        <div className={`flex max-w-[88%] gap-2 ${msg.role === 'visitor' ? 'justify-end' : ''}`}>
+                          {msg.role === 'assistant' && (
+                            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white border">
+                              {previewAvatarUrl ? (
+                                <img src={previewAvatarUrl} alt="" className="h-full w-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                              ) : (
+                                <Bot className="h-3.5 w-3.5" style={{ color: primaryColor }} />
+                              )}
+                            </div>
+                          )}
+                          <div
+                            className={`rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${
+                              msg.role === 'visitor'
+                                ? 'rounded-tr-md text-white'
+                                : 'rounded-tl-md border bg-white text-slate-900'
+                            }`}
+                            style={msg.role === 'visitor' ? { backgroundColor: primaryColor } : undefined}
+                          >
+                            {msg.content}
+                            {msg.role === 'visitor' && msg.status === 'sending' && (
+                              <span className="mt-0.5 block text-[10px] opacity-70">Sending...</span>
+                            )}
+                            {msg.status === 'error' && (
+                              <div className="mt-1 flex items-center gap-1">
+                                <AlertCircle className="h-3 w-3 text-red-400" />
+                                <span className="text-[10px] text-red-400">Failed</span>
+                                <button onClick={() => handleRetryMessage(msg.id)} className="ml-1 text-[10px] text-red-400 underline">Retry</button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {msg.role === 'assistant' && msg.quickReplies && msg.quickReplies.length > 0 && (
+                          <div className="ml-9 mt-1 flex max-w-[88%] flex-wrap gap-1">
+                            {msg.quickReplies.map((qr, i) => (
+                              <button
+                                key={i}
+                                onClick={() => handleSendMessage(qr.value)}
+                                className="rounded-full border bg-white px-2 py-1 text-xs font-semibold transition-colors hover:bg-slate-50"
+                                style={{ borderColor: `${primaryColor}55`, color: primaryColor }}
+                              >
+                                {qr.label}
+                              </button>
+                            ))}
                           </div>
                         )}
                       </div>
-                      {msg.role === 'assistant' && msg.quickReplies && msg.quickReplies.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1 ml-8">
-                          {msg.quickReplies.map((qr, i) => (
-                            <button key={i} onClick={() => handleSendMessage(qr.value)}
-                              className="text-xs px-2 py-1 rounded-full border border-primary/30 text-primary hover:bg-primary/10 transition-colors">
-                              {qr.label}
-                            </button>
-                          ))}
+                    ))}
+                    {isTyping && (
+                      <div className="flex gap-2">
+                        <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white border">
+                          {previewAvatarUrl ? (
+                            <img src={previewAvatarUrl} alt="" className="h-full w-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                          ) : (
+                            <Bot className="h-3.5 w-3.5" style={{ color: primaryColor }} />
+                          )}
                         </div>
-                      )}
-                    </div>
-                  ))}
-                  {/* Typing indicator */}
-                  {isTyping && (
-                    <div className="flex gap-2">
-                      <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center"><Bot className="w-3 h-3 text-primary" /></div>
-                      <div className="bg-muted rounded-lg px-3 py-2 flex gap-1">
-                        <span className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <span className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <span className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        <div className="flex gap-1 rounded-2xl rounded-tl-md border bg-white px-3 py-3 shadow-sm">
+                          <span className="h-1.5 w-1.5 rounded-full bg-slate-400/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="h-1.5 w-1.5 rounded-full bg-slate-400/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="h-1.5 w-1.5 rounded-full bg-slate-400/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </div>
                       </div>
-                    </div>
-                  )}
-                  <div ref={chatEndRef} />
-                </div>
-                <div className="p-3 border-t">
-                  <form onSubmit={(e) => { e.preventDefault(); handleSendMessage(); }} className="flex gap-2">
-                    <Input ref={inputRef} value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type a message..." disabled={isSending} className="flex-1" />
-                    <Button type="submit" size="icon" disabled={isSending || !chatInput.trim()}>
-                      {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    )}
+                  </div>
+
+                  <form onSubmit={(e) => { e.preventDefault(); handleSendMessage(); }} className="flex gap-1.5 border-t bg-white p-[10px]">
+                    <Input ref={inputRef} value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type your message..." disabled={isSending} className="h-[42px] min-w-0 flex-1 rounded-full px-4 text-sm" />
+                    <Button type="submit" disabled={isSending || !chatInput.trim()} className="h-[42px] w-[42px] shrink-0 rounded-full p-0 text-sm font-bold text-white" style={{ backgroundColor: primaryColor }}>
+                      {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : '→'}
                     </Button>
                   </form>
+                  {poweredByVisible && (
+                    <div className="bg-white pb-3 text-center text-[11px] font-medium text-slate-400">Powered by 1Person</div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -500,14 +605,14 @@ export default function ChatbotPage() {
                 <Shield className="w-4 h-4" /> Knowledge Access Level
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Controls which of your uploaded documents the chatbot can use when answering questions.
+                Controls the dashboard test chat. Website widgets always use Public knowledge for visitor safety.
               </p>
             </CardHeader>
             <CardContent className="space-y-3">
               {[
-                { value: 'public', icon: Globe, label: 'Public', desc: 'Only uses documents marked as Public. Safe for customer-facing widget.', color: 'text-green-700' },
-                { value: 'internal', icon: Building2, label: 'Internal', desc: 'Uses Public + Internal documents. For your team\'s dashboard chat.', color: 'text-slate-700' },
-                { value: 'admin', icon: Lock, label: 'Admin', desc: 'Uses all documents including Confidential. For owner/admin only.', color: 'text-red-700' },
+                { value: 'public', icon: Globe, label: 'Public', desc: 'Only uses Public knowledge. This is always used by website visitors.', color: 'text-green-700' },
+                { value: 'internal', icon: Building2, label: 'Internal', desc: 'Dashboard chat uses Public + Internal knowledge. Website visitors still stay Public.', color: 'text-slate-700' },
+                { value: 'admin', icon: Lock, label: 'Admin', desc: 'Dashboard chat uses all knowledge, including Confidential. Never used by website visitors.', color: 'text-red-700' },
               ].map((opt) => (
                 <label key={opt.value} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${accessLevel === opt.value ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
                   <input
@@ -539,14 +644,14 @@ export default function ChatbotPage() {
                 <Code2 className="w-4 h-4" /> Website Widget
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Add this AI chatbot to your website. It only answers using your Public documents — internal data is never exposed.
+                Show this AI chatbot on landing pages you publish from 1Person, including WordPress pages.
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <Label className="font-medium">Enable embed widget</Label>
-                  <p className="text-xs text-muted-foreground">Allow the chatbot to be embedded on external websites</p>
+                  <p className="text-xs text-muted-foreground">When enabled, new hosted and WordPress landing page publishes include the chatbox automatically.</p>
                 </div>
                 <Switch checked={embedEnabled} onCheckedChange={setEmbedEnabled} />
               </div>
@@ -555,33 +660,62 @@ export default function ChatbotPage() {
                 <>
                   <div>
                     <Label>Allowed domains</Label>
-                    <p className="text-xs text-muted-foreground mb-1">One domain per line, e.g. mysite.com</p>
-                    <Textarea
-                      value={embedAllowedDomains}
-                      onChange={(e) => setEmbedAllowedDomains(e.target.value)}
-                      placeholder={"mysite.com\napp.mysite.com"}
-                      className="mt-1 font-mono text-sm"
-                      rows={3}
-                    />
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Add the websites where this chatbox may run. Leave empty to allow any domain.
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        value={domainInput}
+                        onChange={(e) => setDomainInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ',') {
+                            e.preventDefault();
+                            handleAddAllowedDomain();
+                          }
+                        }}
+                        placeholder="mysite.com"
+                        className="font-mono text-sm"
+                      />
+                      <Button type="button" variant="outline" className="gap-1 shrink-0" onClick={handleAddAllowedDomain}>
+                        <Plus className="w-3.5 h-3.5" /> Add
+                      </Button>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {embedAllowedDomains.length === 0 ? (
+                        <div className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                          No restriction yet. The widget can run anywhere with the embed code.
+                        </div>
+                      ) : (
+                        embedAllowedDomains.map((domain) => (
+                          <Badge key={domain} variant="secondary" className="gap-1.5 rounded-full px-2.5 py-1 font-mono text-xs">
+                            {domain}
+                            <button
+                              type="button"
+                              className="rounded-full p-0.5 hover:bg-background/80"
+                              aria-label={`Remove ${domain}`}
+                              onClick={() => handleRemoveAllowedDomain(domain)}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        ))
+                      )}
+                    </div>
                   </div>
 
                   <div>
                     <Label>Embed code</Label>
+                    <p className="text-xs text-muted-foreground mb-1">For a developer or another website builder. Landing pages published by 1Person install it automatically.</p>
                     <div className="relative mt-1">
                       <pre className="bg-muted p-3 rounded-lg text-xs overflow-x-auto font-mono whitespace-pre-wrap">
-{`<script src="https://1person.ai/widget.js"
-  data-company-id="${companyId}"
-  data-color="${primaryColor}">
-</script>`}
+{embedCode}
                       </pre>
                       <Button
                         variant="outline"
                         size="sm"
                         className="absolute top-2 right-2 gap-1"
                         onClick={() => {
-                          navigator.clipboard.writeText(
-                            `<script src="https://1person.ai/widget.js" data-company-id="${companyId}" data-color="${primaryColor}"></script>`
-                          );
+                          navigator.clipboard.writeText(embedCode);
                           setEmbedCopied(true);
                           toast.success('Embed code copied!');
                           setTimeout(() => setEmbedCopied(false), 2000);
@@ -594,8 +728,13 @@ export default function ChatbotPage() {
                   </div>
 
                   <p className="text-xs text-muted-foreground bg-amber-50 p-2 rounded border border-amber-200">
-                    The widget always runs in Public mode. Only documents you have marked as Public will be used.
+                    Customer-facing widgets only use Public knowledge. Mark documents as Public before expecting the chatbot to use them on a live page.
                   </p>
+                  {embedUsesLocalApi && (
+                    <p className="text-xs text-amber-800 bg-amber-50 p-2 rounded border border-amber-200">
+                      This embed code is using localhost. Published websites need a public HTTPS API URL, then the landing page must be published again.
+                    </p>
+                  )}
                 </>
               )}
 
@@ -724,23 +863,37 @@ export default function ChatbotPage() {
           <Card>
             <CardHeader><CardTitle className="text-base">Widget Preview</CardTitle></CardHeader>
             <CardContent>
-              <div className="border rounded-lg overflow-hidden max-w-xs mx-auto shadow-lg">
-                <div className="px-4 py-3 text-white flex items-center gap-2" style={{ backgroundColor: primaryColor }}>
-                  <Bot className="w-5 h-5" /><span className="font-medium text-sm">{name}</span>
-                  <span className="w-2 h-2 bg-green-300 rounded-full ml-auto" />
-                </div>
-                <div className="bg-background p-4 min-h-[180px]">
-                  <div className="flex gap-2">
-                    <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: `${primaryColor}20` }}>
-                      <Bot className="w-3 h-3" style={{ color: primaryColor }} />
-                    </div>
-                    <div className="bg-muted rounded-lg px-3 py-2 text-sm">{greeting}</div>
+              <div className="mx-auto max-w-xs overflow-hidden rounded-[18px] border bg-white shadow-lg">
+                <div className="flex items-center gap-2 px-4 py-3 text-white" style={{ backgroundColor: primaryColor }}>
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/20 font-bold">
+                    {previewAvatarUrl ? (
+                      <img src={previewAvatarUrl} alt="" className="h-full w-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                    ) : (
+                      previewName.slice(0, 1).toUpperCase()
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{previewName}</span>
+                    <span className="block text-xs text-white/80">Usually replies instantly</span>
                   </div>
                 </div>
-                <div className="border-t p-3 flex gap-2">
-                  <Input placeholder="Type a message..." disabled className="text-xs" />
-                  <Button size="icon" disabled style={{ backgroundColor: primaryColor }}><Send className="w-3 h-3 text-white" /></Button>
+                <div className="min-h-[180px] bg-slate-50 p-4">
+                  <div className="flex gap-2">
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border bg-white">
+                      {previewAvatarUrl ? (
+                        <img src={previewAvatarUrl} alt="" className="h-full w-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                      ) : (
+                        <Bot className="h-3.5 w-3.5" style={{ color: primaryColor }} />
+                      )}
+                    </div>
+                    <div className="rounded-2xl rounded-tl-md border bg-white px-3 py-2 text-sm">{previewGreeting}</div>
+                  </div>
                 </div>
+                <div className="flex gap-1.5 border-t p-[10px]">
+                  <Input placeholder="Type your message..." disabled className="h-[42px] min-w-0 flex-1 rounded-full px-4 text-sm" />
+                  <Button disabled className="h-[42px] w-[42px] shrink-0 rounded-full p-0 text-sm font-bold text-white" style={{ backgroundColor: primaryColor }}>→</Button>
+                </div>
+                {poweredByVisible && <div className="bg-white pb-3 text-center text-[11px] font-medium text-slate-400">Powered by 1Person</div>}
               </div>
             </CardContent>
           </Card>

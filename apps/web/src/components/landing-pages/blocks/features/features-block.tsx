@@ -104,18 +104,28 @@ export function FeaturesBlock({
         >
           {content.features?.map((feature, i) => {
             const Icon = getIcon(feature.icon);
+            const legacyFeature = feature as typeof feature & { imageUrl?: string };
+            const image = feature.image || legacyFeature.imageUrl;
             return (
               <div
                 key={i}
                 className={`text-center ${isEditing ? 'hover:outline hover:outline-2 hover:outline-blue-400 hover:outline-offset-4 cursor-pointer' : ''}`}
                 onClick={handleFieldClick(['features', String(i)])}
               >
-                <div
-                  className="w-14 h-14 rounded-xl mx-auto mb-4 flex items-center justify-center"
-                  style={{ backgroundColor: `${primaryColor}15`, color: primaryColor }}
-                >
-                  <Icon className="w-6 h-6" />
-                </div>
+                {image ? (
+                  <img
+                    src={image}
+                    alt={feature.imageAlt || feature.title}
+                    className="mx-auto mb-4 h-24 w-full rounded-md object-cover"
+                  />
+                ) : (
+                  <div
+                    className="w-14 h-14 rounded-xl mx-auto mb-4 flex items-center justify-center"
+                    style={{ backgroundColor: `${primaryColor}15`, color: primaryColor }}
+                  >
+                    <Icon className="w-6 h-6" />
+                  </div>
+                )}
                 <h3 className="font-semibold text-lg mb-2 text-gray-900">{feature.title}</h3>
                 <p className="text-gray-600 text-sm">{feature.description}</p>
               </div>

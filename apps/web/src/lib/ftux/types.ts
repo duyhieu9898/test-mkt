@@ -4,7 +4,8 @@ export type ProcessingStep =
   | 'creating_ceo'
   | 'creating_marketing'
   | 'creating_operations'
-  | 'generating_strategy';
+  | 'generating_strategy'
+  | 'setting_up_brand';
 
 export type FTUXStep =
   | 'landing'

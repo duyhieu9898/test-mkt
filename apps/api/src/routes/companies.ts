@@ -3,10 +3,26 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and, desc, gte, sql } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { companies, departments, agents, tasks, actionLogs } from '@1person/core/db';
+import {
+  companies,
+  departments,
+  agents,
+  tasks,
+  actionLogs,
+  brandIdentities,
+  type BusinessPlan,
+} from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { nanoid } from 'nanoid';
+import { ensureTenantForCompany } from '../lib/tenant-ai';
+import { buildAdvisorContext } from '../services/advisor-context-builder';
+import { generateAndSaveCeoBrief } from '../services/ceo-advisor';
+import {
+  approveGrowthPlanVersion,
+  createGrowthPlanVersion,
+} from '../services/growth-plan-intelligence';
+import { websiteAnalyzerService } from '../services/website-analyzer';
 
 const companiesRouter = new Hono();
 
@@ -36,14 +52,34 @@ const generatePlanSchema = z.object({
  */
 function sanitizeCompany<T extends { settings?: unknown }>(company: T): T {
   const settings = (company.settings || {}) as Record<string, any>;
-  if (!settings.wordpress) return company;
-  const { appPassword, ...wpSafe } = settings.wordpress as Record<string, any>;
+  const nextSettings = { ...settings };
+  if (settings.wordpress) {
+    const { appPassword, ...wpSafe } = settings.wordpress as Record<string, any>;
+    nextSettings.wordpress = { ...wpSafe, connected: !!appPassword };
+  }
+  if (settings.publishing?.customApi?.authHeaderValue) {
+    nextSettings.publishing = {
+      ...settings.publishing,
+      customApi: {
+        ...settings.publishing.customApi,
+        authHeaderValue: undefined,
+        hasAuthHeaderValue: true,
+      },
+    };
+  }
+  if (settings.publishing?.github?.token) {
+    nextSettings.publishing = {
+      ...nextSettings.publishing,
+      github: {
+        ...settings.publishing.github,
+        token: undefined,
+        hasToken: true,
+      },
+    };
+  }
   return {
     ...company,
-    settings: {
-      ...settings,
-      wordpress: { ...wpSafe, connected: !!appPassword },
-    },
+    settings: nextSettings,
   };
 }
 
@@ -84,6 +120,10 @@ companiesRouter.post('/', zValidator('json', createCompanySchema), async (c) => 
     })
     .returning();
 
+  if (!company) {
+    throw new HTTPException(500, { message: 'Failed to create company' });
+  }
+
   // Create default departments
   const defaultDepts = [
     { name: 'Executive', color: '#8b5cf6', icon: 'crown' },
@@ -118,7 +158,25 @@ companiesRouter.get('/:id', async (c) => {
     throw new HTTPException(404, { message: 'Company not found' });
   }
 
-  return c.json(sanitizeCompany(company));
+  const brand = await db.query.brandIdentities.findFirst({
+    where: eq(brandIdentities.companyId, companyId),
+    columns: { extractedFromUrl: true },
+  });
+  const settings = (company.settings ?? {}) as Record<string, any>;
+  const knownWebsiteUrl = settings.websiteUrl
+    || settings.wordpress?.siteUrl
+    || brand?.extractedFromUrl
+    || null;
+  const websiteOption = settings.websiteOption as string | undefined;
+
+  return c.json({
+    ...sanitizeCompany(company),
+    websiteProfile: {
+      url: knownWebsiteUrl,
+      onboardingChoice: websiteOption ?? 'unknown',
+      startingFresh: !knownWebsiteUrl && websiteOption !== 'has_website',
+    },
+  });
 });
 
 // Update company
@@ -145,7 +203,147 @@ companiesRouter.patch('/:id', async (c) => {
     .where(eq(companies.id, companyId))
     .returning();
 
-  return c.json(updated);
+  if (!updated) {
+    throw new HTTPException(404, { message: 'Company not found' });
+  }
+
+  return c.json(sanitizeCompany(updated));
+});
+
+companiesRouter.get('/:id/growth-plan/status', async (c) => {
+  const { userId } = c.get('user');
+  const companyId = c.req.param('id');
+  const company = await db.query.companies.findFirst({
+    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+  });
+  if (!company) throw new HTTPException(404, { message: 'Company not found' });
+
+  const tenantId = await ensureTenantForCompany(company.id, company.name);
+  const context = await buildAdvisorContext({ companyId, tenantId });
+  return c.json({
+    health: context.growthPlanHealth,
+    history: ((company.businessPlan as BusinessPlan | null)?.growthPlanHistory ?? [])
+      .map((entry) => ({
+        version: entry.version,
+        generatedAt: entry.generatedAt,
+        approvedAt: entry.approvedAt,
+        updateReasons: entry.updateReasons ?? [],
+      }))
+      .reverse(),
+  });
+});
+
+companiesRouter.post('/:id/growth-plan/refresh', async (c) => {
+  const { userId } = c.get('user');
+  const companyId = c.req.param('id');
+  const company = await db.query.companies.findFirst({
+    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+  });
+  if (!company) throw new HTTPException(404, { message: 'Company not found' });
+
+  const businessPlan = company.businessPlan as BusinessPlan | null;
+  if (!businessPlan) {
+    throw new HTTPException(400, {
+      message: 'Complete company setup before updating the Growth Plan',
+    });
+  }
+
+  const tenantId = await ensureTenantForCompany(company.id, company.name);
+  const context = await buildAdvisorContext({ companyId, tenantId });
+  const updateReasons = ['update_recommended', 'monitor'].includes(context.growthPlanHealth.status)
+    ? context.growthPlanHealth.reasons
+    : ['Refreshed from the latest company, market, campaign, and Brain Hub data.'];
+  const decisionContext = JSON.stringify({
+    company: context.business,
+    currentGrowthPlanHealth: context.growthPlanHealth,
+    campaigns: context.campaigns.slice(0, 12),
+    blogs: context.blogs.slice(0, 12),
+    landingPages: context.landingPages.slice(0, 8),
+    sales: context.sales,
+    marketSignals: context.marketSignals.slice(0, 8),
+    coverageGaps: context.coverageGaps,
+  }, null, 2).slice(0, 18_000);
+  const generated = await websiteAnalyzerService.generateMasterPlanFromPrompt(
+    company.description || company.name,
+    {
+      market: company.industry,
+      model: company.businessType,
+    },
+    decisionContext,
+  );
+  if (generated.usedFallback) {
+    throw new HTTPException(502, {
+      message: 'AI could not create a reliable Growth Plan update. Your current plan was not changed.',
+    });
+  }
+  const nextBusinessPlan = createGrowthPlanVersion({
+    businessPlan,
+    plan: generated.masterPlan,
+    reasons: updateReasons,
+  });
+
+  const [updated] = await db
+    .update(companies)
+    .set({ businessPlan: nextBusinessPlan, updatedAt: new Date() })
+    .where(and(eq(companies.id, companyId), eq(companies.ownerId, userId)))
+    .returning();
+  if (!updated) throw new HTTPException(404, { message: 'Company not found' });
+
+  return c.json({
+    growthPlan: nextBusinessPlan.growthPlanDraft?.plan,
+    version: nextBusinessPlan.growthPlanDraft?.version,
+    generatedAt: nextBusinessPlan.growthPlanDraft?.generatedAt,
+    updateReasons: nextBusinessPlan.growthPlanDraft?.updateReasons,
+    status: 'draft',
+  });
+});
+
+companiesRouter.post('/:id/growth-plan/approve', async (c) => {
+  const { userId } = c.get('user');
+  const companyId = c.req.param('id');
+  const company = await db.query.companies.findFirst({
+    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+  });
+  if (!company) throw new HTTPException(404, { message: 'Company not found' });
+
+  const businessPlan = company.businessPlan as BusinessPlan | null;
+  if (!businessPlan?.growthPlan) {
+    throw new HTTPException(400, { message: 'Generate the Growth Plan before approving it' });
+  }
+
+  if (businessPlan.growthPlanApprovedAt && !businessPlan.growthPlanDraft) {
+    return c.json({
+      approvedAt: businessPlan.growthPlanApprovedAt,
+      version: businessPlan.growthPlanVersion ?? 1,
+      advisorSynced: true,
+    });
+  }
+
+  const nextBusinessPlan = approveGrowthPlanVersion({ businessPlan });
+  const approvedAt = nextBusinessPlan.growthPlanApprovedAt!;
+  await db
+    .update(companies)
+    .set({ businessPlan: nextBusinessPlan, updatedAt: new Date() })
+    .where(and(eq(companies.id, companyId), eq(companies.ownerId, userId)));
+
+  let advisorSynced = true;
+  try {
+    await generateAndSaveCeoBrief({
+      companyId,
+      companyName: company.name,
+      actor: userId,
+      chargeCredits: false,
+    });
+  } catch (error) {
+    advisorSynced = false;
+    console.warn('[growth-plan.approve] CEO Advisor sync failed:', error);
+  }
+
+  return c.json({
+    approvedAt,
+    version: nextBusinessPlan.growthPlanVersion,
+    advisorSynced,
+  });
 });
 
 // Generate business plan (AI)
@@ -301,7 +499,7 @@ companiesRouter.get('/:id/stats', async (c) => {
   for (let i = 6; i >= 0; i--) {
     const date = new Date();
     date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = date.toISOString().split('T')[0] ?? '';
 
     const dayLogs = logs.filter((log) => {
       const logDate = new Date(log.createdAt).toISOString().split('T')[0];

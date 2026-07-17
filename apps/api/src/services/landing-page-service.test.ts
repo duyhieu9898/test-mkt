@@ -83,6 +83,7 @@ describe('LandingPageService - Section Types', () => {
     'pricing',
     'faq',
     'cta',
+    'image',
     'footer',
   ];
 

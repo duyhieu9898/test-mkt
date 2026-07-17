@@ -31,6 +31,19 @@ import type {
 
 const API_VERSION = 'v18.0';
 const BASE_URL = `https://graph.facebook.com/${API_VERSION}`;
+const FACEBOOK_PAGE_SCOPES = [
+  'pages_manage_posts',
+  'pages_read_engagement',
+  'pages_show_list',
+];
+
+export function getFacebookClientId(): string {
+  return process.env.FACEBOOK_APP_ID || process.env.FACEBOOK_CLIENT_ID || '';
+}
+
+function getFacebookClientSecret(): string {
+  return process.env.FACEBOOK_APP_SECRET || process.env.FACEBOOK_CLIENT_SECRET || '';
+}
 
 // ============================================================================
 // SHARED HTTP HELPER
@@ -334,12 +347,12 @@ export class FacebookOAuthProvider implements IOAuthProvider {
   readonly platformId = 'facebook';
 
   isConfigured(): boolean {
-    return !!(process.env.FACEBOOK_CLIENT_ID && process.env.FACEBOOK_CLIENT_SECRET);
+    return !!(getFacebookClientId() && getFacebookClientSecret());
   }
 
   getAuthorizationUrl(state: string, redirectUri: string): string {
     const params = new URLSearchParams({
-      client_id: process.env.FACEBOOK_CLIENT_ID || '',
+      client_id: getFacebookClientId(),
       redirect_uri: redirectUri,
       state,
       scope: 'pages_manage_posts,pages_read_engagement,pages_show_list,ads_management,ads_read,business_management,read_insights',
@@ -348,10 +361,21 @@ export class FacebookOAuthProvider implements IOAuthProvider {
     return `https://www.facebook.com/${API_VERSION}/dialog/oauth?${params}`;
   }
 
+  getPageAuthorizationUrl(state: string, redirectUri: string): string {
+    const params = new URLSearchParams({
+      client_id: getFacebookClientId(),
+      redirect_uri: redirectUri,
+      state,
+      scope: FACEBOOK_PAGE_SCOPES.join(','),
+      response_type: 'code',
+    });
+    return `https://www.facebook.com/${API_VERSION}/dialog/oauth?${params}`;
+  }
+
   async exchangeCode(code: string, redirectUri: string): Promise<OAuthTokens> {
     const params = new URLSearchParams({
-      client_id: process.env.FACEBOOK_CLIENT_ID || '',
-      client_secret: process.env.FACEBOOK_CLIENT_SECRET || '',
+      client_id: getFacebookClientId(),
+      client_secret: getFacebookClientSecret(),
       redirect_uri: redirectUri,
       code,
     });
@@ -363,24 +387,34 @@ export class FacebookOAuthProvider implements IOAuthProvider {
     // Exchange for long-lived token
     const longParams = new URLSearchParams({
       grant_type: 'fb_exchange_token',
-      client_id: process.env.FACEBOOK_CLIENT_ID || '',
-      client_secret: process.env.FACEBOOK_CLIENT_SECRET || '',
+      client_id: getFacebookClientId(),
+      client_secret: getFacebookClientSecret(),
       fb_exchange_token: data.access_token,
     });
     const longRes = await fetch(`${BASE_URL}/oauth/access_token?${longParams}`);
     const longData = longRes.ok ? await longRes.json() : data;
 
     // Get user's pages
-    const pagesRes = await fetch(`${BASE_URL}/me/accounts?access_token=${longData.access_token}`);
+    const pagesRes = await fetch(
+      `${BASE_URL}/me/accounts?fields=id,name,picture,access_token,tasks&limit=100&access_token=${longData.access_token}`,
+    );
     const pagesData = pagesRes.ok ? await pagesRes.json() : { data: [] };
+    const permissionsRes = await fetch(
+      `${BASE_URL}/me/permissions?access_token=${longData.access_token}`,
+    );
+    const permissionsData = permissionsRes.ok ? await permissionsRes.json() : { data: [] };
+    const grantedPermissions = (permissionsData.data ?? [])
+      .filter((permission: any) => permission.status === 'granted')
+      .map((permission: any) => permission.permission);
 
     return {
       accessToken: longData.access_token,
       expiresIn: longData.expires_in || 5184000,
       tokenType: 'bearer',
-      scope: 'pages_manage_posts,pages_read_engagement,ads_management',
+      scope: grantedPermissions.join(','),
       extra: {
         pages: pagesData.data || [],
+        userAccessToken: longData.access_token,
         userId: (await fbRequest<any>('me?fields=id,name', longData.access_token)).id,
       },
     };
@@ -391,8 +425,8 @@ export class FacebookOAuthProvider implements IOAuthProvider {
     // Instead, exchange the current token for a new long-lived one
     const params = new URLSearchParams({
       grant_type: 'fb_exchange_token',
-      client_id: process.env.FACEBOOK_CLIENT_ID || '',
-      client_secret: process.env.FACEBOOK_CLIENT_SECRET || '',
+      client_id: getFacebookClientId(),
+      client_secret: getFacebookClientSecret(),
       fb_exchange_token: refreshToken,
     });
 

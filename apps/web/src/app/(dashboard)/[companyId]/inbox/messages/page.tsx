@@ -112,7 +112,7 @@ export default function InboxMessagesPage() {
             <MessageCircle className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <div className="font-semibold text-slate-900">No channels connected yet</div>
             <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
-              Connect Facebook Messenger (or other channels when they go live) to start receiving messages here.
+              Connect a messaging-enabled channel to start receiving conversations here.
             </p>
             <a href={`/${companyId}/channels`} className="inline-block mt-4">
               <Button>Go to Channels →</Button>

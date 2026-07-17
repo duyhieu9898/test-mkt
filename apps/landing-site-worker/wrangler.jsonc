@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "1person",
+  "account_id": "9bc3e88a658820cf8366090ad25f08b4",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-01",
+  "workers_dev": true,
+  "vars": {
+    "URL_MODE": "path",
+    "PUBLIC_BASE_DOMAIN": "",
+    "SITE_STORAGE_PREFIX": "development",
+    "SITE_STORAGE_PUBLIC_BASE_URL": "https://dxxxxxxxxxxxxx.cloudfront.net"
+  }
+}

@@ -6,6 +6,8 @@ import { useAuthStore } from '@/stores/auth-store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { CreditBadge } from '@/components/credit-badge';
+import { CompanyGuidedTour } from '@/components/guided-tour/company-guided-tour';
+import { NavigationProgress } from '@/components/layout/navigation-progress';
 
 export default function DashboardLayout({
   children,
@@ -39,7 +41,9 @@ export default function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-muted/30">
+      <NavigationProgress />
       <Sidebar />
+      <CompanyGuidedTour />
       <div className="lg:pl-64">
         <Header />
         <main className="p-4 pt-16 sm:p-6 lg:pt-6">{children}</main>

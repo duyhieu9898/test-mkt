@@ -8,7 +8,7 @@
  *   - DELETE /:companyId/sources/:id              remove a source (+ events cascade)
  *   - PATCH  /:companyId/sources/:id              rename / pause / resume
  *   - GET    /:companyId/events                   recent events + filters
- *   - POST   /:companyId/events/search            semantic search (vector)
+ *   - POST   /:companyId/events/search            hybrid semantic + lexical search
  *   - GET    /:companyId/analytics/top-topics     top tags this week
  *   - GET    /:companyId/analytics/summary        counts by source type + sentiment
  *   - POST   /:companyId/upload                   manual_upload (multipart)
@@ -32,7 +32,7 @@ import { authMiddleware } from '../middleware/auth';
 import { ingestUpload } from '../services/brain-hub/adapters/manual-upload';
 import { ingestBulkImport } from '../services/brain-hub/adapters/bulk-import';
 import { ADAPTERS } from '../services/brain-hub/adapters/index';
-import { embedTexts } from '../services/embedding-service';
+import { searchBrainEvents } from '../services/brain-hub/search';
 import { ensureDefaultWatchers } from '../services/brain-hub/watcher-seeder';
 import { evaluateAllWatchers } from '../services/brain-hub/watcher-evaluator';
 import { approveReaction, dismissReaction } from '../services/brain-hub/reaction-approver';
@@ -175,50 +175,7 @@ brainHubRouter.post('/:companyId/events/search', zValidator('json', searchSchema
 
   const { query, limit, minScore } = c.req.valid('json');
 
-  if (!process.env.OPENAI_API_KEY) {
-    return c.json({ data: [], note: 'Semantic search requires OPENAI_API_KEY.' });
-  }
-
-  const [vec] = await embedTexts([query]);
-  if (!vec) return c.json({ data: [] });
-  const literal = `[${vec.join(',')}]`;
-
-  const rows = await db.execute<{
-    id: string;
-    source_id: string;
-    type: string;
-    subject: string;
-    content: string;
-    topic_tags: string[];
-    sentiment: string | null;
-    occurred_at: string;
-    distance: number;
-  }>(
-    sql`
-      SELECT id::text AS id, source_id::text AS source_id, type, subject, content,
-             topic_tags, sentiment, occurred_at,
-             embedding <=> ${literal}::vector AS distance
-      FROM data_events
-      WHERE company_id = ${companyId} AND embedding IS NOT NULL
-      ORDER BY embedding <=> ${literal}::vector
-      LIMIT ${limit}
-    `,
-  );
-
-  const hits = (rows as any as Array<any>)
-    .map((r) => ({
-      id: r.id,
-      sourceId: r.source_id,
-      type: r.type,
-      subject: r.subject,
-      content: r.content,
-      topicTags: r.topic_tags ?? [],
-      sentiment: r.sentiment,
-      occurredAt: r.occurred_at,
-      score: 1 - Number(r.distance),
-    }))
-    .filter((h) => h.score >= minScore);
-
+  const hits = await searchBrainEvents({ companyId, query, limit, minScore });
   return c.json({ data: hits });
 });
 

@@ -37,11 +37,11 @@ export class CMSIntegration {
           };
         }
 
-        const user = await usersResp.json();
+        const user = await this.readJsonResponse<any>(usersResp, 'WordPress users/me endpoint');
         return { success: true, siteName: user.name || siteUrl };
       }
 
-      const settings = await response.json();
+      const settings = await this.readJsonResponse<any>(response, 'WordPress settings endpoint');
       return { success: true, siteName: settings.title || siteUrl };
     } catch (err: any) {
       return {
@@ -80,7 +80,7 @@ export class CMSIntegration {
       const errBody = await res.text();
       throw new Error(`WordPress media upload failed (HTTP ${res.status}): ${errBody.slice(0, 300)}`);
     }
-    const data = await res.json();
+    const data = await this.readJsonResponse<any>(res, 'WordPress media upload endpoint');
     const mediaId = data.id as number;
     const url = (data.source_url as string) ?? (data.guid?.rendered as string) ?? '';
     // Optional alt text
@@ -149,7 +149,7 @@ export class CMSIntegration {
       throw new Error(`WordPress publish failed (HTTP ${response.status}): ${errorBody}`);
     }
 
-    const result = await response.json();
+    const result = await this.readJsonResponse<any>(response, 'WordPress posts endpoint');
     return {
       id: result.id,
       url: result.link || result.guid?.rendered || '',
@@ -174,10 +174,91 @@ export class CMSIntegration {
       throw new Error(`Failed to fetch categories (HTTP ${response.status})`);
     }
 
-    const categories = await response.json();
+    const categories = await this.readJsonResponse<any[]>(response, 'WordPress categories endpoint');
     return categories.map((cat: any) => ({
       id: cat.id,
       name: cat.name,
+    }));
+  }
+
+  /**
+   * Get pages from WordPress so users can publish a blog as a child page.
+   */
+  async getPages(
+    siteUrl: string,
+    username: string,
+    appPassword: string
+  ): Promise<Array<{ id: number; title: string; slug: string; link: string; parent: number; template: string }>> {
+    const baseUrl = this.normalizeUrl(siteUrl);
+    const response = await fetch(`${baseUrl}/wp-json/wp/v2/pages?per_page=100&orderby=menu_order&order=asc`, {
+      method: 'GET',
+      headers: this.authHeaders(username, appPassword),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch pages (HTTP ${response.status})`);
+    }
+
+    const pages = await this.readJsonResponse<any[]>(response, 'WordPress pages endpoint');
+    return pages.map((page: any) => ({
+      id: page.id,
+      title: this.cleanRenderedText(page.title?.rendered) || page.slug || `Page ${page.id}`,
+      slug: page.slug || '',
+      link: page.link || '',
+      parent: page.parent || 0,
+      template: page.template || '',
+    }));
+  }
+
+  /**
+   * Discover page templates exposed by the active WordPress theme.
+   * OPTIONS is used because classic and block themes expose templates
+   * differently, while the Pages endpoint schema normalizes the choices.
+   */
+  async getPageTemplates(
+    siteUrl: string,
+    username: string,
+    appPassword: string
+  ): Promise<Array<{ value: string; label: string }>> {
+    const baseUrl = this.normalizeUrl(siteUrl);
+    const response = await fetch(`${baseUrl}/wp-json/wp/v2/pages`, {
+      method: 'OPTIONS',
+      headers: this.authHeaders(username, appPassword),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) return [];
+
+    const payload = await this.readJsonResponse<any>(response, 'WordPress pages schema endpoint');
+    const endpoints = Array.isArray(payload?.endpoints) ? payload.endpoints : [];
+    const values = endpoints
+      .flatMap((endpoint: any) => endpoint?.args?.template?.enum || [])
+      .filter((value: unknown): value is string => typeof value === 'string') as string[];
+
+    return [...new Set(values)].map((value) => ({
+      value,
+      label: value
+        ? value.replace(/\.php$/i, '').replace(/[-_]+/g, ' ').replace(/\b\w/g, (char: string) => char.toUpperCase())
+        : 'Default theme template',
+    }));
+  }
+
+  async getMenus(
+    siteUrl: string,
+    username: string,
+    appPassword: string
+  ): Promise<Array<{ id: number; name: string; locations: string[] }>> {
+    const baseUrl = this.normalizeUrl(siteUrl);
+    const response = await fetch(`${baseUrl}/wp-json/wp/v2/menus?per_page=100&context=edit`, {
+      headers: this.authHeaders(username, appPassword),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) return [];
+
+    const menus = await this.readJsonResponse<any[]>(response, 'WordPress menus endpoint');
+    return menus.map((menu: any) => ({
+      id: menu.id,
+      name: this.cleanRenderedText(menu.name) || `Menu ${menu.id}`,
+      locations: Array.isArray(menu.locations) ? menu.locations : [],
     }));
   }
 
@@ -209,7 +290,7 @@ export class CMSIntegration {
       throw new Error(`Could not create category "${categoryName}" (HTTP ${response.status})`);
     }
 
-    const data = await response.json();
+    const data = await this.readJsonResponse<any>(response, 'WordPress create category endpoint');
     return data.id;
   }
 
@@ -230,6 +311,7 @@ export class CMSIntegration {
       status: 'draft' | 'publish';
       parent?: number;
       slug?: string;
+      template?: string;
     }
   ): Promise<{ id: number; url: string }> {
     const baseUrl = this.normalizeUrl(siteUrl);
@@ -245,16 +327,17 @@ export class CMSIntegration {
         status: page.status,
         parent: page.parent || 0,
         slug: page.slug,
+        template: page.template || undefined,
       }),
       signal: AbortSignal.timeout(30000),
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const err = await this.readJsonResponse<any>(res, 'WordPress pages endpoint').catch(() => ({}));
       throw new Error((err as any).message || 'Could not create WordPress page');
     }
 
-    const data = await res.json();
+    const data = await this.readJsonResponse<any>(res, 'WordPress pages endpoint');
     return { id: data.id, url: data.link };
   }
 
@@ -278,7 +361,7 @@ export class CMSIntegration {
         signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) continue;
-      const pages = await res.json();
+      const pages = await this.readJsonResponse<any[]>(res, 'WordPress pages lookup endpoint');
       if (Array.isArray(pages) && pages.length > 0) {
         parentId = pages[0].id;
       }
@@ -294,10 +377,17 @@ export class CMSIntegration {
     username: string,
     appPassword: string,
     pageId: number,
-    updates: { status?: string; content?: string }
-  ): Promise<void> {
+    updates: {
+      status?: string;
+      content?: string;
+      title?: string;
+      slug?: string;
+      parent?: number;
+      template?: string;
+    }
+  ): Promise<{ id: number; url: string }> {
     const baseUrl = this.normalizeUrl(siteUrl);
-    await fetch(`${baseUrl}/wp-json/wp/v2/pages/${pageId}`, {
+    const response = await fetch(`${baseUrl}/wp-json/wp/v2/pages/${pageId}`, {
       method: 'PUT',
       headers: {
         ...this.authHeaders(username, appPassword),
@@ -306,6 +396,59 @@ export class CMSIntegration {
       body: JSON.stringify(updates),
       signal: AbortSignal.timeout(15000),
     });
+    if (!response.ok) {
+      const err = await this.readJsonResponse<any>(response, 'WordPress update page endpoint').catch(() => ({}));
+      throw new Error((err as any).message || 'Could not update WordPress page');
+    }
+    const data = await this.readJsonResponse<any>(response, 'WordPress update page endpoint');
+    return { id: data.id, url: data.link || data.guid?.rendered || '' };
+  }
+
+  async addPageToMenu(
+    siteUrl: string,
+    username: string,
+    appPassword: string,
+    input: { menuId: number; pageId: number; title: string }
+  ): Promise<void> {
+    const baseUrl = this.normalizeUrl(siteUrl);
+    const existingResponse = await fetch(
+      `${baseUrl}/wp-json/wp/v2/menu-items?menus=${input.menuId}&per_page=100&context=edit`,
+      {
+        headers: this.authHeaders(username, appPassword),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (existingResponse.ok) {
+      const items = await this.readJsonResponse<any[]>(
+        existingResponse,
+        'WordPress menu items endpoint',
+      );
+      const alreadyAdded = items.some((item) =>
+        Number(item.object_id) === input.pageId && item.object === 'page'
+      );
+      if (alreadyAdded) return;
+    }
+
+    const response = await fetch(`${baseUrl}/wp-json/wp/v2/menu-items`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(username, appPassword),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: input.title,
+        type: 'post_type',
+        object: 'page',
+        object_id: input.pageId,
+        status: 'publish',
+        menus: [input.menuId],
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) {
+      const error = await this.readJsonResponse<any>(response, 'WordPress menu items endpoint').catch(() => ({}));
+      throw new Error((error as any).message || 'The page was published, but could not be added to the selected menu.');
+    }
   }
 
   /**
@@ -333,6 +476,7 @@ export class CMSIntegration {
     const encoded = Buffer.from(`${username}:${appPassword}`).toString('base64');
     return {
       Authorization: `Basic ${encoded}`,
+      Accept: 'application/json',
     };
   }
 
@@ -342,6 +486,51 @@ export class CMSIntegration {
       normalized = `https://${normalized}`;
     }
     return normalized;
+  }
+
+  private async readJsonResponse<T>(response: Response, context: string): Promise<T> {
+    const contentType = response.headers.get('content-type') || '';
+    const text = await response.text();
+    const trimmed = text.trim();
+
+    if (!trimmed) {
+      throw new Error(`${context} returned an empty response (HTTP ${response.status}).`);
+    }
+
+    if (!contentType.toLowerCase().includes('application/json')) {
+      throw new Error(
+        `${context} returned ${contentType || 'unknown content type'} instead of JSON `
+        + `(HTTP ${response.status}, URL: ${response.url || 'unknown'}). `
+        + `This usually means the WordPress REST API request was redirected or blocked. `
+        + `Response starts with: ${this.responseSnippet(trimmed)}`,
+      );
+    }
+
+    try {
+      return JSON.parse(trimmed) as T;
+    } catch (err) {
+      throw new Error(
+        `${context} returned invalid JSON (HTTP ${response.status}, URL: ${response.url || 'unknown'}). `
+        + `Response starts with: ${this.responseSnippet(trimmed)}. `
+        + `Parse error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private responseSnippet(value: string): string {
+    return value
+      .replace(/\s+/g, ' ')
+      .slice(0, 240);
+  }
+
+  private cleanRenderedText(value?: string): string {
+    return String(value || '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#039;/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /**
@@ -364,7 +553,7 @@ export class CMSIntegration {
         );
 
         if (searchResp.ok) {
-          const existing = await searchResp.json();
+          const existing = await this.readJsonResponse<any[]>(searchResp, 'WordPress tags search endpoint');
           const match = existing.find(
             (t: any) => t.name.toLowerCase() === name.toLowerCase()
           );
@@ -385,7 +574,7 @@ export class CMSIntegration {
         });
 
         if (createResp.ok) {
-          const created = await createResp.json();
+          const created = await this.readJsonResponse<any>(createResp, 'WordPress create tag endpoint');
           ids.push(created.id);
         }
       } catch {

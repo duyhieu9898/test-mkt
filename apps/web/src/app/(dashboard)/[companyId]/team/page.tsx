@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Users, ArrowRight, Loader2, Brain, Database } from 'lucide-react';
 import { useTeam } from '@/lib/api/team-hooks';
+import { AiTeamOrgChart } from '@/components/ai-team/ai-team-org-chart';
 
 const SOURCE_LABEL: Record<string, string> = {
   brand_iq: 'Brand IQ',
@@ -41,6 +42,7 @@ export default function TeamPage() {
 
   const employees = data?.employees ?? [];
   const memory = data?.memory ?? { total: 0, bySource: {} };
+  const readyCount = employees.filter((employee) => ['ready', 'running'].includes(employee.status)).length;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto p-1">
@@ -49,9 +51,40 @@ export default function TeamPage() {
           <Users className="w-6 h-6 text-primary" /> Your AI team
         </h1>
         <p className="text-muted-foreground text-sm">
-          Seven named employees. Each one reads your Brand IQ and your company memory before
-          answering. Click <em>Chat</em> to DM any of them.
+          Your complete AI team, responsibilities, performance signals, and company knowledge in one place.
         </p>
+      </div>
+
+      <Card>
+        <CardContent className="p-5">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-semibold">Team structure</h2>
+              <p className="text-xs text-muted-foreground">
+                {employees.length} agents / {readyCount} ready to work
+              </p>
+            </div>
+            <Badge variant="outline">Synced with your company</Badge>
+          </div>
+          <AiTeamOrgChart
+            animated={false}
+            agents={employees.map((employee) => ({
+              id: employee.id,
+              name: employee.name,
+              role: employee.role,
+              title: employee.roleTitle,
+              color: employee.accentColor,
+              emoji: employee.avatarEmoji,
+              supervisorId: employee.supervisorId,
+              responsibilities: employee.responsibilities,
+            }))}
+          />
+        </CardContent>
+      </Card>
+
+      <div>
+        <h2 className="font-semibold">Team details</h2>
+        <p className="text-xs text-muted-foreground">Open a teammate to review their expertise, KPIs, and ask questions.</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

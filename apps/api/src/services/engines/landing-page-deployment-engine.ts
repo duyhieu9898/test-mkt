@@ -3,7 +3,7 @@
  *
  * Handles deployment of landing pages to production:
  * - Static HTML generation
- * - Storage upload (R2/S3)
+ * - Storage upload (S3)
  * - CDN configuration
  * - Domain management
  * - SSL provisioning
@@ -277,7 +277,7 @@ export class LandingPageDeploymentEngine {
   ): Promise<StorageUploadResult> {
     const fullKey = `${companyId}/${key}`;
 
-    // For now, simulate storage (in production, use R2/S3)
+    // For now, simulate storage (in production, use S3)
     // TODO: Implement actual storage upload
 
     console.log(`[Storage] Uploading: ${fullKey} (${content.length} bytes)`);

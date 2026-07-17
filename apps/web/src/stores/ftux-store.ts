@@ -49,6 +49,7 @@ interface FTUXState {
   // Results
   company: Company | null;
   agents: FTUXAgent[];
+  setAgents: (agents: FTUXAgent[]) => void;
   strategy: FTUXStrategy | null;
   masterPlan: MasterPlan | null;
   setMasterPlan: (plan: MasterPlan | null) => void;
@@ -67,6 +68,7 @@ interface FTUXState {
   setAiThinking: (text: string) => void;
   setProgress: (progress: number) => void;
   setDetectedInfo: (info: DetectedInfo) => void;
+  updateBusinessDetails: (info: DetectedBusinessInfo) => void;
   setResults: (company: Company, agents: FTUXAgent[], strategy: FTUXStrategy, masterPlan?: MasterPlan, websiteAnalysis?: WebsiteAnalysis) => void;
   setError: (error: string | null) => void;
   reset: () => void;
@@ -110,6 +112,8 @@ export const useFTUXStore = create<FTUXState>()((set) => ({
 
   setMasterPlan: (masterPlan) => set({ masterPlan }),
 
+  setAgents: (agents) => set({ agents }),
+
   startExecution: () => set({ executionStarted: true }),
 
   startProcessing: () =>
@@ -128,7 +132,9 @@ export const useFTUXStore = create<FTUXState>()((set) => ({
 
   completeProcessingStep: (step) =>
     set((state) => ({
-      completedSteps: [...state.completedSteps, step],
+      completedSteps: state.completedSteps.includes(step)
+        ? state.completedSteps
+        : [...state.completedSteps, step],
     })),
 
   setAiThinking: (aiThinking) => set({ aiThinking }),
@@ -136,6 +142,26 @@ export const useFTUXStore = create<FTUXState>()((set) => ({
   setProgress: (progress) => set({ progress }),
 
   setDetectedInfo: (detectedInfo) => set({ detectedInfo }),
+
+  updateBusinessDetails: (info) =>
+    set((state) => ({
+      detectedInfo: {
+        market: info.market,
+        model: info.model,
+        strategy: info.strategy,
+      },
+      businessConfirmation: info,
+      company: state.company ? { ...state.company, name: info.companyName } : null,
+      websiteAnalysis: state.websiteAnalysis
+        ? {
+            ...state.websiteAnalysis,
+            businessInfo: {
+              ...state.websiteAnalysis.businessInfo,
+              ...info,
+            },
+          }
+        : null,
+    })),
 
   setResults: (company, agents, strategy, masterPlan, websiteAnalysis) =>
     set({

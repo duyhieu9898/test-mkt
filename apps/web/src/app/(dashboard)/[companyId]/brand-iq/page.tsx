@@ -3,16 +3,16 @@
 /**
  * Brand IQ — Block 2.
  *
- * Empty state: setup wizard (URL + 0-5 writing samples → Generate).
- * Populated state: read-only summary + Edit dialog per facet + a
- * "Regenerate from new inputs" button at the top.
+ * Empty state: automatically generate from existing company intelligence.
+ * Populated state: read-only summary + Edit dialog per facet + optional
+ * supplemental context for an AI-assisted refresh.
  *
  * Every other agent (blog, banner, chatbot, social, ads, GEO, content
  * grader) automatically reads the active profile through
  * business-context.ts — the founder doesn't have to apply it anywhere.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -41,16 +41,23 @@ import {
   CheckCircle2,
   Plus,
   Trash2,
+  AlertCircle,
+  ChevronDown,
+  UploadCloud,
 } from 'lucide-react';
 import {
   useBrandIq,
+  useAutoGenerateBrandIq,
   useGenerateBrandIq,
   useUpdateBrandIq,
   type BrandIqProfile,
   type BrandIqVoice,
   type AudiencePersona,
   type QuarterlyOkr,
+  type VisualIdentity,
 } from '@/lib/api/brand-iq-hooks';
+import { useAuthStore } from '@/stores/auth-store';
+import { uploadImageAsset } from '@/lib/assets-library';
 
 /* ─── Setup Wizard (empty state) ─────────────────────────────────── */
 
@@ -59,13 +66,15 @@ function SetupWizard({
   onDone,
   initialUrl = '',
   initialSamples = [],
-  title = 'Set up your Brand IQ',
+  title = 'Add context to improve Brand IQ',
+  submitLabel = 'Update Brand IQ',
 }: {
   companyId: string;
   onDone: () => void;
   initialUrl?: string;
   initialSamples?: string[];
   title?: string;
+  submitLabel?: string;
 }) {
   const [url, setUrl] = useState(initialUrl);
   const [samples, setSamples] = useState<string[]>(initialSamples.length ? initialSamples : ['']);
@@ -74,10 +83,6 @@ function SetupWizard({
   const handleSubmit = async () => {
     const cleanSamples = samples.map((s) => s.trim()).filter((s) => s.length >= 50);
     const cleanUrl = url.trim();
-    if (!cleanUrl && cleanSamples.length === 0) {
-      toast.error('Provide a URL or at least one writing sample (≥ 50 characters).');
-      return;
-    }
     try {
       await generate.mutateAsync({ url: cleanUrl || undefined, samples: cleanSamples });
       toast.success('Brand IQ generated. Every agent will now use it.');
@@ -92,14 +97,14 @@ function SetupWizard({
       <CardHeader>
         <CardTitle className="text-lg">{title}</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Brand IQ is the layer every agent reads before writing anything for you. The more
-          accurate this is, the more consistent your blog, ads, banners, chat replies, and
-          landing pages become.
+          AI combines these details with your company profile, Brain Hub, campaigns, blogs,
+          landing pages, and market signals. Leave everything empty to refresh from the latest
+          company data.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div>
-          <Label>Website URL (optional)</Label>
+          <Label>Website URL</Label>
           <div className="flex items-center gap-2 mt-1">
             <Globe className="w-4 h-4 text-muted-foreground" />
             <Input
@@ -115,10 +120,10 @@ function SetupWizard({
         </div>
 
         <div className="space-y-2">
-          <Label>Writing samples (paste 1-5)</Label>
+          <Label>Additional information or writing examples</Label>
           <p className="text-[11px] text-muted-foreground">
-            Best inputs: an "About" page, a past blog post, a customer email reply. Each ≥ 50
-            characters.
+            Add anything AI may not know yet: preferred tone, ideal customers, an About page,
+            customer feedback, or past content. Each entry must be at least 50 characters.
           </p>
           {samples.map((s, idx) => (
             <div key={idx} className="flex gap-2 items-start">
@@ -128,7 +133,7 @@ function SetupWizard({
                   setSamples((arr) => arr.map((v, i) => (i === idx ? e.target.value : v)))
                 }
                 rows={3}
-                placeholder={`Sample ${idx + 1} — paste a paragraph the brand has actually written.`}
+                placeholder={`Context ${idx + 1} - tell AI what to preserve or improve.`}
               />
               {samples.length > 1 && (
                 <Button
@@ -155,7 +160,7 @@ function SetupWizard({
 
         <Button onClick={handleSubmit} disabled={generate.isPending} className="gap-2 w-full">
           {generate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-          Generate Brand IQ
+          {submitLabel}
         </Button>
       </CardContent>
     </Card>
@@ -357,14 +362,90 @@ function StyleCard({ profile }: { profile: BrandIqProfile }) {
   );
 }
 
-function VisualCard({ profile }: { profile: BrandIqProfile }) {
+function normalizeVisualColors(value: string): string[] {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isHexColor(value: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(value.trim());
+}
+
+function VisualCard({ profile, companyId }: { profile: BrandIqProfile; companyId: string }) {
   const v = profile.visualIdentity;
+  const token = useAuthStore((s) => s.token);
+  const update = useUpdateBrandIq(companyId);
+  const [editing, setEditing] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [draft, setDraft] = useState<VisualIdentity>(v);
+  const [accentDraft, setAccentDraft] = useState(v.accentColors.join('\n'));
+
+  const openEditor = () => {
+    setDraft(profile.visualIdentity);
+    setAccentDraft(profile.visualIdentity.accentColors.join('\n'));
+    setEditing(true);
+  };
+
+  const save = async () => {
+    const accentColors = normalizeVisualColors(accentDraft);
+    if (!isHexColor(draft.primaryColor) || !isHexColor(draft.secondaryColor) || accentColors.some((color) => !isHexColor(color))) {
+      toast.error('Please use hex colors like #6366F1.');
+      return;
+    }
+
+    try {
+      await update.mutateAsync({
+        visualIdentity: {
+          primaryColor: draft.primaryColor.trim(),
+          secondaryColor: draft.secondaryColor.trim(),
+          accentColors: accentColors.slice(0, 5),
+          fontHeadline: draft.fontHeadline?.trim() || null,
+          fontBody: draft.fontBody?.trim() || null,
+          imageMood: draft.imageMood.trim() || 'modern, clean, human-led',
+          logoUrl: draft.logoUrl?.trim() || null,
+        },
+      });
+      toast.success('Visual identity updated');
+      setEditing(false);
+    } catch (e) {
+      toast.error((e as Error).message || 'Visual identity could not be saved');
+    }
+  };
+
+  const uploadLogo = async (file?: File | null) => {
+    if (!file || !token || uploadingLogo) return;
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'].includes(file.type)) {
+      toast.error('Please upload a PNG, JPG, WebP, or SVG logo.');
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error('Logo is too large. Please use a file under 8MB.');
+      return;
+    }
+
+    setUploadingLogo(true);
+    try {
+      const asset = await uploadImageAsset(companyId, file, token);
+      setDraft((current) => ({ ...current, logoUrl: asset.url }));
+      toast.success('Logo uploaded');
+    } catch (e) {
+      toast.error((e as Error).message || 'Logo upload failed');
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="pb-2 flex flex-row items-center justify-between">
         <CardTitle className="text-base flex items-center gap-2">
           <Palette className="w-4 h-4 text-primary" /> Visual identity
         </CardTitle>
+        <Button size="sm" variant="ghost" onClick={openEditor} className="gap-1">
+          <Pencil className="w-3 h-3" /> Edit
+        </Button>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <div className="flex items-center gap-3 flex-wrap">
@@ -392,12 +473,175 @@ function VisualCard({ profile }: { profile: BrandIqProfile }) {
         </div>
         {v.logoUrl && (
           <div>
-            <div className="text-xs text-muted-foreground mb-1">Logo (auto-detected)</div>
+            <div className="text-xs text-muted-foreground mb-1">Logo</div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={v.logoUrl} alt="logo" className="max-h-12" />
+            <img src={v.logoUrl} alt="Brand logo" className="max-h-12 rounded border bg-white p-1" />
           </div>
         )}
+        {!v.logoUrl && (
+          <p className="text-xs text-muted-foreground">
+            No logo yet. Add one so future banners can place it consistently.
+          </p>
+        )}
       </CardContent>
+
+      <Dialog open={editing} onOpenChange={setEditing}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Visual identity</DialogTitle>
+            <DialogDescription>
+              These settings are used by banner generation, landing pages, social creatives, and other visual outputs.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Primary color</Label>
+                <div className="mt-1 flex items-center gap-2">
+                  <Input
+                    value={draft.primaryColor}
+                    onChange={(e) => setDraft((current) => ({ ...current, primaryColor: e.target.value }))}
+                    placeholder="#6366F1"
+                    className="font-mono"
+                  />
+                  <div className="h-9 w-9 rounded border" style={{ background: draft.primaryColor }} />
+                </div>
+              </div>
+              <div>
+                <Label>Secondary color</Label>
+                <div className="mt-1 flex items-center gap-2">
+                  <Input
+                    value={draft.secondaryColor}
+                    onChange={(e) => setDraft((current) => ({ ...current, secondaryColor: e.target.value }))}
+                    placeholder="#8B5CF6"
+                    className="font-mono"
+                  />
+                  <div className="h-9 w-9 rounded border" style={{ background: draft.secondaryColor }} />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <Label>Accent colors</Label>
+              <Textarea
+                value={accentDraft}
+                onChange={(e) => setAccentDraft(e.target.value)}
+                rows={3}
+                placeholder="#10B981&#10;#F97316"
+                className="mt-1 font-mono"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                One color per line, maximum 5. These help banners stay consistent while still having variation.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Headline font</Label>
+                <Input
+                  value={draft.fontHeadline ?? ''}
+                  onChange={(e) => setDraft((current) => ({ ...current, fontHeadline: e.target.value || null }))}
+                  placeholder="Inter, Montserrat, ..."
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label>Body font</Label>
+                <Input
+                  value={draft.fontBody ?? ''}
+                  onChange={(e) => setDraft((current) => ({ ...current, fontBody: e.target.value || null }))}
+                  placeholder="Inter, Roboto, ..."
+                  className="mt-1"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label>Image mood</Label>
+              <Textarea
+                value={draft.imageMood}
+                onChange={(e) => setDraft((current) => ({ ...current, imageMood: e.target.value }))}
+                rows={2}
+                maxLength={200}
+                placeholder="modern, clean, human-led"
+                className="mt-1"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Short description of how brand imagery should feel.
+              </p>
+            </div>
+
+            <div className="rounded-lg border p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <Label>Logo</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Upload a logo or paste a public logo URL. New banners will use this as an editable overlay.
+                  </p>
+                </div>
+                {draft.logoUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={draft.logoUrl} alt="Logo preview" className="max-h-12 max-w-28 rounded border bg-white p-1 object-contain" />
+                )}
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                <Input
+                  value={draft.logoUrl ?? ''}
+                  onChange={(e) => setDraft((current) => ({ ...current, logoUrl: e.target.value || null }))}
+                  placeholder="https://your-domain.com/logo.png"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="relative gap-1.5 overflow-hidden"
+                  disabled={uploadingLogo}
+                >
+                  {uploadingLogo ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+                  Upload
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                    disabled={uploadingLogo}
+                    onChange={(e) => {
+                      void uploadLogo(e.target.files?.[0]);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </Button>
+              </div>
+              {draft.logoUrl && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2 h-8 text-xs text-muted-foreground"
+                  onClick={() => setDraft((current) => ({ ...current, logoUrl: null }))}
+                >
+                  Remove logo
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDraft(profile.visualIdentity);
+                setAccentDraft(profile.visualIdentity.accentColors.join('\n'));
+                setEditing(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={save} disabled={update.isPending || uploadingLogo}>
+              {update.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -625,12 +869,22 @@ function PositioningCard({ profile }: { profile: BrandIqProfile }) {
 export default function BrandIqPage() {
   const { companyId } = useParams<{ companyId: string }>();
   const { data: profile, isLoading } = useBrandIq(companyId);
-  const [regenerating, setRegenerating] = useState(false);
+  const autoGenerate = useAutoGenerateBrandIq(companyId);
+  const autoStarted = useRef(false);
+  const [improveExpanded, setImproveExpanded] = useState(false);
 
-  if (isLoading) {
+  useEffect(() => {
+    if (isLoading || profile || autoStarted.current) return;
+    autoStarted.current = true;
+    autoGenerate.mutate();
+  }, [autoGenerate, isLoading, profile]);
+
+  if (isLoading || (!profile && !autoGenerate.isError)) {
     return (
       <div className="py-20 text-center text-sm text-muted-foreground">
-        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-3" /> Loading Brand IQ…
+        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-3" />
+        <p className="font-medium text-foreground">Building your Brand IQ</p>
+        <p className="mt-1">AI is reviewing the company information already available.</p>
       </div>
     );
   }
@@ -648,19 +902,24 @@ export default function BrandIqPage() {
         </p>
       </div>
 
-      {!profile && !regenerating && <SetupWizard companyId={companyId} onDone={() => {}} />}
-
-      {regenerating && profile && (
-        <SetupWizard
-          companyId={companyId}
-          onDone={() => setRegenerating(false)}
-          initialUrl={profile.sourceUrl ?? ''}
-          initialSamples={profile.sourceSamples}
-          title="Regenerate Brand IQ"
-        />
+      {!profile && autoGenerate.isError && (
+        <div className="space-y-3">
+          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              Automatic generation could not finish. Retry using the latest company data or add more context below.
+            </span>
+          </div>
+          <SetupWizard
+            companyId={companyId}
+            onDone={() => {}}
+            title="Build your Brand IQ"
+            submitLabel="Try again"
+          />
+        </div>
       )}
 
-      {profile && !regenerating && (
+      {profile && (
         <>
           <Card className="border-emerald-200 bg-emerald-50/40">
             <CardContent className="p-4 flex items-center justify-between gap-3 flex-wrap">
@@ -672,11 +931,36 @@ export default function BrandIqPage() {
                   · last updated {new Date(profile.updatedAt).toLocaleDateString()}
                 </span>
               </div>
-              <Button variant="outline" size="sm" onClick={() => setRegenerating(true)} className="gap-1">
-                <RefreshCw className="w-3 h-3" /> Regenerate from new inputs
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setImproveExpanded((expanded) => !expanded)}
+                className="gap-1.5"
+                aria-expanded={improveExpanded}
+                aria-controls="brand-iq-improvement-panel"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                {improveExpanded ? 'Hide improvement form' : 'Improve with more context'}
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform ${
+                    improveExpanded ? 'rotate-180' : ''
+                  }`}
+                />
               </Button>
             </CardContent>
           </Card>
+
+          {improveExpanded && (
+            <div id="brand-iq-improvement-panel">
+              <SetupWizard
+                companyId={companyId}
+                onDone={() => setImproveExpanded(false)}
+                initialUrl={profile.sourceUrl ?? ''}
+                title="Improve Brand IQ"
+                submitLabel="Update Brand IQ"
+              />
+            </div>
+          )}
 
           {profile.tagline && (
             <Card>
@@ -691,7 +975,7 @@ export default function BrandIqPage() {
           <PersonasCard profile={profile} />
           <PositioningCard profile={profile} />
           <StyleCard profile={profile} />
-          <VisualCard profile={profile} />
+          <VisualCard profile={profile} companyId={companyId} />
           <OkrsCard profile={profile} companyId={companyId} />
         </>
       )}

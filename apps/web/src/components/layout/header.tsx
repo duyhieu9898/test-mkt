@@ -1,8 +1,7 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,7 +14,7 @@ import {
   Settings,
   User,
   ChevronDown,
-  Sparkles,
+  HelpCircle,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -28,8 +27,10 @@ import {
 
 export function Header() {
   const router = useRouter();
+  const params = useParams<{ companyId?: string }>();
   const { user, logout } = useAuthStore();
-  const [searchOpen, setSearchOpen] = useState(false);
+  const companyId = typeof params?.companyId === 'string' ? params.companyId : undefined;
+  const settingsHref = companyId ? `/${companyId}/settings` : '/companies';
 
   const handleLogout = () => {
     logout();
@@ -59,7 +60,21 @@ export function Header() {
         </div>
 
         {/* Right side */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-4">
+          {companyId && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => window.dispatchEvent(new Event('guided-tour:restart'))}
+              className="gap-2"
+              title="Run the guided tour"
+            >
+              <HelpCircle className="h-4 w-4" />
+              <span className="hidden sm:inline">Guided tour</span>
+            </Button>
+          )}
+
           {/* AI Status */}
           <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 text-green-600 text-sm">
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
@@ -85,9 +100,9 @@ export function Header() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>
-                <div className="flex flex-col">
-                  <span>{user?.name}</span>
-                  <span className="text-xs font-normal text-muted-foreground">{user?.email}</span>
+                <div className="flex min-w-0 flex-col">
+                  <span className="truncate">{user?.name}</span>
+                  <span className="truncate text-xs font-normal text-muted-foreground">{user?.email}</span>
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
@@ -95,9 +110,11 @@ export function Header() {
                 <User className="w-4 h-4 mr-2" />
                 Profile
               </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Settings className="w-4 h-4 mr-2" />
-                Settings
+              <DropdownMenuItem asChild>
+                <Link href={settingsHref}>
+                  <Settings className="w-4 h-4 mr-2" />
+                  Settings
+                </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="text-destructive">

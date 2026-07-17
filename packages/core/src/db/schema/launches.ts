@@ -44,7 +44,7 @@ export const campaignLaunches = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
 
-    keyword: varchar('keyword', { length: 255 }).notNull(),
+    keyword: text('keyword').notNull(),
     brief: text('brief'),
     /** Channels the founder asked to publish to — drives which steps run. */
     targets: jsonb('targets').$type<{
@@ -52,6 +52,8 @@ export const campaignLaunches = pgTable(
       facebook: boolean;
       linkedin: boolean;
       instagram: boolean;
+      imageMode?: 'ai' | 'uploaded';
+      uploadedAssetIds?: string[];
     }>().notNull(),
 
     status: varchar('status', { length: 20 }).$type<LaunchOverallStatus>().default('queued').notNull(),

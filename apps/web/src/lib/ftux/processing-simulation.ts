@@ -48,6 +48,15 @@ export const PROCESSING_TIMELINE: ProcessingTimeline[] = [
       'Finalizing growth plan...',
     ],
   },
+  {
+    step: 'setting_up_brand',
+    duration: 2000,
+    thinkingTexts: [
+      'Extracting brand identity...',
+      'Preparing brand voice...',
+      'Saving company defaults...',
+    ],
+  },
 ];
 
 export const WEBSITE_ANALYSIS_STEP: ProcessingTimeline = {
@@ -81,6 +90,7 @@ export const STEP_LABELS: Record<ProcessingStep, string> = {
   creating_marketing: 'Building marketing team',
   creating_operations: 'Setting up operations',
   generating_strategy: 'Generating growth strategy',
+  setting_up_brand: 'Setting up brand identity',
 };
 
 export function getTotalDuration(hasWebsite = false): number {

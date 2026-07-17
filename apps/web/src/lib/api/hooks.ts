@@ -17,6 +17,7 @@ export interface User {
 export interface Company {
   id: string;
   name: string;
+  logo?: string | null;
   slug: string;
   industry: string;
   description?: string;
@@ -25,7 +26,26 @@ export interface Company {
     monthlyBudget?: number;
     currency?: string;
     timezone?: string;
+    websiteUrl?: string;
+    websiteOption?: 'has_website' | 'new_business' | 'skip';
   };
+  websiteProfile?: {
+    url: string | null;
+    onboardingChoice: 'has_website' | 'new_business' | 'skip' | 'unknown';
+    startingFresh: boolean;
+  };
+  businessPlan?: {
+    vision?: string;
+    mission?: string;
+    targetAudience?: {
+      demographics?: string[];
+      painPoints?: string[];
+    };
+    valueProposition?: string;
+    revenueModel?: string;
+    offerings?: string[];
+    growthPlanApprovedAt?: string;
+  } | null;
   ownerId: string;
   createdAt: string;
 }
@@ -2448,7 +2468,7 @@ export interface LandingPage {
   };
   style: 'minimal' | 'modern' | 'bold' | 'professional' | 'playful' | 'elegant';
   primaryColor: string;
-  secondaryColor?: string;
+  secondaryColor?: string | null;
   fontFamily: string;
   content?: {
     headline: string;
@@ -2464,6 +2484,10 @@ export interface LandingPage {
   };
   status: 'draft' | 'generating' | 'ready' | 'published' | 'archived';
   publishedUrl?: string;
+  deploymentProvider?: string;
+  deploymentId?: string;
+  subdomain?: string;
+  wordpressReviewUrl?: string;
   customDomain?: string;
   totalVisitors: number;
   totalLeads: number;
@@ -2478,7 +2502,7 @@ export interface LandingPage {
 export interface LandingPageSection {
   id: string;
   pageId: string;
-  type: 'hero' | 'problem' | 'solution' | 'features' | 'pricing' | 'testimonials' | 'faq' | 'cta' | 'footer' | 'custom';
+  type: 'hero' | 'problem' | 'solution' | 'features' | 'pricing' | 'testimonials' | 'faq' | 'cta' | 'image' | 'footer' | 'custom';
   name?: string;
   order: number;
   isVisible: number;
@@ -2629,6 +2653,7 @@ export const useUpdateLandingPageSections = () => {
     mutationFn: async ({
       pageId,
       sections,
+      pageSettings,
     }: {
       pageId: string;
       sections: Array<{
@@ -2637,12 +2662,17 @@ export const useUpdateLandingPageSections = () => {
         content: Record<string, unknown>;
         order: number;
         isVisible?: number;
-        backgroundColor?: string;
+        backgroundColor?: string | null;
+        customStyles?: Record<string, string> | null;
       }>;
+      pageSettings: {
+        primaryColor: string;
+        secondaryColor?: string | null;
+      };
     }) => {
       return api.put<{ success: boolean; data: LandingPage }>(
-        `/landing-pages/${pageId}/sections`,
-        { sections },
+        `/landing-pages/${pageId}/editor`,
+        { sections, pageSettings },
         { token: token! }
       );
     },

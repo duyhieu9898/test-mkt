@@ -23,6 +23,7 @@ import {
   searchMemories,
 } from './memory';
 import { env } from '../lib/env';
+import { buildExecutionContext } from './execution-context-builder';
 
 // Database connection
 const client = postgres(env.DATABASE_URL);
@@ -79,6 +80,7 @@ function buildContext(agent: Awaited<ReturnType<typeof getAgentWithContext>>): A
     agentRole: agent.role,
     companyName: agent.company?.name || 'Unknown Company',
     companyDescription: agent.company?.description || undefined,
+    departmentName: agent.department?.name || undefined,
     capabilities,
   };
 }
@@ -162,6 +164,40 @@ export async function executeTask(
       });
     }
 
+    const executionContext = buildExecutionContext({
+      agent: {
+        name: agent.name,
+        role: agent.role,
+        title: agent.title,
+        description: agent.description,
+        departmentName: agent.department?.name,
+        capabilities: agent.capabilities,
+        systemPrompt: agent.systemPrompt,
+      },
+      company: {
+        name: agent.company?.name || 'Unknown Company',
+        description: agent.company?.description,
+        industry: agent.company?.industry,
+        businessType: agent.company?.businessType,
+        settings: agent.company?.settings,
+        goals: agent.company?.goals,
+        businessPlan: agent.company?.businessPlan,
+      },
+      task: {
+        title: task.title,
+        description: task.description,
+        type: task.type,
+        input: task.input,
+      },
+    });
+
+    logger.info('Execution context prepared', {
+      department: executionContext.department,
+      skillIds: executionContext.skillIds,
+      deliverableType: executionContext.deliverableType,
+      resolutionReason: executionContext.resolutionReason,
+    });
+
     // Execute task with memory-enhanced prompt
     let executionPrompt = buildTaskExecutionPrompt({
       title: task.title,
@@ -169,6 +205,8 @@ export async function executeTask(
       type: task.type,
       input: task.input,
     });
+
+    executionPrompt = `${executionContext.prompt}\n\n=== ASSIGNED TASK ===\n${executionPrompt}`;
 
     // Enhance prompt with memory context if available
     if (memoryContext) {
@@ -189,7 +227,20 @@ export async function executeTask(
       .set({
         status: 'completed',
         completedAt: new Date(),
-        output: { result: response.content, analysis },
+        output: {
+          type: 'agent_task_result',
+          data: {
+            result: response.content,
+            analysis,
+            executionPlan: {
+              department: executionContext.department,
+              skillIds: executionContext.skillIds,
+              deliverableType: executionContext.deliverableType,
+              acceptanceCriteria: executionContext.acceptanceCriteria,
+              successMetrics: executionContext.successMetrics,
+            },
+          },
+        },
         progress: 100,
       })
       .where(eq(schema.tasks.id, taskId));

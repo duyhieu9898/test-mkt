@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import {
   Heart,
   MessageCircle,
@@ -8,14 +9,21 @@ import {
   MoreHorizontal,
   Camera,
 } from 'lucide-react';
+import { ExpandablePostText } from './expandable-post-text';
+import type { PostPreviewMetrics } from './index';
+import { formatPostMetric, formatPostTimestamp, hasPostMetrics } from './post-preview-meta';
 
 export interface InstagramPostPreviewProps {
   content: string;
   hashtags?: string[] | null;
   brandName: string;
   brandAvatarUrl?: string;
-  timestamp?: string;
+  timestamp?: string | null;
+  isPublished?: boolean;
+  metrics?: PostPreviewMetrics | null;
   imageUrl?: string;
+  mediaUrls?: string[] | null;
+  headerAction?: ReactNode;
 }
 
 const IG_LINK = '#00376B';
@@ -33,14 +41,21 @@ export function InstagramPostPreview({
   hashtags,
   brandName,
   brandAvatarUrl,
-  timestamp = '2h',
+  timestamp,
+  isPublished = false,
+  metrics,
   imageUrl,
+  mediaUrls,
+  headerAction,
 }: InstagramPostPreviewProps) {
   const handle = handleFrom(brandName);
+  const images = mediaUrls?.length ? mediaUrls : imageUrl ? [imageUrl] : [];
+  const primaryImage = images[0];
+  const publishedTime = formatPostTimestamp(timestamp);
+  const showMetrics = isPublished && hasPostMetrics(metrics);
 
   return (
     <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden font-sans">
-      {/* Header */}
       <div className="flex items-center gap-3 p-3">
         <div className="relative">
           <div className="p-[2px] rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600">
@@ -61,31 +76,33 @@ export function InstagramPostPreview({
           </div>
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[14px] font-semibold text-slate-900 truncate leading-tight">
+          <div className="text-[14px] font-semibold text-slate-900 truncate leading-tight" title={brandName}>
             {handle}
           </div>
-          <div className="text-[11px] text-slate-500 truncate">Sponsored</div>
+          <div className="truncate text-[11px] text-slate-500">
+            {isPublished ? publishedTime : 'Draft preview'}
+          </div>
         </div>
-        <button
-          type="button"
-          className="p-1 text-slate-700 hover:bg-slate-100 rounded-full"
-          aria-label="More"
-        >
-          <MoreHorizontal className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* Square image area */}
-      <div className="relative aspect-square w-full bg-gradient-to-br from-pink-500 via-rose-400 to-orange-400 flex items-center justify-center">
-        {imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={imageUrl} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <Camera className="w-16 h-16 text-white/80" strokeWidth={1.5} />
+        {headerAction ?? (
+          <button
+            type="button"
+            className="p-1 text-slate-700 hover:bg-slate-100 rounded-full"
+            aria-label="More"
+          >
+            <MoreHorizontal className="w-5 h-5" />
+          </button>
         )}
       </div>
 
-      {/* Action bar */}
+      <div className="relative aspect-square w-full bg-white flex items-center justify-center">
+        {primaryImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={primaryImage} alt="" className="w-full h-full object-contain" />
+        ) : (
+          <Camera className="w-16 h-16 text-slate-300" strokeWidth={1.5} />
+        )}
+      </div>
+
       <div className="flex items-center justify-between px-3 pt-3">
         <div className="flex items-center gap-4">
           <button type="button" className="text-slate-900 hover:text-slate-500">
@@ -103,25 +120,21 @@ export function InstagramPostPreview({
         </button>
       </div>
 
-      {/* Likes */}
-      <div className="px-3 pt-2 text-[14px] font-semibold text-slate-900">
-        1,284 likes
-      </div>
+      {showMetrics && typeof metrics?.reactions === 'number' && (
+        <div className="px-3 pt-2 text-[14px] font-semibold text-slate-900">
+          {formatPostMetric(metrics.reactions)} likes
+        </div>
+      )}
 
-      {/* Caption */}
       <div className="px-3 pt-1 pb-1 text-[14px] text-slate-900 leading-snug break-words">
         <span className="font-semibold mr-1.5">{handle}</span>
-        <span className="whitespace-pre-wrap">
-          {content.length > 125 ? (
-            <>
-              {content.slice(0, 125)}
-              <span className="text-slate-500">… </span>
-              <button type="button" className="text-slate-500">more</button>
-            </>
-          ) : (
-            content
-          )}
-        </span>
+        <ExpandablePostText
+          as="span"
+          text={content}
+          threshold={125}
+          className="whitespace-pre-wrap"
+          buttonClassName="text-slate-500 hover:text-slate-700"
+        />
         {hashtags && hashtags.length > 0 && (
           <span className="block mt-1">
             {hashtags.map((h, i) => (
@@ -133,11 +146,18 @@ export function InstagramPostPreview({
         )}
       </div>
 
-      {/* Comments */}
-      <div className="px-3 pt-1 text-[13px] text-slate-500">View all 48 comments</div>
-      <div className="px-3 pb-3 pt-1 text-[10px] text-slate-400 uppercase tracking-wide">
-        {timestamp} ago
-      </div>
+      {showMetrics && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 pt-1 text-[13px] text-slate-500">
+          {typeof metrics?.comments === 'number' && <span>{formatPostMetric(metrics.comments)} comments</span>}
+          {typeof metrics?.shares === 'number' && <span>{formatPostMetric(metrics.shares)} shares</span>}
+          {typeof metrics?.views === 'number' && <span>{formatPostMetric(metrics.views)} views</span>}
+        </div>
+      )}
+      {isPublished && publishedTime && (
+        <div className="px-3 pb-3 pt-1 text-[10px] uppercase tracking-wide text-slate-400">
+          {publishedTime}
+        </div>
+      )}
     </div>
   );
 }

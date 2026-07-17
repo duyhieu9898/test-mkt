@@ -8,22 +8,94 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { campaigns, banners, socialPosts, knowledgeBase, companies, videoProjects } from '@1person/core/db';
+import { campaigns, banners, socialPosts, knowledgeBase, companies, videoProjects, blogPosts } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { buildBusinessContext } from '../services/business-context';
 import { generateImage, buildBannerImagePrompt } from '../services/image-generator';
+import { buildCampaignBannerBackgroundPrompt } from '../services/campaign-banner-creative';
+import {
+  applyBrandKitToBannerTheme,
+  brandCreativeKitSnapshot,
+  buildBrandCreativeKit,
+  buildBrandFitSummary,
+  renderBrandCreativeKitPrompt,
+} from '../services/brand-creative-kit';
 import { resolveImageProvider } from '../lib/config-resolver';
 import { ensureSufficientCredits, chargeFixedCredits } from '../lib/credits';
 import { getViralFrameworkPrompt, getAdCopySpecPrompt, AIDA_FRAMEWORK, AB_TEST_ANGLES, EMAIL_SEQUENCE_FRAMEWORK, EMAIL_SUBJECT_FORMULAS, KEYWORD_CLUSTER_PROMPT } from '../services/marketing-frameworks';
 import { adaptDesignForSize, AD_SIZES } from '../services/creative-adapter';
 import { validateBanner } from '../services/creative-quality';
 import { generateScript, breakIntoScenes } from '../services/video-engine';
+import {
+  applyLatestCampaignBannerMedia,
+  bannerIdFromMediaUrl,
+  removeCampaignBannerMedia,
+  replaceAttachedBannerVersion,
+} from '../services/campaign-banner-media';
+import {
+  createSocialBannerVariant,
+  normalizeSocialPlatform,
+  SOCIAL_BANNER_PRESETS,
+  type SocialBannerVariant,
+} from '../services/social-banner-variant';
+import {
+  SOCIAL_PLATFORMS,
+  type SocialPlatform,
+} from '../services/campaign-social-generator';
+import { saveObject } from '../services/object-storage';
+import { deleteStoredAssetsIfUnreferenced } from '../services/asset-storage-cleanup';
 
 const marketingEngineRouter = new Hono();
 marketingEngineRouter.use('*', authMiddleware);
+
+const CUSTOM_BANNER_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+function customBannerExtension(file: File): 'jpg' | 'png' | 'webp' {
+  if (file.type === 'image/jpeg') return 'jpg';
+  if (file.type === 'image/webp') return 'webp';
+  return 'png';
+}
+
+function collectBannerAssetUrls(value: unknown, urls = new Set<string>()): Set<string> {
+  if (typeof value === 'string') {
+    if (/^https?:\/\//i.test(value)) urls.add(value);
+    return urls;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectBannerAssetUrls(item, urls));
+    return urls;
+  }
+  if (value && typeof value === 'object') {
+    Object.values(value as Record<string, unknown>)
+      .forEach((item) => collectBannerAssetUrls(item, urls));
+  }
+  return urls;
+}
+
+async function readImageSize(buffer: Buffer): Promise<{ width: number; height: number }> {
+  try {
+    const { loadImage } = await import('@napi-rs/canvas');
+    const image = await loadImage(buffer);
+    const width = Math.round(image.width);
+    const height = Math.round(image.height);
+    if (width > 0 && height > 0) {
+      const maxDimension = 1800;
+      const scale = Math.min(1, maxDimension / Math.max(width, height));
+      return {
+        width: Math.round(width * scale),
+        height: Math.round(height * scale),
+      };
+    }
+  } catch {
+    // Fall back to the standard campaign banner shape if the file metadata
+    // cannot be read. The user can still crop/resize inside IMG.LY.
+  }
+  return { width: 1200, height: 628 };
+}
 
 // ===============================================================
 // CAMPAIGNS
@@ -217,7 +289,7 @@ marketingEngineRouter.post('/company/:companyId/campaigns/:id/launch', async (c)
             platform: platform as any,
             contentText: post.content || '',
             hashtags: (post.hashtags as string[]) || [],
-            mediaUrls: [],
+            mediaUrls: (post.mediaUrls as string[]) || [],
             scheduledFor: new Date(),
             campaignId: id,
             campaignName: post.campaignId || undefined,
@@ -357,6 +429,7 @@ marketingEngineRouter.post('/company/:companyId/campaigns/ai-suggestions/run', z
   goal: z.string(),
   audience: z.string(),
   reason: z.string(),
+  offer: z.string().max(250).optional(),
   suggestedBudget: z.number().optional(),
   channel: z.string().optional(),
 })), async (c) => {
@@ -402,8 +475,10 @@ marketingEngineRouter.post(
 
     try {
     const ctx = await buildBusinessContext(companyId);
-    const brandPrimary = ctx.brandColors.primary || '#6366f1';
-    const brandSecondary = ctx.brandColors.secondary || '#8b5cf6';
+    const brandKit = await buildBrandCreativeKit(companyId);
+    const brandPrimary = brandKit.colors.primary || ctx.brandColors.primary || '#6366f1';
+    const brandSecondary = brandKit.colors.secondary || ctx.brandColors.secondary || '#8b5cf6';
+    const brandCreativePrompt = renderBrandCreativeKitPrompt(brandKit);
 
     // STEP 1: Generate creative set — concept + variants (NOT images)
     const llmResult = await llmGenerate([{
@@ -423,7 +498,7 @@ CRITICAL RULES:
 BUSINESS:
 ${ctx.fullContext.substring(0, 800)}
 
-BRAND: Voice=${ctx.brandVoice.join(',')}, Colors: ${brandPrimary}, ${brandSecondary}
+${brandCreativePrompt || `BRAND: Voice=${ctx.brandVoice.join(',')}, Colors: ${brandPrimary}, ${brandSecondary}`}
 
 ANGLES (each variant MUST use a different one):
 - aspiration: Show the dream outcome the customer wants
@@ -505,10 +580,14 @@ Return ONLY JSON:
 
     const createdBanners: any[] = [];
 
-    for (const variant of creativeVariants) {
+    for (const [index, variant] of creativeVariants.entries()) {
       const angle = variant.angle || 'benefit';
       const layout = variant.layout || 'center';
-      const theme = angleThemes[angle] || angleThemes.benefit;
+      const theme = applyBrandKitToBannerTheme({
+        backgroundValue: '',
+        colors: angleThemes[angle] || angleThemes.benefit,
+        layout: 'left-text',
+      }, brandKit, index);
 
       const headline = (variant.headline || '').split(' ').slice(0, 8).join(' ');
       const subheadline = (variant.subheadline || '').split(' ').slice(0, 15).join(' ');
@@ -517,8 +596,10 @@ Return ONLY JSON:
       const designData = {
         layout: layout as any,
         backgroundType: 'gradient',
-        backgroundValue: `linear-gradient(135deg, ${theme.primary}, ${theme.secondary})`,
-        colorTheme: theme,
+        backgroundValue: theme.backgroundValue,
+        colorTheme: theme.colors,
+        brandKit: brandCreativeKitSnapshot(brandKit),
+        brandFit: buildBrandFitSummary(brandKit, false),
         typography: {
           headlineSize: layout === 'bold-cta' ? 'xl' : layout === 'center' ? 'lg' : 'md',
           headlineWeight: 800,
@@ -551,7 +632,7 @@ Return ONLY JSON:
           strategyTag: angle === 'urgency' ? 'urgency' : angle === 'social-proof' ? 'social-proof' : 'value',
         }).returning();
 
-        const qualityReport = validateBanner({ copy: { headline, subheadline, cta }, design: { colorTheme: theme, layout }, size });
+        const qualityReport = validateBanner({ copy: { headline, subheadline, cta }, design: { colorTheme: theme.colors, layout }, size });
         createdBanners.push({ ...banner, qualityScore: qualityReport.score, qualityReport });
       } catch (insertErr) {
         // Fallback: DB might not have new columns yet — insert with only original columns
@@ -566,7 +647,7 @@ Return ONLY JSON:
             strategyTag: angle === 'urgency' ? 'urgency' : angle === 'social-proof' ? 'social-proof' : 'value',
           }).returning();
 
-          const qualityReport = validateBanner({ copy: { headline, subheadline, cta }, design: { colorTheme: theme, layout }, size });
+          const qualityReport = validateBanner({ copy: { headline, subheadline, cta }, design: { colorTheme: theme.colors, layout }, size });
           createdBanners.push({ ...banner, design: designData, concept, angle, qualityScore: qualityReport.score, qualityReport });
         } catch (fallbackErr) {
           console.error('[Banner] Insert failed:', fallbackErr);
@@ -625,17 +706,57 @@ marketingEngineRouter.post(
     const ctx = await buildBusinessContext(companyId);
     const b = banner[0];
     const design = b.design as any;
+    const previousBackgroundObjectUrls = [
+      b.imageUrl,
+      ...Object.values(
+        (design?.socialVariants as Partial<Record<SocialPlatform, SocialBannerVariant>> | undefined) ?? {},
+      ).map((variant) => variant?.imageUrl),
+    ];
+    const campaign = b.campaignId
+      ? await db.query.campaigns.findFirst({
+        where: and(eq(campaigns.id, b.campaignId), eq(campaigns.companyId, companyId)),
+      })
+      : null;
+    const targeting = (campaign?.targeting ?? {}) as Record<string, any>;
+    const linkedBlogId = typeof targeting.blogPostId === 'string' ? targeting.blogPostId : null;
+    const linkedBlog = linkedBlogId
+      ? await db.query.blogPosts.findFirst({
+        where: and(eq(blogPosts.id, linkedBlogId), eq(blogPosts.companyId, companyId)),
+      })
+      : null;
 
     try {
       const [wRaw, hRaw] = b.size.split('x').map(Number);
       const w = wRaw ?? 1200;
       const h = hRaw ?? 628;
-      const imagePrompt = buildBannerImagePrompt(
-        ctx.fullContext.substring(0, 300),
-        'minimal',
-        b.strategyTag || 'value',
-        b.size
-      );
+      const campaignGoal = campaign?.name.replace(/^AI:\s*/i, '').replace(/^Launch:\s*/i, '').trim()
+        || campaign?.goal
+        || b.name;
+      const audience = String(targeting.audience ?? targeting.targetAudience ?? 'the campaign target audience');
+      const reason = typeof targeting.source === 'object'
+        ? String(targeting.source?.reasoning ?? '')
+        : '';
+      const campaignContext = [
+        ctx.fullContext,
+        linkedBlog ? `LINKED BLOG: ${linkedBlog.title}\n${linkedBlog.excerpt ?? ''}` : '',
+      ].filter(Boolean).join('\n');
+      const imagePrompt = campaign
+        ? buildCampaignBannerBackgroundPrompt({
+          goal: campaignGoal,
+          audience,
+          reason,
+          businessContext: campaignContext,
+          angle: b.angle ?? b.strategyTag ?? undefined,
+          visualDirection: design?.visualDirection,
+          size: b.size,
+          brandKit,
+        })
+        : buildBannerImagePrompt(
+          ctx.fullContext.substring(0, 300),
+          'minimal',
+          b.strategyTag || 'value',
+          b.size,
+        );
       const imageResult = await generateImage({
         prompt: imagePrompt,
         width: w,
@@ -660,13 +781,18 @@ marketingEngineRouter.post(
         imageUrl: imageResult.url,
         design: {
           ...design,
+          socialVariants: {},
           backgroundType: 'image',
           backgroundValue: imageResult.url,
           backgroundPrompt: imagePrompt,
           imageProvider: imageResult.providerKey,
+          backgroundImageProvider: imageResult.providerKey,
+          brandKit: design?.brandKit ?? brandCreativeKitSnapshot(brandKit),
+          brandFit: buildBrandFitSummary(brandKit, false),
         },
         updatedAt: new Date(),
       }).where(eq(banners.id, bannerId));
+      await deleteStoredAssetsIfUnreferenced(previousBackgroundObjectUrls, { companyId });
 
       return c.json({
         success: true,
@@ -718,6 +844,22 @@ marketingEngineRouter.get(
 );
 
 // Update banner (edit mode — user changes copy, design, colors)
+// Full banner payload is loaded on demand because img.ly scene JSON can be
+// large and is not needed by the campaign review list.
+marketingEngineRouter.get(
+  '/company/:companyId/banners/:bannerId',
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const bannerId = c.req.param('bannerId');
+    const [banner] = await db.select().from(banners).where(and(
+      eq(banners.id, bannerId),
+      eq(banners.companyId, companyId),
+    )).limit(1);
+    if (!banner) return c.json({ error: 'Banner not found' }, 404);
+    return c.json(banner);
+  },
+);
+
 marketingEngineRouter.patch(
   '/company/:companyId/banners/:bannerId',
   async (c) => {
@@ -736,6 +878,465 @@ marketingEngineRouter.patch(
 
     return c.json(updated);
   }
+);
+
+marketingEngineRouter.post('/company/:companyId/campaigns/:campaignId/banners/custom', async (c) => {
+  const companyId = c.req.param('companyId');
+  const campaignId = c.req.param('campaignId');
+  const formData = await c.req.formData();
+  const file = formData.get('file') as File | null;
+
+  if (!file) return c.json({ error: 'Choose an image to create a banner.' }, 400);
+  if (!CUSTOM_BANNER_TYPES.has(file.type)) {
+    return c.json({ error: 'Please upload a JPG, PNG, or WebP image.' }, 400);
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    return c.json({ error: 'Image is too large. Please use an image under 15MB.' }, 400);
+  }
+
+  const campaign = await db.query.campaigns.findFirst({
+    where: and(eq(campaigns.id, campaignId), eq(campaigns.companyId, companyId)),
+    columns: { id: true, name: true },
+  });
+  if (!campaign) return c.json({ error: 'Campaign not found' }, 404);
+
+  const bannerId = randomUUID();
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const { width, height } = await readImageSize(bytes);
+  const extension = customBannerExtension(file);
+  const saved = await saveObject({
+    key: `campaigns/${companyId}/${campaignId}/banners/${bannerId}/custom-original.${extension}`,
+    body: bytes,
+    contentType: file.type,
+    cacheControl: 'public, max-age=31536000, immutable',
+  });
+  const fileBaseName = file.name.replace(/\.[^/.]+$/, '').trim() || 'Custom banner';
+  const size = `${width}x${height}`;
+  const brandKit = await buildBrandCreativeKit(companyId);
+  const colorTheme = {
+    primary: brandKit.colors.primary,
+    secondary: brandKit.colors.secondary,
+    text: brandKit.colors.text,
+    ctaBg: brandKit.colors.ctaBg,
+    ctaText: brandKit.colors.ctaText,
+  };
+  const design = {
+    layout: 'left-text',
+    backgroundType: 'image',
+    backgroundValue: saved.url,
+    backgroundImageProvider: 'uploaded_assets',
+    backgroundOnly: true,
+    renderedImageUrl: saved.url,
+    renderProvider: 'custom-upload',
+    renderedAt: new Date().toISOString(),
+    colorTheme,
+    brandKit: brandCreativeKitSnapshot(brandKit),
+    brandFit: buildBrandFitSummary(brandKit, false),
+    typography: {
+      headlineSize: 'lg',
+      headlineWeight: 800,
+      alignment: 'left',
+    },
+  };
+
+  const [banner] = await db.insert(banners).values({
+    id: bannerId,
+    companyId,
+    campaignId,
+    name: fileBaseName.slice(0, 255),
+    size,
+    status: 'draft',
+    copy: {
+      headline: fileBaseName.slice(0, 80),
+      cta: 'Learn More',
+      brandColor: colorTheme.primary,
+      reasoning: 'Uploaded by the user as a custom campaign banner.',
+    },
+    concept: `Custom uploaded banner for ${campaign.name}`.slice(0, 255),
+    angle: 'custom',
+    design: design as any,
+    imageUrl: saved.url,
+    strategyTag: 'custom',
+  }).returning();
+
+  return c.json({ banner }, 201);
+});
+
+marketingEngineRouter.delete('/company/:companyId/campaigns/:campaignId/banners/:bannerId', async (c) => {
+  const companyId = c.req.param('companyId');
+  const campaignId = c.req.param('campaignId');
+  const bannerId = c.req.param('bannerId');
+  const [banner] = await db.select().from(banners).where(and(
+    eq(banners.id, bannerId),
+    eq(banners.companyId, companyId),
+    eq(banners.campaignId, campaignId),
+  )).limit(1);
+
+  if (!banner) return c.json({ error: 'Banner not found' }, 404);
+  if (banner.status === 'active' || banner.status === 'archived') {
+    return c.json({
+      error: 'This banner is part of campaign performance history and cannot be deleted.',
+    }, 409);
+  }
+
+  const assetUrls = [...collectBannerAssetUrls({
+    imageUrl: banner.imageUrl,
+    design: banner.design,
+  })];
+  const campaignPosts = await db.select({
+    id: socialPosts.id,
+    status: socialPosts.status,
+    mediaUrls: socialPosts.mediaUrls,
+  }).from(socialPosts).where(and(
+    eq(socialPosts.companyId, companyId),
+    eq(socialPosts.campaignId, campaignId),
+  ));
+
+  const changedPosts = campaignPosts
+    .filter((post) => post.status !== 'published')
+    .map((post) => ({
+      id: post.id,
+      previousMediaUrls: post.mediaUrls ?? [],
+      mediaUrls: removeCampaignBannerMedia({
+        mediaUrls: post.mediaUrls ?? [],
+        bannerId,
+        knownBannerUrls: assetUrls,
+      }),
+    }))
+    .filter((post) => JSON.stringify(post.previousMediaUrls) !== JSON.stringify(post.mediaUrls));
+
+  await db.transaction(async (tx) => {
+    for (const post of changedPosts) {
+      await tx.update(socialPosts)
+        .set({ mediaUrls: post.mediaUrls })
+        .where(and(eq(socialPosts.id, post.id), eq(socialPosts.companyId, companyId)));
+    }
+    await tx.delete(banners).where(and(
+      eq(banners.id, bannerId),
+      eq(banners.companyId, companyId),
+      eq(banners.campaignId, campaignId),
+    ));
+  });
+
+  // Published posts and reused assets keep their files; only orphaned object-storage
+  // objects are deleted after database references have been updated.
+  await deleteStoredAssetsIfUnreferenced(assetUrls, { companyId });
+
+  return c.json({
+    deleted: true,
+    bannerId,
+    posts: changedPosts.map(({ id, mediaUrls }) => ({ id, mediaUrls })),
+  });
+});
+
+marketingEngineRouter.post('/company/:companyId/banners/:bannerId/imgly-export', async (c) => {
+  const companyId = c.req.param('companyId');
+  const bannerId = c.req.param('bannerId');
+  const formData = await c.req.formData();
+  const file = formData.get('file') as File | null;
+  const archive = formData.get('archive') as File | null;
+  const scene = formData.get('scene');
+  const rawSize = formData.get('size');
+
+  if (!file) return c.json({ error: 'Missing exported banner image.' }, 400);
+  if (!file.type.startsWith('image/')) return c.json({ error: 'Export must be an image file.' }, 400);
+  if (!archive && (typeof scene !== 'string' || !scene.trim())) {
+    return c.json({ error: 'Missing editable banner source.' }, 400);
+  }
+
+  const [existing] = await db.select().from(banners)
+    .where(and(eq(banners.id, bannerId), eq(banners.companyId, companyId)))
+    .limit(1);
+  if (!existing) return c.json({ error: 'Banner not found' }, 404);
+
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const extension = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/webp' ? 'webp' : 'png';
+  const currentDesign = (existing.design as Record<string, any> | null) ?? {};
+  const previousSocialVariants =
+    (currentDesign.socialVariants as Partial<Record<SocialPlatform, SocialBannerVariant>> | undefined) ?? {};
+  const previousObjectUrls = [
+    existing.imageUrl,
+    currentDesign.imglyArchiveUrl,
+    ...Object.values(previousSocialVariants).map((variant) => variant?.imageUrl),
+  ];
+  const exportVersion = Date.now();
+  const filename = `imgly-banner-${bannerId}-current.${extension}`;
+  const savedImage = await saveObject({
+    key: `campaigns/${companyId}/${existing.campaignId ?? 'unassigned'}/banners/${bannerId}/${filename}`,
+    body: bytes,
+    contentType: file.type || 'image/png',
+    cacheControl: 'public, max-age=60, must-revalidate',
+  });
+  const imageUrl = `${savedImage.url}?v=${exportVersion}`;
+  const exportedSize = typeof rawSize === 'string' && /^\d+x\d+$/.test(rawSize)
+    ? rawSize
+    : existing.size;
+  const nextDesign: Record<string, any> = {
+    ...currentDesign,
+    socialVariants: {},
+    imglyUpdatedAt: new Date().toISOString(),
+  };
+  if (archive) {
+    const archiveBytes = Buffer.from(await archive.arrayBuffer());
+    const archiveFilename = `imgly-banner-${bannerId}-current.cesdk`;
+    const savedArchive = await saveObject({
+      key: `campaigns/${companyId}/${existing.campaignId ?? 'unassigned'}/banners/${bannerId}/${archiveFilename}`,
+      body: archiveBytes,
+      contentType: 'application/octet-stream',
+      cacheControl: 'public, max-age=60, must-revalidate',
+    });
+    nextDesign.imglyArchiveUrl = `${savedArchive.url}?v=${exportVersion}`;
+    delete nextDesign.imglyScene;
+    delete nextDesign.imglySceneImageUrl;
+  } else if (typeof scene === 'string' && scene.trim()) {
+    delete nextDesign.imglyArchiveUrl;
+    nextDesign.imglyScene = scene;
+    nextDesign.imglySceneImageUrl = imageUrl;
+  }
+  let [updated] = await db.update(banners)
+    .set({
+      imageUrl,
+      size: exportedSize,
+      design: nextDesign as any,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(banners.id, bannerId), eq(banners.companyId, companyId)))
+    .returning();
+
+  if (existing.campaignId) {
+    const campaignPosts = await db.select({
+      id: socialPosts.id,
+      platform: socialPosts.platform,
+      status: socialPosts.status,
+      mediaUrls: socialPosts.mediaUrls,
+    }).from(socialPosts)
+      .where(and(
+        eq(socialPosts.campaignId, existing.campaignId),
+        eq(socialPosts.companyId, companyId),
+      ));
+
+    const attachedPosts = campaignPosts.filter((post) =>
+      post.status !== 'published'
+      && (post.mediaUrls ?? []).some((url) =>
+        url === existing.imageUrl || bannerIdFromMediaUrl(url) === bannerId.toLowerCase(),
+      ),
+    );
+    const variants: Partial<Record<SocialPlatform, SocialBannerVariant>> = {};
+    const attachedPlatforms = Array.from(new Set<SocialPlatform>(
+      attachedPosts
+        .map((post) => normalizeSocialPlatform(post.platform))
+        .filter((platform): platform is SocialPlatform => Boolean(platform)),
+    ));
+    const generatedBySize = new Map<string, Promise<SocialBannerVariant>>();
+
+    await Promise.all(attachedPlatforms.map(async (platform) => {
+      try {
+        const preset = SOCIAL_BANNER_PRESETS[platform];
+        let generation = generatedBySize.get(preset.size);
+        if (!generation) {
+          generation = createSocialBannerVariant({
+            bannerId,
+            sourceImageUrl: imageUrl,
+            platform,
+            backgroundColor: currentDesign.colorTheme?.primary ?? existing.copy?.brandColor,
+          });
+          generatedBySize.set(preset.size, generation);
+        }
+        variants[platform] = await generation;
+      } catch (error) {
+        delete variants[platform];
+        console.warn(
+          `[social-banner] Could not refresh ${platform} variant for banner ${bannerId}:`,
+          (error as Error).message,
+        );
+      }
+    }));
+
+    if (attachedPlatforms.length > 0) {
+      nextDesign.socialVariants = variants;
+      [updated] = await db.update(banners)
+        .set({ design: nextDesign as any, updatedAt: new Date() })
+        .where(and(eq(banners.id, bannerId), eq(banners.companyId, companyId)))
+        .returning();
+    }
+
+    await Promise.all(attachedPosts.map((post) => {
+      const platform = normalizeSocialPlatform(post.platform);
+      const nextImageUrl = platform ? variants[platform]?.imageUrl ?? imageUrl : imageUrl;
+      const mediaUrls = replaceAttachedBannerVersion({
+        mediaUrls: post.mediaUrls ?? [],
+        bannerId,
+        previousImageUrl: existing.imageUrl,
+        nextImageUrl,
+      });
+      return db.update(socialPosts)
+        .set({ mediaUrls })
+        .where(eq(socialPosts.id, post.id));
+    }));
+  }
+
+  await deleteStoredAssetsIfUnreferenced(previousObjectUrls, { companyId });
+
+  return c.json({ banner: updated, imageUrl });
+});
+
+const applyCampaignBannerMediaSchema = z.object({
+  bannerIds: z.array(z.string().uuid()).default([]),
+  platforms: z.array(z.enum(SOCIAL_PLATFORMS)).optional(),
+});
+
+marketingEngineRouter.patch(
+  '/company/:companyId/campaigns/:campaignId/social-post-media',
+  zValidator('json', applyCampaignBannerMediaSchema),
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const campaignId = c.req.param('campaignId');
+    const { bannerIds, platforms } = c.req.valid('json');
+
+    const campaign = await db.query.campaigns.findFirst({
+      where: and(eq(campaigns.id, campaignId), eq(campaigns.companyId, companyId)),
+      columns: { id: true },
+    });
+    if (!campaign) return c.json({ error: 'Campaign not found' }, 404);
+
+    const campaignBanners = await db.select({
+      id: banners.id,
+      imageUrl: banners.imageUrl,
+      design: banners.design,
+      copy: banners.copy,
+    }).from(banners).where(and(
+      eq(banners.campaignId, campaignId),
+      eq(banners.companyId, companyId),
+    ));
+    const availableIds = new Set(campaignBanners.map((banner) => banner.id));
+    const invalidBannerId = bannerIds.find((id) => !availableIds.has(id));
+    if (invalidBannerId) {
+      return c.json({ error: 'One or more selected banners do not belong to this campaign.' }, 400);
+    }
+
+    const campaignPosts = await db.select({
+      id: socialPosts.id,
+      platform: socialPosts.platform,
+      status: socialPosts.status,
+      mediaUrls: socialPosts.mediaUrls,
+    }).from(socialPosts).where(and(
+      eq(socialPosts.campaignId, campaignId),
+      eq(socialPosts.companyId, companyId),
+    ));
+
+    const editablePosts = campaignPosts.filter((post) => post.status !== 'published');
+    const availablePlatforms = Array.from(new Set<SocialPlatform>(
+      editablePosts
+        .map((post) => normalizeSocialPlatform(post.platform))
+        .filter((platform): platform is SocialPlatform => Boolean(platform)),
+    ));
+    const requestedPlatforms = platforms ?? availablePlatforms;
+    const selectedPlatforms = Array.from(new Set<SocialPlatform>(
+      requestedPlatforms.filter((platform) => availablePlatforms.includes(platform)),
+    ));
+    if (selectedPlatforms.length === 0) {
+      return c.json({
+        error: 'Published posts are read-only. Create or use a draft post to apply banner images.',
+      }, 409);
+    }
+    const selectedPlatformSet = new Set<SocialPlatform>(selectedPlatforms);
+    const variantsByBanner = new Map<string, Partial<Record<SocialPlatform, SocialBannerVariant>>>();
+    const staleVariantUrls: string[] = [];
+
+    // Resizing involves download + canvas + object storage. Run independent
+    // banner/platform work in parallel and reuse an existing variant when its
+    // source image has not changed.
+    await Promise.all(campaignBanners.map(async (banner) => {
+      if (!bannerIds.includes(banner.id) || !banner.imageUrl) return;
+
+      const design = (banner.design as Record<string, any> | null) ?? {};
+      const copy = (banner.copy as Record<string, any> | null) ?? {};
+      const variants: Partial<Record<SocialPlatform, SocialBannerVariant>> = {
+        ...((design.socialVariants as Partial<Record<SocialPlatform, SocialBannerVariant>> | undefined) ?? {}),
+      };
+      const generatedBySize = new Map<string, Promise<SocialBannerVariant>>();
+
+      await Promise.all(selectedPlatforms.map(async (platform) => {
+        const cached = variants[platform];
+        const preset = SOCIAL_BANNER_PRESETS[platform];
+        if (
+          cached?.imageUrl
+          && cached.sourceImageUrl === banner.imageUrl
+          && cached.size === preset.size
+          && cached.paddingMode === 'transparent'
+        ) {
+          return;
+        }
+        if (cached?.imageUrl) staleVariantUrls.push(cached.imageUrl);
+
+        const reusableVariant = Object.values(variants).find((variant) =>
+          variant?.imageUrl
+          && variant.sourceImageUrl === banner.imageUrl
+          && variant.size === preset.size
+          && variant.paddingMode === 'transparent',
+        );
+        if (reusableVariant) {
+          variants[platform] = reusableVariant;
+          return;
+        }
+
+        let generation = generatedBySize.get(preset.size);
+        if (!generation) {
+          generation = createSocialBannerVariant({
+            bannerId: banner.id,
+            sourceImageUrl: banner.imageUrl!,
+            platform,
+            backgroundColor: design.colorTheme?.primary ?? copy.brandColor,
+          });
+          generatedBySize.set(preset.size, generation);
+        }
+        variants[platform] = await generation;
+      }));
+
+      variantsByBanner.set(banner.id, variants);
+      await db.update(banners)
+        .set({
+          design: { ...design, socialVariants: variants } as any,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(banners.id, banner.id), eq(banners.companyId, companyId)));
+    }));
+
+    const postsToUpdate = editablePosts.filter((post) => {
+      const platform = normalizeSocialPlatform(post.platform);
+      return platform ? selectedPlatformSet.has(platform) : false;
+    });
+    const updatedPosts = await Promise.all(postsToUpdate.map(async (post) => {
+      const platform = normalizeSocialPlatform(post.platform)!;
+      const platformBanners = campaignBanners.map((banner) => ({
+        id: banner.id,
+        imageUrl: variantsByBanner.get(banner.id)?.[platform]?.imageUrl ?? banner.imageUrl,
+      }));
+      const mediaUrls = applyLatestCampaignBannerMedia({
+        mediaUrls: post.mediaUrls ?? [],
+        campaignBanners: platformBanners,
+        selectedBannerIds: bannerIds,
+      });
+      const [updatedPost] = await db.update(socialPosts)
+        .set({ mediaUrls })
+        .where(eq(socialPosts.id, post.id))
+        .returning({
+          id: socialPosts.id,
+          platform: socialPosts.platform,
+          mediaUrls: socialPosts.mediaUrls,
+        });
+      return updatedPost;
+    }));
+
+    await deleteStoredAssetsIfUnreferenced(staleVariantUrls, { companyId });
+
+    return c.json({
+      updated: updatedPosts.length,
+      bannerIds,
+      platforms: selectedPlatforms,
+      posts: updatedPosts,
+    });
+  },
 );
 
 // List banners
@@ -922,6 +1523,7 @@ Generate ${variants} posts per platform.`,
         platform: post.platform,
         content: post.content,
         hashtags: post.hashtags as any,
+        mediaUrls: [],
         status: 'draft',
       }).returning();
       createdPosts.push(created);
@@ -939,6 +1541,39 @@ marketingEngineRouter.get('/company/:companyId/posts', async (c) => {
     .orderBy(desc(socialPosts.createdAt));
   return c.json({ data: items });
 });
+
+marketingEngineRouter.patch(
+  '/company/:companyId/posts/:id',
+  zValidator('json', z.object({
+    content: z.string().min(1).max(5000).optional(),
+    hashtags: z.array(z.string().min(1).max(80)).max(20).optional(),
+    mediaUrls: z.array(z.string()).optional(),
+  })),
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const id = c.req.param('id');
+    const body = c.req.valid('json');
+    const existing = await db.query.socialPosts.findFirst({
+      where: and(eq(socialPosts.id, id), eq(socialPosts.companyId, companyId)),
+      columns: { id: true, status: true },
+    });
+    if (!existing) return c.json({ error: 'Post not found' }, 404);
+    if (existing.status === 'published') {
+      return c.json({
+        error: 'Published posts are read-only. Open the post on its social platform to make changes.',
+      }, 409);
+    }
+    const updates: Record<string, any> = {};
+    if (body.content !== undefined) updates.content = body.content;
+    if (body.hashtags !== undefined) updates.hashtags = body.hashtags;
+    if (body.mediaUrls !== undefined) updates.mediaUrls = body.mediaUrls;
+    const [updated] = await db.update(socialPosts)
+      .set(updates)
+      .where(and(eq(socialPosts.id, id), eq(socialPosts.companyId, companyId)))
+      .returning();
+    return c.json(updated);
+  },
+);
 
 // Schedule post
 marketingEngineRouter.post(
@@ -1035,29 +1670,6 @@ marketingEngineRouter.post('/company/:companyId/posts/:id/publish', async (c) =>
       error: 'Publishing failed. Please try again.',
     }, 500);
   }
-});
-
-// Update social post (edit content, hashtags, media)
-marketingEngineRouter.patch('/company/:companyId/posts/:postId', async (c) => {
-  const postId = c.req.param('postId');
-  const body = await c.req.json();
-
-  const updates: Record<string, any> = {};
-  if (body.content) updates.content = body.content;
-  if (body.hashtags) updates.hashtags = body.hashtags;
-  if (body.mediaUrls) updates.mediaUrls = body.mediaUrls;
-
-  if (Object.keys(updates).length === 0) {
-    return c.json({ error: 'No fields to update' }, 400);
-  }
-
-  const [updated] = await db.update(socialPosts)
-    .set(updates)
-    .where(eq(socialPosts.id, postId))
-    .returning();
-
-  if (!updated) return c.json({ error: 'Post not found' }, 404);
-  return c.json(updated);
 });
 
 // ===============================================================

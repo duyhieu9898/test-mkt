@@ -26,6 +26,10 @@ export interface CompanySettings {
   timezone: string;
   currency: string;
   language: string;
+  /** Optional website supplied during company onboarding. */
+  websiteUrl?: string;
+  /** Onboarding path used to tailor the first-run guidance. */
+  websiteOption?: 'has_website' | 'new_business' | 'skip';
   approvalThresholds: {
     spending: number;
     majorDecision: boolean;
@@ -42,6 +46,42 @@ export interface CompanyGoals {
   }>;
 }
 
+export interface GrowthPlanItem {
+  action: string;
+  timeline: string;
+  expectedImpact: string;
+  priority: 'high' | 'medium' | 'low';
+  keyword?: string;
+  platform?: string;
+}
+
+export interface GrowthPlanBlock {
+  title: string;
+  description: string;
+  items: GrowthPlanItem[];
+}
+
+export interface GrowthMasterPlan {
+  seoGrowthPlan: GrowthPlanBlock;
+  contentPlan: GrowthPlanBlock;
+  socialMediaPlan: GrowthPlanBlock;
+}
+
+export interface GrowthPlanHistoryEntry {
+  version: number;
+  plan: GrowthMasterPlan;
+  generatedAt?: string;
+  approvedAt?: string;
+  updateReasons?: string[];
+}
+
+export interface GrowthPlanDraft {
+  version: number;
+  plan: GrowthMasterPlan;
+  generatedAt: string;
+  updateReasons: string[];
+}
+
 export interface BusinessPlan {
   vision: string;
   mission: string;
@@ -51,6 +91,14 @@ export interface BusinessPlan {
   };
   valueProposition: string;
   revenueModel: string;
+  offerings?: string[];
+  growthPlan?: GrowthMasterPlan;
+  growthPlanVersion?: number;
+  growthPlanGeneratedAt?: string;
+  growthPlanApprovedAt?: string;
+  growthPlanUpdateReasons?: string[];
+  growthPlanHistory?: GrowthPlanHistoryEntry[];
+  growthPlanDraft?: GrowthPlanDraft;
   competitors: string[];
   suggestedAgents: Array<{
     role: string;

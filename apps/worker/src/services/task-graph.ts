@@ -377,6 +377,11 @@ export async function createSubtask(
     priority?: 'critical' | 'high' | 'medium' | 'low';
     assignedAgentId?: string;
     dependencies?: string[];
+    input?: {
+      type: string;
+      data: Record<string, unknown>;
+      constraints?: Record<string, unknown>;
+    };
   }
 ): Promise<string> {
   const parentTask = await db.query.tasks.findFirst({
@@ -401,6 +406,7 @@ export async function createSubtask(
       depth: (parentTask.depth || 0) + 1,
       status: 'pending',
       dependencies: subtaskData.dependencies || [],
+      input: subtaskData.input,
     })
     .returning();
 

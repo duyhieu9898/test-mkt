@@ -2,6 +2,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import * as schema from '@1person/core/db';
+import { normalizeDepartment, resolveSkillsForTask } from '@1person/core';
 import { callLLM, type LLMMessage } from '../lib/llm';
 import { agentLogger } from '../lib/logger';
 import { createSubtask, addTaskDependency, buildTaskGraph } from './task-graph';
@@ -24,7 +25,12 @@ export interface DecomposedTask {
   requiredCapabilities: string[];
   dependsOn: string[]; // Reference IDs of other decomposed tasks
   suggestedAgentRole?: string;
+  department: string;
+  skillIds: string[];
+  deliverableType: string;
   acceptanceCriteria?: string[];
+  successMetrics: string[];
+  reviewBy?: string;
 }
 
 // Goal decomposition result
@@ -58,13 +64,19 @@ export async function decomposeGoal(goal: GoalInput): Promise<DecompositionResul
   // Get available agents and their capabilities
   const agents = await db.query.agents.findMany({
     where: eq(schema.agents.companyId, goal.companyId),
+    with: { department: true },
   });
 
   const agentCapabilities = agents.map(a => ({
     id: a.id,
     name: a.name,
     role: a.role,
-    capabilities: (a.capabilities as string[]) || [],
+    department: a.department?.name || undefined,
+    capabilities: Array.isArray(a.capabilities)
+      ? a.capabilities.map((capability) =>
+          typeof capability === 'string' ? capability : capability.name
+        )
+      : [],
     status: a.status,
   }));
 
@@ -125,18 +137,44 @@ Output must be valid JSON.`,
       recommendations: string[];
     };
 
+    const normalizedTasks = (parsed.tasks || []).map((task) => {
+      const department = normalizeDepartment(task.department || task.suggestedAgentRole || '');
+      const resolution = resolveSkillsForTask({
+        type: task.type,
+        title: task.title,
+        description: task.description,
+        department,
+        explicitSkillIds: Array.isArray(task.skillIds) ? task.skillIds : [],
+      });
+
+      return {
+        ...task,
+        department: resolution.department,
+        skillIds: resolution.skills,
+        deliverableType: task.deliverableType || task.type,
+        requiredCapabilities: Array.isArray(task.requiredCapabilities) ? task.requiredCapabilities : [],
+        dependsOn: Array.isArray(task.dependsOn) ? task.dependsOn : [],
+        acceptanceCriteria: Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria : [],
+        successMetrics: Array.isArray(task.successMetrics)
+          ? task.successMetrics
+          : Array.isArray(task.acceptanceCriteria)
+            ? task.acceptanceCriteria
+            : [],
+      };
+    });
+
     // Validate the decomposition
-    validateDecomposition(parsed.tasks);
+    validateDecomposition(normalizedTasks);
 
     logger.info('Goal decomposed successfully', {
       title: goal.title,
-      taskCount: parsed.tasks.length,
+      taskCount: normalizedTasks.length,
     });
 
     return {
       goalId: '', // Will be set when goal task is created
       originalGoal: goal.title,
-      tasks: parsed.tasks,
+      tasks: normalizedTasks,
       totalEstimatedEffort: parsed.totalEstimatedEffort || 'Unknown',
       criticalPath: parsed.criticalPath || [],
       risks: parsed.risks || [],
@@ -151,7 +189,14 @@ Output must be valid JSON.`,
 // Build the prompt for goal decomposition
 function buildDecompositionPrompt(
   goal: GoalInput,
-  agents: Array<{ id: string; name: string; role: string; capabilities: string[]; status: string }>,
+  agents: Array<{
+    id: string;
+    name: string;
+    role: string;
+    department?: string;
+    capabilities: string[];
+    status: string;
+  }>,
   pastLearnings: string[]
 ): string {
   const activeAgents = agents.filter(a => a.status === 'active');
@@ -168,7 +213,7 @@ ${goal.constraints?.length ? `Constraints:\n${goal.constraints.map(c => `- ${c}`
 
 ## Available Agents
 ${activeAgents.length > 0
-    ? activeAgents.map(a => `- ${a.name} (${a.role}): ${a.capabilities.join(', ')}`).join('\n')
+    ? activeAgents.map(a => `- ${a.name} (${a.role}, department: ${a.department || 'unassigned'}): ${a.capabilities.join(', ')}`).join('\n')
     : 'No agents currently available - tasks will be queued for future assignment'}
 
 ${pastLearnings.length > 0 ? `## Past Learnings\n${pastLearnings.map(l => `- ${l}`).join('\n')}` : ''}
@@ -187,7 +232,12 @@ Return a JSON object with this structure:
       "requiredCapabilities": ["capability1", "capability2"],
       "dependsOn": [],
       "suggestedAgentRole": "Role that should handle this",
-      "acceptanceCriteria": ["Criterion 1", "Criterion 2"]
+      "department": "executive|research|marketing|content|sales|growth|support|general",
+      "skillIds": ["one-primary-marketing-skill", "optional-supporting-skill"],
+      "deliverableType": "Specific artifact handed to the next department",
+      "acceptanceCriteria": ["Criterion 1", "Criterion 2"],
+      "successMetrics": ["Metric 1"],
+      "reviewBy": "Optional role or department that reviews this output"
     }
   ],
   "totalEstimatedEffort": "e.g., 2-3 days",
@@ -201,7 +251,11 @@ Important:
 - dependsOn should reference task IDs from this list only
 - No circular dependencies
 - Break down large tasks into smaller ones (max 4 hours of work per task)
-- Consider parallel execution opportunities`;
+- Consider parallel execution opportunities
+- Assign exactly one owning department to every task
+- Use no more than two skillIds per task; use [] for non-marketing work
+- Create explicit handoffs between departments through dependsOn and deliverableType
+- Research should precede strategy, strategy should precede production, and measurement should follow execution`;
 }
 
 // Validate decomposition for correctness
@@ -289,6 +343,7 @@ export async function createTasksFromDecomposition(
       eq(schema.agents.companyId, goal.companyId),
       eq(schema.agents.status, 'active')
     ),
+    with: { department: true },
   });
 
   // Sort tasks by dependency order (topological sort)
@@ -314,6 +369,18 @@ export async function createTasksFromDecomposition(
       priority: task.priority,
       assignedAgentId: assignedAgent?.id,
       dependencies: resolvedDeps,
+      input: {
+        type: 'department_task',
+        data: {
+          department: task.department,
+          skillIds: task.skillIds,
+          deliverableType: task.deliverableType,
+          acceptanceCriteria: task.acceptanceCriteria || [],
+          successMetrics: task.successMetrics,
+          reviewBy: task.reviewBy,
+          requiredCapabilities: task.requiredCapabilities,
+        },
+      },
     });
 
     taskIdMap.set(task.id, subtaskId);
@@ -379,15 +446,23 @@ function topologicalSort(tasks: DecomposedTask[]): DecomposedTask[] {
 }
 
 // Find the best agent for a task based on capabilities
+type AgentWithDepartment = typeof schema.agents.$inferSelect & {
+  department?: typeof schema.departments.$inferSelect | null;
+};
+
 function findBestAgent(
-  agents: Array<typeof schema.agents.$inferSelect>,
+  agents: AgentWithDepartment[],
   task: DecomposedTask
-): typeof schema.agents.$inferSelect | undefined {
+): AgentWithDepartment | undefined {
   if (agents.length === 0) return undefined;
 
   // Score each agent based on capability match
   const scored = agents.map(agent => {
-    const agentCapabilities = (agent.capabilities as string[]) || [];
+    const agentCapabilities = Array.isArray(agent.capabilities)
+      ? agent.capabilities.map((capability) =>
+          typeof capability === 'string' ? capability : capability.name
+        )
+      : [];
     const matchingCapabilities = task.requiredCapabilities.filter(cap =>
       agentCapabilities.some(ac =>
         ac.toLowerCase().includes(cap.toLowerCase()) ||
@@ -400,9 +475,14 @@ function findBestAgent(
       agent.role.toLowerCase().includes(task.suggestedAgentRole.toLowerCase())
       ? 1 : 0;
 
+    const departmentMatch =
+      normalizeDepartment(agent.department?.name || agent.role) === normalizeDepartment(task.department)
+        ? 2
+        : 0;
+
     return {
       agent,
-      score: matchingCapabilities.length + roleMatch,
+      score: matchingCapabilities.length + roleMatch + departmentMatch,
     };
   });
 

@@ -96,12 +96,17 @@ export class WebsiteAnalyzerService {
   /**
    * Generate master plan from text prompt (no website)
    */
-  async generateMasterPlanFromPrompt(prompt: string, detectedInfo: any): Promise<{
+  async generateMasterPlanFromPrompt(
+    prompt: string,
+    detectedInfo: any,
+    businessContext = '',
+  ): Promise<{
     masterPlan: {
       seoGrowthPlan: PlanBlock;
       contentPlan: PlanBlock;
       socialMediaPlan: PlanBlock;
     };
+    usedFallback?: boolean;
   }> {
     try {
       const { text } = await llmGenerate([{
@@ -114,6 +119,8 @@ export class WebsiteAnalyzerService {
 BUSINESS: ${prompt}
 MARKET: ${detectedInfo?.market || 'Analyze from business description'}
 MODEL: ${detectedInfo?.model || 'Analyze from business description'}
+COMPANY CONTEXT:
+${businessContext || 'No additional context available'}
 
 RULES:
 - Every action must be specific to THIS business (e.g., "Write article: '10 Best Coding Activities for Kids Ages 6-10'" NOT "Write blog posts")
@@ -153,7 +160,7 @@ Generate 4-5 items per section. Be CONCRETE — I should be able to execute each
       console.error('Failed to generate master plan from prompt:', error);
     }
 
-    return { masterPlan: this.getDefaultMasterPlan() };
+    return { masterPlan: this.getDefaultMasterPlan(), usedFallback: true };
   }
 
   // ==========================================================================

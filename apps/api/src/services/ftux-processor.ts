@@ -10,7 +10,7 @@ import { templateService } from './template-service';
 import { playbookService } from './playbook-service';
 import { guidanceService } from './guidance-service';
 import { brandIdentityService } from './brand-identity-service';
-import { websiteAnalyzerService, type WebsiteAnalysisResult } from './website-analyzer';
+import type { WebsiteAnalysisResult } from './website-analyzer';
 import { bootstrapService } from './bootstrap-service';
 import { CrawlerAgent } from '../agents/crawler-agent';
 import { ContentExtractionAgent } from '../agents/content-extraction-agent';
@@ -28,6 +28,7 @@ const anthropic = env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_
 
 export type ProcessingStep =
   | 'understanding'
+  | 'analyzing_website'
   | 'creating_ceo'
   | 'creating_marketing'
   | 'creating_operations'
@@ -110,6 +111,124 @@ const AGENT_COLORS = [
   '#ec4899', // Pink (Support)
   '#6366f1', // Indigo
 ];
+
+const VALID_AGENT_ROLES = [
+  'ceo',
+  'marketing_manager',
+  'sales_manager',
+  'content_creator',
+  'ads_specialist',
+  'analyst',
+  'support',
+  'developer',
+  'custom',
+] as const;
+
+const DEFAULT_AGENT_COLOR = '#6366f1';
+
+function normalizeGeneratedCompany(generated: AIGeneratedCompany): AIGeneratedCompany {
+  const agents = Array.isArray(generated.agents) && generated.agents.length > 0
+    ? generated.agents
+    : generateFallback(generated.companyName || 'Business').agents;
+
+  const normalizedAgents: GeneratedAgent[] = agents.map((agent, i) => {
+    const normalizedRole = VALID_AGENT_ROLES.includes(agent.role as typeof VALID_AGENT_ROLES[number])
+      ? agent.role
+      : 'custom';
+
+    return {
+      ...agent,
+      role: i === 0 ? 'ceo' : normalizedRole,
+      isManager: i === 0 ? true : Boolean(agent.isManager),
+      color: AGENT_COLORS[i % AGENT_COLORS.length] || DEFAULT_AGENT_COLOR,
+      capabilities: Array.isArray(agent.capabilities) ? agent.capabilities : [],
+    };
+  });
+
+  if (!normalizedAgents.some((agent) => agent.role === 'ceo')) {
+    normalizedAgents.unshift({
+      name: 'Alex Morgan',
+      role: 'ceo',
+      title: 'CEO',
+      description: 'Strategic planning and team coordination',
+      capabilities: ['strategic_planning', 'team_building', 'decision_making'],
+      color: AGENT_COLORS[0] || DEFAULT_AGENT_COLOR,
+      isManager: true,
+    });
+  }
+
+  return {
+    ...generated,
+    agents: normalizedAgents.slice(0, 6),
+  };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function limitText(value: string | undefined | null, maxLength: number, fallback: string): string {
+  const normalized = decodeHtmlEntities(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return fallback;
+  return normalized.length > maxLength ? normalized.slice(0, maxLength).trim() : normalized;
+}
+
+function cleanCompanyName(value: string | undefined | null, fallback: string): string {
+  const decoded = limitText(value, 255, fallback);
+  const withoutTasteWpSuffix = decoded
+    .replace(/\s+[-–—]\s+.*$/u, '')
+    .replace(/\s+trang web\b.*$/iu, '')
+    .replace(/\s+bản quyền bởi TasteWP\.com\b.*$/iu, '')
+    .trim();
+
+  return limitText(withoutTasteWpSuffix || decoded, 255, fallback);
+}
+
+function createCompanySlug(companyName: string, websiteUrl?: string): string {
+  const suffix = nanoid(6);
+  let source = companyName;
+
+  if (websiteUrl) {
+    try {
+      source = new URL(websiteUrl).hostname.replace(/^www\./, '').split('.')[0] || source;
+    } catch {
+      // Keep companyName as source when URL parsing fails.
+    }
+  }
+
+  const maxBaseLength = 100 - suffix.length - 1;
+  const base = decodeHtmlEntities(source)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, maxBaseLength)
+    .replace(/-+$/g, '');
+
+  return `${base || 'company'}-${suffix}`;
+}
 
 async function generateWithAI(prompt: string): Promise<AIGeneratedCompany> {
   const provider = env.FTUX_AI_PROVIDER;
@@ -225,20 +344,10 @@ Rules:
 
     const generated = JSON.parse(jsonMatch[0]) as AIGeneratedCompany;
 
-    // Valid roles from database schema
-    const validRoles = ['ceo', 'marketing_manager', 'sales_manager', 'content_creator', 'ads_specialist', 'analyst', 'support', 'developer', 'custom'];
-
-    // Add colors and validate roles
-    generated.agents = generated.agents.map((agent, i) => ({
-      ...agent,
-      role: validRoles.includes(agent.role) ? agent.role : 'custom',
-      color: AGENT_COLORS[i % AGENT_COLORS.length],
-    }));
-
-    return generated;
+    return normalizeGeneratedCompany(generated);
   } catch (error) {
     console.error('AI generation failed, using fallback:', error);
-    return generateFallback(prompt);
+    return normalizeGeneratedCompany(generateFallback(prompt));
   }
 }
 
@@ -365,7 +474,7 @@ function generateFallback(prompt: string): AIGeneratedCompany {
         { name: 'Alex Morgan', role: 'ceo', title: 'CEO', description: 'Strategic planning and team coordination', capabilities: ['strategic_planning', 'team_building', 'decision_making'], color: '#8b5cf6', isManager: true },
         { name: 'Jordan Lee', role: 'marketing_manager', title: 'Marketing Manager', description: 'Brand building and lead generation', capabilities: ['marketing_strategy', 'lead_generation', 'brand_management'], color: '#3b82f6', isManager: true },
         { name: 'Sam Rivera', role: 'content_creator', title: 'Content Creator', description: 'Content creation and social media', capabilities: ['content_creation', 'social_media', 'copywriting'], color: '#10b981', isManager: false },
-        { name: 'Taylor Kim', role: 'operations', title: 'Operations', description: 'Process optimization and support', capabilities: ['process_optimization', 'customer_support', 'quality_assurance'], color: '#f59e0b', isManager: false },
+        { name: 'Taylor Kim', role: 'support', title: 'Operations', description: 'Process optimization and support', capabilities: ['process_optimization', 'customer_support', 'quality_assurance'], color: '#f59e0b', isManager: false },
       ],
       strategy: {
         vision: 'Build foundation and establish market presence',
@@ -383,9 +492,9 @@ function generateFallback(prompt: string): AIGeneratedCompany {
   // Extract meaningful words for company name
   const words = prompt.split(' ').filter((w) => w.length > 3 && !['with', 'that', 'this', 'from', 'for', 'the'].includes(w.toLowerCase()));
   const meaningful = words.slice(0, 2).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-  const customName = meaningful.length >= 2 ? `${meaningful[0]} ${meaningful[1]} Co` : meaningful.length === 1 ? `${meaningful[0]} AI Co` : templates[businessType].companyName;
+  const template = templates[businessType] || templates.default!;
+  const customName = meaningful.length >= 2 ? `${meaningful[0]} ${meaningful[1]} Co` : meaningful.length === 1 ? `${meaningful[0]} AI Co` : template.companyName;
 
-  const template = templates[businessType];
   return {
     ...template,
     companyName: customName,
@@ -553,7 +662,11 @@ export class FTUXProcessor {
           // === LAYER 1: Smart Crawler ===
           console.log(`[FTUX] Layer 1: Crawling ${session.websiteUrl}`);
           const crawlerAgent = new CrawlerAgent();
-          const crawlResult = await crawlerAgent.execute({ url: session.websiteUrl }, agentContext);
+          const crawlResult = await withTimeout(
+            crawlerAgent.execute({ url: session.websiteUrl }, agentContext),
+            20_000,
+            'Website crawl'
+          );
 
           if (!crawlResult.success) {
             console.warn(`[FTUX] Crawler failed: ${crawlResult.error}`);
@@ -574,9 +687,13 @@ export class FTUXProcessor {
           // === LAYER 2: Content Extraction ===
           console.log(`[FTUX] Layer 2: Extracting semantic content`);
           const contentAgent = new ContentExtractionAgent();
-          const extractResult = await contentAgent.execute(
-            { structuredData: crawlData, url: session.websiteUrl },
-            agentContext
+          const extractResult = await withTimeout(
+            contentAgent.execute(
+              { structuredData: crawlData, url: session.websiteUrl },
+              agentContext
+            ),
+            20_000,
+            'Website content extraction'
           );
 
           if (!extractResult.success) {
@@ -602,13 +719,17 @@ export class FTUXProcessor {
           // === LAYER 3: Business Understanding ===
           console.log(`[FTUX] Layer 3: Analyzing business (user input: "${session.prompt.substring(0, 50)}")`);
           const businessAgent = new BusinessUnderstandingAgent();
-          const businessResult = await businessAgent.execute(
-            {
-              extractedContent: contentQuality.level !== 'insufficient' ? extractedContent : undefined,
-              userInput: session.prompt,
-              url: session.websiteUrl,
-            },
-            agentContext
+          const businessResult = await withTimeout(
+            businessAgent.execute(
+              {
+                extractedContent: contentQuality.level !== 'insufficient' ? extractedContent : undefined,
+                userInput: session.prompt,
+                url: session.websiteUrl,
+              },
+              agentContext
+            ),
+            25_000,
+            'Business understanding'
           );
 
           // DEBUG: Log final LLM input/output
@@ -644,16 +765,25 @@ export class FTUXProcessor {
           }
 
           // === SEO Audit (parallel, non-blocking) ===
-          let seoAudit = null;
-          let socialProfiles = null;
+          let seoAudit: WebsiteAnalysisResult['seoAudit'] | null = null;
+          let socialProfiles: WebsiteAnalysisResult['socialProfiles'] = [];
           try {
             const seoAgent = new SeoAuditAgent();
-            const seoResult = await seoAgent.execute({ html: crawlData.html, url: session.websiteUrl }, agentContext);
-            seoAudit = seoResult.data?.seoAudit;
+            const seoResult = await withTimeout(
+              seoAgent.execute({ html: crawlData.html, url: session.websiteUrl }, agentContext),
+              10_000,
+              'SEO audit'
+            );
+            seoAudit = (seoResult.data?.seoAudit as WebsiteAnalysisResult['seoAudit'] | undefined) || null;
 
             const socialAgent = new SocialDetectionAgent();
-            const socialResult = await socialAgent.execute({ html: crawlData.html }, agentContext);
-            socialProfiles = socialResult.data?.socialProfiles;
+            const socialResult = await withTimeout(
+              socialAgent.execute({ html: crawlData.html }, agentContext),
+              10_000,
+              'Social profile detection'
+            );
+            const detectedSocialProfiles = socialResult.data?.socialProfiles as WebsiteAnalysisResult['socialProfiles'] | undefined;
+            socialProfiles = Array.isArray(detectedSocialProfiles) ? detectedSocialProfiles : [];
           } catch (e) {
             console.warn('[FTUX] SEO/Social detection failed:', e);
           }
@@ -661,7 +791,7 @@ export class FTUXProcessor {
           // Build websiteAnalysis from agent results
           websiteAnalysis = {
             businessInfo: {
-              companyName: (crawlData as any).title || businessProfile?.businessType || 'Business',
+              companyName: cleanCompanyName((crawlData as any).title, businessProfile?.businessType || 'Business'),
               industry: businessProfile?.industry || (extractedContent as any)?.keywords?.[0] || 'Unknown',
               model: businessProfile?.monetizationModel || businessProfile?.coreOffering || (extractedContent as any)?.whatTheyDo || 'Unknown',
               audience: businessProfile?.targetAudience || (extractedContent as any)?.targetSignals?.join(', ') || 'Unknown',
@@ -669,11 +799,10 @@ export class FTUXProcessor {
               valueProposition: businessProfile?.valueProposition || (extractedContent as any)?.heroMessage || '',
               market: businessProfile?.market || businessProfile?.industry || 'Unknown',
               strategy: businessProfile?.strategy || '',
-              confidence: businessProfile?.confidence || 0,
             },
             seoAudit: seoAudit || { score: 0, metaTags: { title: '', description: '', hasOgTags: false }, headings: { h1Count: 0, h2Count: 0, issues: [] }, missingElements: [], performanceHints: [] },
             competitors: [],
-            socialProfiles: socialProfiles || [],
+            socialProfiles,
             keywordOpportunities: [],
             masterPlan: null as any,
           };
@@ -699,25 +828,26 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
           console.warn('[FTUX] Website analysis pipeline failed, continuing with prompt only:', error);
         }
 
-        session.completedSteps.push('analyzing_website' as any);
+        session.completedSteps.push('analyzing_website');
       }
 
+      const finalWebsiteAnalysis = websiteAnalysis as WebsiteAnalysisResult | null;
       const generated = await generateWithAI(enrichedPrompt);
 
       // If website analysis gave us a company name, use it
-      if (websiteAnalysis?.businessInfo?.companyName) {
-        generated.companyName = websiteAnalysis.businessInfo.companyName;
+      if (finalWebsiteAnalysis?.businessInfo?.companyName) {
+        generated.companyName = cleanCompanyName(finalWebsiteAnalysis.businessInfo.companyName, generated.companyName);
         generated.detectedInfo = {
-          market: websiteAnalysis.businessInfo.market || generated.detectedInfo.market,
-          model: websiteAnalysis.businessInfo.model || generated.detectedInfo.model,
-          strategy: websiteAnalysis.businessInfo.strategy || generated.detectedInfo.strategy,
+          market: finalWebsiteAnalysis.businessInfo.market || generated.detectedInfo.market,
+          model: finalWebsiteAnalysis.businessInfo.model || generated.detectedInfo.model,
+          strategy: finalWebsiteAnalysis.businessInfo.strategy || generated.detectedInfo.strategy,
         };
       }
 
       await this.updateSession(sessionId, {
         detectedInfo: {
           ...generated.detectedInfo,
-          businessType: websiteAnalysis ? 'website_analyzed' : 'ai_generated',
+          businessType: finalWebsiteAnalysis ? 'website_analyzed' : 'ai_generated',
         },
         progress: 25,
       });
@@ -725,17 +855,32 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
       // Step 2: Create company
       await this.updateSession(sessionId, { currentStep: 'creating_ceo', progress: 30 });
 
-      const slug = generated.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + nanoid(6);
+      const companyName = cleanCompanyName(generated.companyName, 'Business');
+      const slug = createCompanySlug(companyName, session.websiteUrl);
       const [company] = await db.insert(companies).values({
         ownerId: session.userId,
-        name: generated.companyName,
+        name: companyName,
         slug,
         description: session.prompt,
-        industry: generated.detectedInfo.market,
-        businessType: generated.detectedInfo.model,
+        industry: limitText(generated.detectedInfo.market, 100, 'Unknown'),
+        businessType: limitText(generated.detectedInfo.model, 100, 'Unknown'),
+        settings: {
+          timezone: 'UTC',
+          currency: 'USD',
+          language: 'en',
+          websiteUrl: session.websiteUrl,
+          websiteOption: session.websiteOption,
+          approvalThresholds: {
+            spending: 1000,
+            majorDecision: true,
+          },
+        } as any,
         totalBudget: '500',
         monthlyBudget: '500',
       }).returning();
+      if (!company) {
+        throw new Error('Failed to create company');
+      }
 
       // Create departments
       const defaultDepts = [
@@ -790,7 +935,10 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
           supervisorId,
           status: 'ready',
           budgetLimit: '100',
-        }).returning();
+        } as any).returning();
+        if (!agent) {
+          throw new Error(`Failed to create agent: ${agentTemplate.name}`);
+        }
 
         agentIdMap.set(agentTemplate.role, agent.id);
         createdAgentIds.push(agent.id);
@@ -840,7 +988,10 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
         })),
         overallProgress: 0,
         healthScore: 100,
-      }).returning();
+      } as any).returning();
+      if (!strategy) {
+        throw new Error('Failed to create strategy');
+      }
 
       // Create tasks from strategy
       const ceoId = agentIdMap.get('ceo');
@@ -871,16 +1022,24 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
         if (session.websiteOption === 'has_website' && session.websiteUrl) {
           // Extract brand from existing website
           console.log(`[FTUX] Extracting brand from website: ${session.websiteUrl}`);
-          const extracted = await brandIdentityService.extractFromWebsite(session.websiteUrl);
+          const extracted = await withTimeout(
+            brandIdentityService.extractFromWebsite(session.websiteUrl),
+            25_000,
+            'Brand extraction'
+          );
           brandId = await brandIdentityService.saveExtractedBrand(company.id, extracted, session.websiteUrl);
           brandSource = 'website';
         } else if (session.websiteOption === 'new_business') {
           // Generate brand using AI
           console.log(`[FTUX] Generating AI brand for new business`);
-          brandId = await brandIdentityService.generateBrandFromDescription(
-            company.id,
-            session.prompt,
-            generated.detectedInfo.market
+          brandId = await withTimeout(
+            brandIdentityService.generateBrandFromDescription(
+              company.id,
+              session.prompt,
+              generated.detectedInfo.market
+            ),
+            25_000,
+            'Brand generation'
           );
           brandSource = 'ai_generated';
         } else {
@@ -944,44 +1103,10 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
         console.warn('Failed to set up playbook/guidance:', error);
       }
 
-      // Generate master plan
-      let masterPlan = null;
-      try {
-        if (websiteAnalysis?.masterPlan) {
-          masterPlan = websiteAnalysis.masterPlan;
-        } else {
-          const planResult = await websiteAnalyzerService.generateMasterPlanFromPrompt(
-            session.prompt,
-            generated.detectedInfo
-          );
-          masterPlan = planResult.masterPlan;
-        }
-      } catch (error) {
-        console.warn('[FTUX] Master plan generation failed:', error);
-      }
-
-      // Mark user as onboarding complete
-      await db.update(users).set({ onboardingCompleted: true }).where(eq(users.id, session.userId));
-
-      // Complete
-      await this.updateSession(sessionId, {
-        status: 'complete',
-        progress: 100,
-        currentStep: null,
-        websiteAnalysis,
-        masterPlan,
-        results: {
-          companyId: company.id,
-          companyName: company.name,
-          agentIds: createdAgentIds,
-          strategyId: strategy.id,
-          playbookId,
-          templateId,
-          guidanceCount,
-          brandId,
-          brandSource,
-        },
-      });
+      // The growth plan is finalized after the founder confirms the detected
+      // business details. This prevents Brand IQ and CEO Advisor from being
+      // grounded in an AI draft that the founder subsequently edits.
+      const masterPlan = null;
 
       // BOOTSTRAP: Create real system state — landing pages, tasks, active agents
       // This runs SYNCHRONOUSLY so data exists when user reaches dashboard
@@ -1003,13 +1128,35 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
       }
 
       // Populate knowledge base from website analysis (FTUX → Knowledge Base Bridge)
-      if (websiteAnalysis) {
+      if (finalWebsiteAnalysis) {
         try {
-          await populateKnowledgeFromAnalysis(company.id, websiteAnalysis);
+          await populateKnowledgeFromAnalysis(company.id, finalWebsiteAnalysis);
         } catch (err) {
           console.warn('[FTUX] Knowledge base population failed (non-critical):', err);
         }
       }
+
+      // Mark the processing stage complete only after all source data that the
+      // finalization step consumes has been persisted.
+      await db.update(users).set({ onboardingCompleted: true }).where(eq(users.id, session.userId));
+      await this.updateSession(sessionId, {
+        status: 'complete',
+        progress: 100,
+        currentStep: null,
+        websiteAnalysis: finalWebsiteAnalysis,
+        masterPlan,
+        results: {
+          companyId: company.id,
+          companyName: company.name,
+          agentIds: createdAgentIds,
+          strategyId: strategy.id,
+          playbookId,
+          templateId,
+          guidanceCount,
+          brandId,
+          brandSource,
+        },
+      });
 
       // Also fire orchestrator in background for deeper analysis
       this.autoTriggerOrchestrator(company.id, session.prompt, session.websiteUrl, businessProfile).catch(

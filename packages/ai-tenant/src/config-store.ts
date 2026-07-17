@@ -616,15 +616,14 @@ export async function seedDefaultConfigs(
     {
       category: 'image',
       key: 'dalle',
-      label: 'DALL-E 3',
-      description: 'OpenAI DALL-E 3 — good quality general-purpose banners.',
+      label: 'OpenAI GPT Image',
+      description: 'GPT Image 2 for high-quality campaign backgrounds and editable banners.',
       value: {
-        tier: 'fast',
-        creditCost: 8,
-        model: 'dall-e-3',
-        defaultSize: '1792x1024',
-        style: 'vivid',
-        quality: 'standard',
+        tier: 'premium',
+        creditCost: 12,
+        model: 'gpt-image-2',
+        defaultSize: '1536x1024',
+        quality: 'medium',
       },
       secrets: {}, // uses provider=openai apiKey
     },

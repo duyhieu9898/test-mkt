@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { FacebookPostPreview } from './facebook-post-preview';
 import { LinkedInPostPreview } from './linkedin-post-preview';
 import { XPostPreview } from './x-post-preview';
@@ -12,6 +13,14 @@ export type PostPlatform =
   | 'twitter'
   | 'instagram';
 
+export interface PostPreviewMetrics {
+  views?: number;
+  reach?: number;
+  reactions?: number;
+  comments?: number;
+  shares?: number;
+}
+
 export interface PostPreviewProps {
   platform: PostPlatform | string;
   content: string;
@@ -19,9 +28,17 @@ export interface PostPreviewProps {
   brandName: string;
   brandAvatarUrl?: string;
   /** default 'now' */
-  timestamp?: string;
+  timestamp?: string | null;
+  /** true only after the post has been published to the platform */
+  isPublished?: boolean;
+  /** real platform metrics; omitted while unavailable */
+  metrics?: PostPreviewMetrics | null;
   /** optional banner/image for IG or inline media */
   imageUrl?: string;
+  /** optional post media gallery */
+  mediaUrls?: string[] | null;
+  /** optional action rendered in the native post header, replacing the menu dots */
+  headerAction?: ReactNode;
 }
 
 export function PostPreview(props: PostPreviewProps) {

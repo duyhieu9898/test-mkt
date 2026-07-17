@@ -19,17 +19,61 @@ export interface KnowledgeEntry {
 
 export class KnowledgeExtractionService {
   /**
+   * Extract plain text using the parser that matches the uploaded format.
+   * Keeping this here ensures the API fallback and queue worker behave alike.
+   */
+  async extractFromDocument(
+    fileBuffer: Buffer,
+    fileName: string,
+    fileType: 'pdf' | 'doc' | 'text',
+  ): Promise<string> {
+    let text = '';
+
+    if (fileType === 'pdf') {
+      text = await this.extractFromPDF(fileBuffer);
+    } else if (fileType === 'doc') {
+      if (!fileName.toLowerCase().endsWith('.docx')) {
+        throw new Error('Legacy .doc files are not supported. Save the file as .docx or PDF and try again.');
+      }
+      text = await this.extractFromDOCX(fileBuffer);
+    } else {
+      text = fileBuffer.toString('utf-8');
+    }
+
+    const cleaned = text.replace(/\u0000/g, '').trim();
+    if (cleaned.length < 10) {
+      throw new Error('No readable text was found in this document.');
+    }
+    return cleaned;
+  }
+
+  /**
    * Extract text from a PDF buffer
    */
   async extractFromPDF(fileBuffer: Buffer): Promise<string> {
+    let parser: { getText: () => Promise<{ text: string }>; destroy: () => Promise<void> } | null = null;
     try {
-      // Dynamic import to avoid issues if pdf-parse not installed
-      const pdfParse = (await import('pdf-parse')).default;
-      const data = await pdfParse(fileBuffer);
-      return data.text || '';
+      const { PDFParse } = await import('pdf-parse');
+      parser = new PDFParse({ data: fileBuffer });
+      const result = await parser.getText();
+      return result.text || '';
     } catch (err) {
-      console.warn('[KnowledgeExtraction] PDF parsing failed, treating as raw text');
-      return fileBuffer.toString('utf-8').substring(0, 10000);
+      console.warn('[KnowledgeExtraction] PDF parsing failed:', err);
+      throw new Error('Could not read this PDF. Make sure it contains selectable text and is not password protected.');
+    } finally {
+      await parser?.destroy().catch(() => undefined);
+    }
+  }
+
+  /** Extract raw text from the OpenXML content inside a .docx file. */
+  async extractFromDOCX(fileBuffer: Buffer): Promise<string> {
+    try {
+      const mammoth = (await import('mammoth')).default;
+      const result = await mammoth.extractRawText({ buffer: fileBuffer });
+      return result.value || '';
+    } catch (err) {
+      console.warn('[KnowledgeExtraction] DOCX parsing failed:', err);
+      throw new Error('Could not read this Word file. Make sure it is a valid .docx document.');
     }
   }
 
