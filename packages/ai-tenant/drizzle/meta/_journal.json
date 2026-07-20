@@ -57,6 +57,13 @@
       "when": 1783551600000,
       "tag": "0007_market_competitors",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784310074689,
+      "tag": "0008_sloppy_imperial_guard",
+      "breakpoints": true
     }
   ]
 }
