@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
@@ -201,7 +202,7 @@ function isAllowedAssetProxyUrl(rawUrl: string): boolean {
 }
 
 // Proxy public object-storage assets for browser editors that need CORS-safe image reads.
-app.get('/asset-proxy', async (c) => {
+async function handleAssetProxy(c: Context) {
   const url = c.req.query('url') || '';
   if (!isAllowedAssetProxyUrl(url)) {
     return c.json({ error: 'Asset URL is not allowed' }, 400);
@@ -217,7 +218,9 @@ app.get('/asset-proxy', async (c) => {
       'Access-Control-Allow-Origin': '*',
     },
   });
-});
+}
+
+app.get('/asset-proxy', handleAssetProxy);
 
 // Serve published landing pages (built-in hosting)
 app.get('/pages/:companyId/:slug', async (c) => {
@@ -242,6 +245,7 @@ app.route('/webhooks/omnichannel', messengerWebhookRouter);
 
 // API routes
 const api = new Hono();
+api.get('/asset-proxy', handleAssetProxy);
 api.route('/auth', authRouter);
 api.route('/companies', companiesRouter);
 api.route('/agents', agentsRouter);

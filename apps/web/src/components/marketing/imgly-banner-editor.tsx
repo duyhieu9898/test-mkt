@@ -92,6 +92,10 @@ function getApiAssetBaseUrl() {
   return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1').replace(/\/api\/v1\/?$/, '');
 }
 
+function getApiBaseUrl() {
+  return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1').replace(/\/+$/, '');
+}
+
 function shouldProxyRemoteAssetUrl(url: string) {
   try {
     const parsed = new URL(url);
@@ -107,7 +111,7 @@ function toEditorAssetUrl(url?: string | null) {
   if (!url) return '';
   if (/^https?:\/\//i.test(url)) {
     return shouldProxyRemoteAssetUrl(url)
-      ? `${getApiAssetBaseUrl()}/asset-proxy?url=${encodeURIComponent(url)}`
+      ? `${getApiBaseUrl()}/asset-proxy?url=${encodeURIComponent(url)}`
       : url;
   }
   if (url.startsWith('data:') || url.startsWith('blob:')) return url;
