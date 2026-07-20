@@ -360,6 +360,14 @@ function apiAssetBaseUrl(): string {
   return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1').replace(/\/api\/v1\/?$/, '');
 }
 
+function apiBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1').replace(/\/+$/, '');
+}
+
+function campaignAssetProxySrc(url: string): string {
+  return `${apiBaseUrl()}/asset-proxy?url=${encodeURIComponent(url)}`;
+}
+
 function isRemoteCampaignAssetUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -375,7 +383,7 @@ function campaignImageSrc(url?: string | null): string {
   if (!url) return '';
   if (/^https?:\/\//i.test(url)) {
     return isRemoteCampaignAssetUrl(url)
-      ? `${apiAssetBaseUrl()}/asset-proxy?url=${encodeURIComponent(url)}`
+      ? campaignAssetProxySrc(url)
       : url;
   }
   if (url.startsWith('/images/') || url.startsWith('/uploads/')) {
