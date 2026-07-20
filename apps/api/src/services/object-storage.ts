@@ -61,6 +61,40 @@ function objectKeyFromPublicUrl(url: string, publicUrl: string): string | null {
   }
 }
 
+function objectKeyFromAwsS3Url(url: string, bucket: string, region: string): string | null {
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'https:') return null;
+
+    const hostname = parsedUrl.hostname.toLowerCase();
+    const bucketName = bucket.toLowerCase();
+    const normalizedRegion = region.toLowerCase();
+    const objectPath = trimSlashes(parsedUrl.pathname);
+    if (!objectPath) return null;
+
+    // Support old records saved with the raw S3 public URL even when
+    // AWS_S3_PUBLIC_URL later changes to CloudFront or a custom CDN.
+    const virtualHostedNames = new Set([
+      `${bucketName}.s3.${normalizedRegion}.amazonaws.com`,
+      `${bucketName}.s3.amazonaws.com`,
+    ]);
+    if (virtualHostedNames.has(hostname)) return decodeURIComponent(objectPath);
+
+    const pathStyleNames = new Set([
+      `s3.${normalizedRegion}.amazonaws.com`,
+      's3.amazonaws.com',
+    ]);
+    if (!pathStyleNames.has(hostname)) return null;
+
+    const bucketPrefix = `${bucket}/`;
+    return objectPath.startsWith(bucketPrefix)
+      ? decodeURIComponent(objectPath.slice(bucketPrefix.length))
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function optionalEnv(...names: string[]): string | undefined {
   for (const name of names) {
     const value = process.env[name]?.trim();
@@ -149,7 +183,8 @@ class AwsS3ObjectStorage implements AssetStorage {
   }
 
   async deleteByPublicUrl(url: string): Promise<void> {
-    const key = objectKeyFromPublicUrl(url, this.config.publicUrl);
+    const key = objectKeyFromPublicUrl(url, this.config.publicUrl)
+      ?? objectKeyFromAwsS3Url(url, this.config.bucket, this.config.region);
     if (!key) return;
 
     await this.client.send(new DeleteObjectCommand({
@@ -186,7 +221,8 @@ class AwsS3ObjectStorage implements AssetStorage {
   }
 
   async readByPublicUrl(url: string): Promise<Buffer | null> {
-    const key = objectKeyFromPublicUrl(url, this.config.publicUrl);
+    const key = objectKeyFromPublicUrl(url, this.config.publicUrl)
+      ?? objectKeyFromAwsS3Url(url, this.config.bucket, this.config.region);
     if (!key) return null;
 
     return this.readByKey(key);
@@ -274,7 +310,13 @@ function configuredPublicUrls(): string[] {
 }
 
 export function isObjectStoragePublicUrl(url: string): boolean {
-  return configuredPublicUrls().some((publicUrl) => objectKeyFromPublicUrl(url, publicUrl) !== null);
+  const configuredPublicUrlMatch = configuredPublicUrls()
+    .some((publicUrl) => objectKeyFromPublicUrl(url, publicUrl) !== null);
+  if (configuredPublicUrlMatch) return true;
+
+  const bucket = optionalEnv('AWS_S3_BUCKET');
+  const region = optionalEnv('AWS_S3_REGION', 'AWS_REGION');
+  return Boolean(bucket && region && objectKeyFromAwsS3Url(url, bucket, region));
 }
 
 function tryCreateAssetStorage(): AssetStorage | null {
