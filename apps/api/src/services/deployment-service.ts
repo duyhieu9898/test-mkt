@@ -15,6 +15,10 @@ import {
 } from '@1person/core/db';
 import { pageRendererService } from './page-renderer-service';
 import { deleteObjectByKey, saveObject } from './object-storage';
+import {
+  hostedLandingPageCurrentKey,
+  hostedLandingPageVersionKey,
+} from './landing-site-hosting';
 
 // =============================================================================
 // TYPES
@@ -230,9 +234,8 @@ export class DeploymentService {
   }
 
   /**
-   * Publish static HTML to object storage. A single Cloudflare Worker maps the requested
-   * subdomain to sites/<subdomain>/index.html, so publishing does not create
-   * one Cloudflare project per customer page.
+   * Publish static HTML to object storage. The public URL is a stable path
+   * such as /sites/<slug>, while the actual HTML lives at sites/<slug>/index.html.
    */
   private async deployToCloudflare(
     bundle: { html: string; assets: Array<{ filename: string; content: string }> },
@@ -256,13 +259,13 @@ export class DeploymentService {
     }
 
     await saveObject({
-      key: `sites/${subdomain}/versions/${versionId}/index.html`,
+      key: hostedLandingPageVersionKey(subdomain, versionId),
       body: Buffer.from(bundle.html, 'utf8'),
       contentType: 'text/html; charset=utf-8',
       cacheControl: 'public, max-age=31536000, immutable',
     });
     const current = await saveObject({
-      key: `sites/${subdomain}/index.html`,
+      key: hostedLandingPageCurrentKey(subdomain),
       body: Buffer.from(bundle.html, 'utf8'),
       contentType: 'text/html; charset=utf-8',
       cacheControl: 'public, max-age=60, must-revalidate',
@@ -309,9 +312,9 @@ export class DeploymentService {
     }
 
     throw new Error(
-      `Landing Page HTML was uploaded to object storage, but the public Worker did not serve it`
-      + `${lastStatus ? ` (HTTP ${lastStatus})` : ''}. Deploy the Worker from `
-      + 'apps/landing-site-worker and confirm URL_MODE, SITE_STORAGE_PREFIX, and SITE_STORAGE_PUBLIC_BASE_URL.',
+      `Landing Page HTML was uploaded to object storage, but the public URL did not serve it`
+      + `${lastStatus ? ` (HTTP ${lastStatus})` : ''}. Confirm nginx proxies /sites/ to the API `
+      + 'and LANDING_PAGE_PUBLIC_BASE_URL points to the same /sites path.',
     );
   }
 

@@ -120,9 +120,24 @@ assetsLibrary.post('/company/:companyId/upload', async (c) => {
   }
 
   // Validate file extension (defense in depth — don't rely on mime type alone)
-  const allowedExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'mp4', 'webm', 'mov', 'ico'];
-  const ext = file.name.split('.').pop()?.toLowerCase() || '';
-  if (!allowedExts.includes(ext)) {
+  const allowedExts = ['jpg', 'jpeg', 'jpe', 'jfif', 'png', 'gif', 'webp', 'svg', 'mp4', 'webm', 'mov', 'ico'];
+  const mimeExtensionFallbacks: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg',
+    'image/x-icon': 'ico',
+    'image/vnd.microsoft.icon': 'ico',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/quicktime': 'mov',
+  };
+  const extFromName = file.name.split('.').pop()?.toLowerCase() || '';
+  const ext = allowedExts.includes(extFromName)
+    ? extFromName
+    : mimeExtensionFallbacks[file.type];
+  if (!ext) {
     throw new HTTPException(400, { message: 'This file type is not supported.' });
   }
 
