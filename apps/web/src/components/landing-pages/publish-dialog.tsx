@@ -90,10 +90,8 @@ interface PublishHistoryItem {
 type PublishTarget = 'hosted' | 'wordpress';
 type WordPressStatus = 'draft' | 'publish';
 
-const HOSTED_PUBLISHING_ENABLED = false;
-
 function normalizeSubdomain(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+/, '');
+  return value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '');
 }
 
 function getPageDepth(page: WordPressPage, pagesById: Map<number, WordPressPage>) {
@@ -335,7 +333,7 @@ export function PublishDialog({
     if (!page) return;
     setSubdomain(page.subdomain || page.slug || '');
     if (page.deploymentProvider === 'wordpress') setTarget('wordpress');
-    if (page.deploymentProvider === 'cloudflare' && HOSTED_PUBLISHING_ENABLED) setTarget('hosted');
+    if (page.deploymentProvider === 'cloudflare') setTarget('hosted');
     if (page.deploymentProvider === 'wordpress' && page.status === 'published') setWpStatus('publish');
   }, [page, open]);
 
@@ -350,6 +348,14 @@ export function PublishDialog({
     setParentPageId(current.parentPageId ? String(current.parentPageId) : '');
     setTemplate(current.template || 'default');
   }, [options?.wordpress.current]);
+
+  useEffect(() => {
+    if (!open || !options || page?.deploymentProvider) return;
+    const canUseHosted = options.hosted.urlMode === 'path'
+      ? !!options.hosted.baseUrl
+      : !!options.hosted.baseDomain;
+    if (!options.wordpress.connected && canUseHosted) setTarget('hosted');
+  }, [open, options, page?.deploymentProvider]);
 
   const isPublished = page?.status === 'published' && !!page.publishedUrl;
   const publishedTarget: PublishTarget | null = page?.deploymentProvider === 'wordpress'
@@ -387,7 +393,6 @@ export function PublishDialog({
   const handlePublish = async () => {
     if (!token) return;
     if (target === 'hosted') {
-      if (!HOSTED_PUBLISHING_ENABLED) return toast.info('Public website publishing is coming soon.');
       if (!hostedConfigured) return toast.error('Hosted website URL is not configured.');
       if (normalizedSubdomain.length < 3) return toast.error('Website address must use at least 3 characters.');
     }
@@ -540,27 +545,18 @@ export function PublishDialog({
               <RadioGroup
                 value={target}
                 onValueChange={(value) => {
-                  if (value === 'hosted' && !HOSTED_PUBLISHING_ENABLED) {
-                    toast.info('Create a new public website is coming soon.');
-                    return;
-                  }
                   setTarget(value as PublishTarget);
                 }}
                 className="grid gap-3 sm:grid-cols-2"
               >
-                <label className={`flex gap-3 border p-4 ${target === 'hosted' ? 'border-primary bg-primary/5' : ''} ${!HOSTED_PUBLISHING_ENABLED || (isPublished && publishedTarget !== 'hosted') ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                <label className={`flex gap-3 border p-4 ${target === 'hosted' ? 'border-primary bg-primary/5' : ''} ${isPublished && publishedTarget !== 'hosted' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
                   <RadioGroupItem
                     value="hosted"
-                    disabled={!HOSTED_PUBLISHING_ENABLED || (isPublished && publishedTarget !== 'hosted')}
+                    disabled={isPublished && publishedTarget !== 'hosted'}
                   />
                   <Server className="h-5 w-5 shrink-0" />
                   <span>
-                    <span className="flex items-center gap-2 font-semibold">
-                      Create a new public website
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-                        Coming soon
-                      </span>
-                    </span>
+                    <span className="block font-semibold">Create a new public website</span>
                     <span className="block text-sm text-muted-foreground">
                       We host it and give you a public link.
                     </span>
@@ -735,7 +731,6 @@ export function PublishDialog({
               disabled={
                 submitting
                 || optionsLoading
-                || (target === 'hosted' && !HOSTED_PUBLISHING_ENABLED)
                 || (target === 'hosted' && (!hostedConfigured || normalizedSubdomain.length < 3))
                 || (target === 'wordpress' && !options?.wordpress.connected)
               }

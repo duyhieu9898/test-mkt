@@ -9,6 +9,7 @@ import {
   assertWordPressPageIdentity,
   resolveWordPressPageId,
 } from './wordpress-page-identity';
+import { normalizeHostedLandingSlug } from './landing-site-hosting';
 
 export type LandingPagePublishTarget = 'hosted' | 'wordpress';
 
@@ -31,10 +32,6 @@ export interface LandingPagePublishResult {
   url: string;
   status: 'draft' | 'published';
   message: string;
-}
-
-function normalizeSubdomain(value: string) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '');
 }
 
 function wordpressAdminEditUrl(siteUrl: string, pageId: number) {
@@ -66,7 +63,7 @@ export class LandingPagePublisher {
     input: PublishLandingPageInput,
     fallbackSlug: string,
   ): Promise<LandingPagePublishResult> {
-    const subdomain = normalizeSubdomain(input.subdomain || fallbackSlug);
+    const subdomain = normalizeHostedLandingSlug(input.subdomain || fallbackSlug);
     if (subdomain.length < 3 || subdomain.length > 60) {
       throw new Error('Website address must be between 3 and 60 characters.');
     }

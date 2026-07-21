@@ -7,6 +7,11 @@ import { prettyJSON } from 'hono/pretty-json';
 import { env } from './lib/env';
 import { errorHandler } from './middleware/error';
 import { isObjectStoragePublicUrl, readObjectFromPublicUrl } from './services/object-storage';
+import {
+  createHostedLandingPageResponse,
+  normalizeHostedLandingSlug,
+  readHostedLandingPageHtml,
+} from './services/landing-site-hosting';
 import { renderWidgetScript } from './services/website-widget';
 
 // Routes
@@ -221,6 +226,26 @@ async function handleAssetProxy(c: Context) {
 }
 
 app.get('/asset-proxy', handleAssetProxy);
+
+async function handleHostedLandingPage(c: Context) {
+  const rawSlug = c.req.param('slug') || '';
+  const slug = normalizeHostedLandingSlug(rawSlug);
+  if (!slug) {
+    return c.html('<!doctype html><html><body><h1>Page not found</h1></body></html>', 404);
+  }
+
+  const html = await readHostedLandingPageHtml(slug);
+  if (!html) {
+    return c.html('<!doctype html><html><body><h1>Page not found</h1></body></html>', 404);
+  }
+
+  return createHostedLandingPageResponse(slug, html);
+}
+
+// Public hosted landing pages. Nginx should proxy /sites/* to the API so the
+// customer-facing link can stay on the main production domain.
+app.get('/sites/:slug', handleHostedLandingPage);
+app.get('/sites/:slug/', handleHostedLandingPage);
 
 // Serve published landing pages (built-in hosting)
 app.get('/pages/:companyId/:slug', async (c) => {

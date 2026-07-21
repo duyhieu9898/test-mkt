@@ -534,7 +534,9 @@ export default function LaunchPage() {
     }
     const selectedFiles = Array.from(files).slice(0, remainingSlots);
     const validFiles = selectedFiles.filter((file) => {
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      const looksLikeSupportedImage = ['jpg', 'jpeg', 'jpe', 'jfif', 'png', 'webp'].includes(ext || '');
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) && !looksLikeSupportedImage) {
         toast.error(`${file.name} must be JPG, PNG, or WebP.`);
         return false;
       }
@@ -547,38 +549,46 @@ export default function LaunchPage() {
     if (validFiles.length === 0) return;
 
     setUploadingImages(true);
+    const failed: string[] = [];
     try {
       const uploaded: UploadedCampaignImage[] = [];
       for (const file of validFiles) {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('name', file.name.replace(/\.[^/.]+$/, ''));
-        formData.append('tags', JSON.stringify(['campaign-launcher', 'campaign-image']));
-        const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'}/assets-library/company/${companyId}/upload`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-            body: formData,
-          },
-        );
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data?.message || data?.error || `Failed to upload ${file.name}`);
-        }
-        if (data?.data?.id && data?.data?.url) {
-          uploaded.push({
-            id: data.data.id,
-            name: data.data.name || file.name,
-            url: data.data.url,
-            mimeType: data.data.mimeType,
-          });
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('name', file.name.replace(/\.[^/.]+$/, ''));
+          formData.append('tags', JSON.stringify(['campaign-launcher', 'campaign-image']));
+          const response = await fetch(
+            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1'}/assets-library/company/${companyId}/upload`,
+            {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+              body: formData,
+            },
+          );
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.message || data?.error || `Failed to upload ${file.name}`);
+          }
+          if (data?.data?.id && data?.data?.url) {
+            uploaded.push({
+              id: data.data.id,
+              name: data.data.name || file.name,
+              url: data.data.url,
+              mimeType: data.data.mimeType,
+            });
+          }
+        } catch (error) {
+          failed.push(`${file.name}: ${(error as Error).message || 'Upload failed'}`);
         }
       }
       if (uploaded.length > 0) {
         setCampaignImages((current) => [...current, ...uploaded].slice(0, 3));
         setImageMode('uploaded');
         toast.success(uploaded.length === 1 ? 'Image uploaded' : `${uploaded.length} images uploaded`);
+      }
+      if (failed.length > 0) {
+        toast.error(failed.length === 1 ? failed[0] : `${failed.length} images could not be uploaded.`);
       }
     } catch (error) {
       toast.error((error as Error).message || 'Failed to upload campaign images');
