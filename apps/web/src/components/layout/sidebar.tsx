@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useCompanies, useGrowthScore, useStreak } from '@/lib/api/hooks';
+import { appT, normalizeAppLanguage, type AppMessageKey } from '@/lib/app-language';
 
 const TESTING_UNLOCK_ALL = true;
 
@@ -130,6 +131,43 @@ const navigationGroups: NavigationGroup[] = [
   },
 ];
 
+const groupTranslationKeys: Record<string, AppMessageKey> = {
+  'Business Strategy': 'navBusinessStrategy',
+  'AI Team': 'navAiTeam',
+  Execution: 'navExecution',
+  Analytics: 'navAnalytics',
+  System: 'navSystem',
+};
+
+const itemTranslationKeys: Record<string, AppMessageKey> = {
+  'Growth Plan': 'navGrowthPlan',
+  'Brand IQ': 'navBrandIq',
+  'CEO Advisor': 'navCeoAdvisor',
+  Walkthrough: 'navWalkthrough',
+  'Your AI Team': 'navYourAiTeam',
+  'Knowledge Hub': 'navKnowledgeHub',
+  'Brain Hub': 'navBrainHub',
+  Campaigns: 'navCampaigns',
+  'Campaign Launcher': 'navCampaignLauncher',
+  'Landing Pages': 'navLandingPages',
+  'Content Autopilot': 'navContentAutopilot',
+  'Content Editor': 'navContentEditor',
+  'AI Visibility (GEO)': 'navAiVisibility',
+  'Market & Competitors': 'navMarket',
+  'Marketing Playbooks': 'navPlaybooks',
+  Sales: 'navSales',
+  'Social Media': 'navSocialMedia',
+  Channels: 'navChannels',
+  'Inbox & Messages': 'navInbox',
+  Chatbot: 'navChatbot',
+  Assets: 'navAssets',
+  Brain: 'navBrain',
+  Trust: 'navTrust',
+  'Credits & Billing': 'navCredits',
+  Settings: 'settings',
+  Admin: 'navAdmin',
+};
+
 export function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
@@ -166,6 +204,7 @@ export function Sidebar() {
   const hasCompany = Boolean(companyId);
   const currentCompany = companies?.find((company) => company.id === companyId);
   const companyName = currentCompany?.name || companies?.[0]?.name || 'My Business';
+  const language = normalizeAppLanguage(currentCompany?.settings?.language || companies?.[0]?.settings?.language);
 
   const { data: streakData } = useStreak(companyId ?? '');
   const { data: growthScoreData } = useGrowthScore(companyId ?? '');
@@ -232,6 +271,8 @@ export function Sidebar() {
   const renderItem = (item: NavigationItem, group: NavigationGroup) => {
     const href = itemHref(item);
     const active = isItemActive(item);
+    const translationKey = itemTranslationKeys[item.name];
+    const label = translationKey ? appT(language, translationKey) : item.name;
     const locked = !TESTING_UNLOCK_ALL
       && hasCompany
       && (item.unlockLevel ?? 1) > currentLevel;
@@ -245,7 +286,7 @@ export function Sidebar() {
           title={locked ? `Unlocks at Level ${item.unlockLevel}` : 'Create a company first'}
         >
           <item.icon className="h-4 w-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{item.name}</span>
+          <span className="min-w-0 flex-1 truncate">{label}</span>
           {locked && <Lock className="h-3 w-3" />}
         </span>
       );
@@ -267,7 +308,7 @@ export function Sidebar() {
         )}
       >
         <item.icon className="h-4 w-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">{item.name}</span>
+        <span className="min-w-0 flex-1 truncate">{label}</span>
       </Link>
     );
   };
@@ -302,7 +343,7 @@ export function Sidebar() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{companyName}</p>
-            <p className="text-xs font-medium text-emerald-600">Active</p>
+            <p className="text-xs font-medium text-emerald-600">{appT(language, 'active')}</p>
           </div>
           <ChevronRight className="h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5" />
         </Link>
@@ -325,7 +366,7 @@ export function Sidebar() {
           )}
         >
           <LayoutDashboard className="h-5 w-5" />
-          <span className="flex-1">Dashboard</span>
+          <span className="flex-1">{appT(language, 'dashboard')}</span>
           {streakDays > 0 && (
             <span className={cn(
               'flex items-center gap-0.5 px-1.5 py-0.5 text-[10px]',
@@ -340,7 +381,7 @@ export function Sidebar() {
         {navigationGroups.map((group) => (
           <section key={group.title} className={cn('rounded-xl p-2', group.containerClass)}>
             <h2 className={cn('px-2 pb-1.5 pt-1 text-[10px] font-bold uppercase', group.titleClass)}>
-              {group.title}
+              {groupTranslationKeys[group.title] ? appT(language, groupTranslationKeys[group.title]) : group.title}
             </h2>
             <div className="space-y-0.5">
               {group.items.map((item) => renderItem(item, group))}
@@ -359,7 +400,7 @@ export function Sidebar() {
             className="flex min-h-10 items-center gap-2 rounded-lg bg-violet-50 px-3 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-100"
           >
             <Sparkles className="h-4 w-4" />
-            Create New Page
+            {appT(language, 'createNewPage')}
           </Link>
         ) : (
           <Link
@@ -370,7 +411,7 @@ export function Sidebar() {
             className="flex min-h-10 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground"
           >
             <Rocket className="h-4 w-4" />
-            Get Started
+            {appT(language, 'getStarted')}
           </Link>
         )}
       </div>

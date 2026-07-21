@@ -8,6 +8,7 @@
  */
 
 import { buildBusinessContext, type BusinessContext } from './business-context';
+import { contentLanguageName, normalizeContentLanguage } from '../lib/language';
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { getTenantAI } from '../lib/tenant-ai';
 import { db } from '../lib/db';
@@ -132,14 +133,18 @@ async function buildSafeBusinessContext(companyId: string): Promise<BusinessCont
         description: true,
         businessType: true,
         businessPlan: true,
+        settings: true,
       },
     });
     const businessPlan = company?.businessPlan as BusinessPlan | null | undefined;
+    const language = normalizeContentLanguage(company?.settings?.language);
     return {
       companyName: company?.name || 'Business',
       industry: company?.industry || 'Unknown',
       description: company?.description || '',
       businessType: company?.businessType || '',
+      language,
+      languageName: contentLanguageName(language),
       products: businessPlan?.offerings ?? [],
       pricing: [],
       targetAudience: businessPlan?.targetAudience?.demographics ?? [],

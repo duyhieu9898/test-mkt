@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -34,10 +34,12 @@ import {
   Plus,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
+import { APP_LANGUAGES, APP_LANGUAGE_LABELS, normalizeAppLanguage } from '@/lib/app-language';
 
 interface PageGeneratorWizardProps {
   companyName?: string;
   companyIndustry?: string;
+  initialLanguage?: string;
   onGenerate: (config: PageConfig) => void;
   onCancel: () => void;
   isGenerating: boolean;
@@ -121,6 +123,7 @@ const TOTAL_STEPS = STEPS.length;
 export function PageGeneratorWizard({
   companyName,
   companyIndustry,
+  initialLanguage,
   onGenerate,
   onCancel,
   isGenerating,
@@ -140,7 +143,7 @@ export function PageGeneratorWizard({
     primaryColor: '#3b82f6',
     sections: ['hero', 'problem', 'solution', 'features', 'cta'],
     contentLength: 'medium',
-    language: 'en',
+    language: normalizeAppLanguage(initialLanguage),
   });
 
   // Document attachment state
@@ -150,7 +153,13 @@ export function PageGeneratorWizard({
   const docInputRef = useRef<HTMLInputElement>(null);
 
   // Language state
-  const [language, setLanguage] = useState('en');
+  const [language, setLanguage] = useState(normalizeAppLanguage(initialLanguage));
+
+  useEffect(() => {
+    const normalized = normalizeAppLanguage(initialLanguage);
+    setLanguage(normalized);
+    setConfig((prev) => ({ ...prev, language: normalized }));
+  }, [initialLanguage]);
 
   // Image upload state
   const [heroImage, setHeroImage] = useState<{ url: string; role: string; alt: string } | null>(null);
@@ -376,16 +385,14 @@ export function PageGeneratorWizard({
               {/* Language Selector */}
               <div className="space-y-2">
                 <Label>Page Language</Label>
-                <Select value={language} onValueChange={setLanguage}>
+                <Select value={language} onValueChange={(value) => setLanguage(normalizeAppLanguage(value))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="vi">Tiếng Việt</SelectItem>
-                    <SelectItem value="ja">日本語</SelectItem>
-                    <SelectItem value="zh">中文</SelectItem>
-                    <SelectItem value="ko">한국어</SelectItem>
-                    <SelectItem value="fr">Français</SelectItem>
-                    <SelectItem value="es">Español</SelectItem>
+                    {APP_LANGUAGES.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {APP_LANGUAGE_LABELS[option]}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

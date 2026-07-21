@@ -780,6 +780,8 @@ export async function buildAdvisorContext(args: {
     companyId,
     tenantId,
     business: {
+      language: businessContext.value?.language ?? 'en',
+      languageName: businessContext.value?.languageName ?? 'English',
       profile: plainText(businessContext.value?.fullContext, 4500),
       growthPlan: growthPlan ?? null,
       brandVoice: snapshot?.brandVoice ?? null,

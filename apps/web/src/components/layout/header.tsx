@@ -6,6 +6,9 @@ import { useAuthStore } from '@/stores/auth-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { UserAvatar } from '@/components/ui/avatar';
+import { LanguageSwitcher } from '@/components/layout/language-switcher';
+import { useCompany } from '@/lib/api/hooks';
+import { appT, normalizeAppLanguage } from '@/lib/app-language';
 import {
   Bell,
   Search,
@@ -31,6 +34,8 @@ export function Header() {
   const { user, logout } = useAuthStore();
   const companyId = typeof params?.companyId === 'string' ? params.companyId : undefined;
   const settingsHref = companyId ? `/${companyId}/settings` : '/companies';
+  const { data: company } = useCompany(companyId ?? '');
+  const language = normalizeAppLanguage(company?.settings?.language);
 
   const handleLogout = () => {
     logout();
@@ -50,7 +55,7 @@ export function Header() {
           <div className="relative w-full">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search agents, tasks..."
+              placeholder={appT(language, 'searchPlaceholder')}
               className="pl-9 bg-muted/50 border-0 focus-visible:ring-1"
             />
             <kbd className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-xs text-muted-foreground">
@@ -68,17 +73,19 @@ export function Header() {
               size="sm"
               onClick={() => window.dispatchEvent(new Event('guided-tour:restart'))}
               className="gap-2"
-              title="Run the guided tour"
+              title={appT(language, 'runGuidedTour')}
             >
               <HelpCircle className="h-4 w-4" />
-              <span className="hidden sm:inline">Guided tour</span>
+              <span className="hidden sm:inline">{appT(language, 'guidedTour')}</span>
             </Button>
           )}
+
+          <LanguageSwitcher companyId={companyId} />
 
           {/* AI Status */}
           <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 text-green-600 text-sm">
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span>AI Active</span>
+            <span>{appT(language, 'aiActive')}</span>
           </div>
 
           {/* Notifications */}
@@ -108,18 +115,18 @@ export function Header() {
               <DropdownMenuSeparator />
               <DropdownMenuItem>
                 <User className="w-4 h-4 mr-2" />
-                Profile
+                {appT(language, 'profile')}
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link href={settingsHref}>
                   <Settings className="w-4 h-4 mr-2" />
-                  Settings
+                  {appT(language, 'settings')}
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="text-destructive">
                 <LogOut className="w-4 h-4 mr-2" />
-                Log out
+                {appT(language, 'logout')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

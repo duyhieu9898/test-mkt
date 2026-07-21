@@ -10,6 +10,7 @@ import type { FTUXAgent } from '@/lib/ftux/types';
 import { useAuthStore } from '@/stores/auth-store';
 import { AiTeamOrgChart } from '@/components/ai-team/ai-team-org-chart';
 import { toast } from 'sonner';
+import { appT, type AppLanguage } from '@/lib/app-language';
 
 interface OrgChartViewProps {
   agents: FTUXAgent[];
@@ -17,9 +18,11 @@ interface OrgChartViewProps {
   companyName: string;
   onContinue: () => void;
   onAgentsUpdated?: (agents: FTUXAgent[]) => void;
+  language?: AppLanguage;
 }
 
-export function OrgChartView({ agents, companyId, companyName, onContinue, onAgentsUpdated }: OrgChartViewProps) {
+export function OrgChartView({ agents, companyId, companyName, onContinue, onAgentsUpdated, language = 'en' }: OrgChartViewProps) {
+  const t = (key: Parameters<typeof appT>[1]) => appT(language, key);
   const [currentAgents, setCurrentAgents] = useState(agents);
   const [editInput, setEditInput] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -45,22 +48,23 @@ export function OrgChartView({ agents, companyId, companyName, onContinue, onAge
           currentTeam: currentAgents,
           request: editInput,
           companyName,
+          language,
         }),
       });
 
       if (!res.ok) {
-        throw new Error('Your team could not be updated');
+        throw new Error(language === 'ja' ? 'AIチームを更新できませんでした' : 'Your team could not be updated');
       }
       const data = await res.json();
       if (data.agents && data.agents.length > 0) {
         setCurrentAgents(data.agents);
         onAgentsUpdated?.(data.agents);
-        toast.success('Your AI team has been updated');
+        toast.success(language === 'ja' ? 'AIチームを更新しました' : 'Your AI team has been updated');
       }
 
       setEditInput('');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Your team could not be updated');
+      toast.error(error instanceof Error ? error.message : language === 'ja' ? 'AIチームを更新できませんでした' : 'Your team could not be updated');
     } finally {
       setIsUpdating(false);
     }
@@ -83,9 +87,9 @@ export function OrgChartView({ agents, companyId, companyName, onContinue, onAge
           >
             <Users className="w-8 h-8 text-white" />
           </motion.div>
-          <h1 className="text-2xl font-bold mb-2">Your AI Team is Ready!</h1>
+          <h1 className="text-2xl font-bold mb-2">{t('aiTeamReady')}</h1>
           <p className="text-muted-foreground">
-            {currentAgents.length} AI agents for <span className="text-foreground font-medium">{companyName}</span>
+            {currentAgents.length} {t('aiAgentsFor')} <span className="text-foreground font-medium">{companyName}</span>
           </p>
         </div>
 
@@ -109,23 +113,23 @@ export function OrgChartView({ agents, companyId, companyName, onContinue, onAge
               className="w-full text-center py-3 text-sm text-muted-foreground hover:text-primary transition-colors flex items-center justify-center gap-2"
             >
               <MessageSquare className="w-4 h-4" />
-              Want to change the team? Tell us what you need
+              {t('changeTeamQuestion')}
             </button>
           ) : (
             <Card>
               <CardContent className="p-4">
                 <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-primary" />
-                  Describe what you'd like to change
+                  {t('describeTeamChange')}
                 </p>
                 <p className="text-xs text-muted-foreground mb-3">
-                  E.g. "Add a customer support agent under Carol Lee" or "I need a content writer in the marketing team" or "Remove Eva Garcia"
+                  {t('teamChangeExample')}
                 </p>
                 <form onSubmit={(e) => { e.preventDefault(); handleCustomize(); }} className="flex gap-2">
                   <Input
                     value={editInput}
                     onChange={(e) => setEditInput(e.target.value)}
-                    placeholder="I need a customer support person..."
+                    placeholder={t('teamChangePlaceholder')}
                     disabled={isUpdating}
                     className="flex-1"
                   />
@@ -150,7 +154,7 @@ export function OrgChartView({ agents, companyId, companyName, onContinue, onAge
             size="lg"
             className="gap-2 bg-gradient-to-r from-primary to-purple-500"
           >
-            Continue
+            {t('continue')}
             <ArrowRight className="w-4 h-4" />
           </Button>
         </motion.div>

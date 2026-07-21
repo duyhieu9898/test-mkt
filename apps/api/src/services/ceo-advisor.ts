@@ -24,6 +24,11 @@ import {
 } from './advisor-context-builder';
 import { chargeFixedCredits, ensureSufficientCredits } from '../lib/credits';
 import { ensureTenantForCompany, getTenantAI } from '../lib/tenant-ai';
+import {
+  buildContentLanguageInstruction,
+  normalizeContentLanguage,
+  type ContentLanguage,
+} from '../lib/language';
 
 export interface GeneratedBrief extends AdvisorBriefInput {
   headline: string;
@@ -47,6 +52,31 @@ export interface GeneratedBrief extends AdvisorBriefInput {
 const VALID_SEVERITY = new Set(['critical', 'high', 'medium', 'low']);
 const VALID_CONFIDENCE = new Set(['high', 'medium', 'low']);
 const VALID_ACTION_KIND = new Set(['campaign', 'content', 'sales', 'market', 'operations']);
+
+function advisorCopy(language: ContentLanguage, key: 'reviewEvidence' | 'salesFollowUp' | 'trackOutcome' | 'prepareMessage' | 'prepareExecution' | 'ownPlan' | 'supportStep', subject: string): string {
+  if (language === 'ja') {
+    const copy = {
+      reviewEvidence: `根拠を確認し、次の方針を承認する: ${subject}.`,
+      salesFollowUp: `この提案を明確な営業フォローに落とし込み、顧客の反応を記録する: ${subject}.`,
+      trackOutcome: `基準値を設定し、成果を追跡する: ${subject}.`,
+      prepareMessage: `顧客向けメッセージと必要なコンテンツを準備する: ${subject}.`,
+      prepareExecution: `配信チャネルとクリエイティブ実行を準備する: ${subject}.`,
+      ownPlan: `実行計画を主導し、素材を調整し、進捗を報告する: ${subject}.`,
+      supportStep: `次のステップを支援する: ${subject}.`,
+    };
+    return copy[key];
+  }
+  const copy = {
+    reviewEvidence: `Review the evidence and approve the direction for: ${subject}.`,
+    salesFollowUp: `Turn this recommendation into a clear sales follow-up and report customer objections: ${subject}.`,
+    trackOutcome: `Set a baseline and track the outcome of: ${subject}.`,
+    prepareMessage: `Prepare the customer-facing message and content needed for: ${subject}.`,
+    prepareExecution: `Prepare the channel and creative execution for: ${subject}.`,
+    ownPlan: `Own the execution plan, coordinate assets, and report progress for: ${subject}.`,
+    supportStep: `Support the next step for: ${subject}.`,
+  };
+  return copy[key];
+}
 
 function validLink(link: unknown, companyId: string): string | undefined {
   if (typeof link !== 'string') return undefined;
@@ -139,15 +169,15 @@ const ACTION_ROLE_PRIORITY: Record<NonNullable<BriefAction['actionKind']>, strin
   operations: ['ceo', 'analyst', 'marketing_manager', 'sales_manager'],
 };
 
-function fallbackTaskCopy(action: BriefAction, member: AdvisorTeamMember): string {
+function fallbackTaskCopy(action: BriefAction, member: AdvisorTeamMember, language: ContentLanguage = 'en'): string {
   const subject = action.title.replace(/[.!?]+$/, '');
-  if (member.role === 'ceo') return `Review the evidence and approve the direction for: ${subject}.`;
-  if (member.role === 'sales_manager') return `Turn this recommendation into a clear sales follow-up and report customer objections: ${subject}.`;
-  if (member.role === 'analyst') return `Set a baseline and track the outcome of: ${subject}.`;
-  if (member.role === 'content_creator') return `Prepare the customer-facing message and content needed for: ${subject}.`;
-  if (member.role === 'ads_specialist') return `Prepare the channel and creative execution for: ${subject}.`;
-  if (member.role === 'marketing_manager') return `Own the execution plan, coordinate assets, and report progress for: ${subject}.`;
-  return `Support the next step for: ${subject}.`;
+  if (member.role === 'ceo') return advisorCopy(language, 'reviewEvidence', subject);
+  if (member.role === 'sales_manager') return advisorCopy(language, 'salesFollowUp', subject);
+  if (member.role === 'analyst') return advisorCopy(language, 'trackOutcome', subject);
+  if (member.role === 'content_creator') return advisorCopy(language, 'prepareMessage', subject);
+  if (member.role === 'ads_specialist') return advisorCopy(language, 'prepareExecution', subject);
+  if (member.role === 'marketing_manager') return advisorCopy(language, 'ownPlan', subject);
+  return advisorCopy(language, 'supportStep', subject);
 }
 
 /**
@@ -158,6 +188,7 @@ function fallbackTaskCopy(action: BriefAction, member: AdvisorTeamMember): strin
 export function assignAdvisorTeamTasks(
   actions: BriefAction[],
   team: AdvisorTeamMember[],
+  language: ContentLanguage = 'en',
 ): BriefAction[] {
   if (team.length === 0) return actions;
   return actions.map((action) => {
@@ -182,7 +213,7 @@ export function assignAdvisorTeamTasks(
         role: member.role,
         title: member.title,
         department: member.department,
-        task: fallbackTaskCopy(action, member),
+        task: fallbackTaskCopy(action, member, language),
         expectedOutcome: action.impact,
       })),
     };
@@ -201,14 +232,20 @@ function buildGrowthPlanReviewAction(args: {
   companyId: string;
   health: Awaited<ReturnType<typeof buildAdvisorContext>>['growthPlanHealth'];
   evidenceById: Map<string, AdvisorEvidence>;
+  language?: ContentLanguage;
 }): BriefAction | null {
   if (args.health.status !== 'update_recommended') return null;
   const driftEvidence = args.evidenceById.get('business:growth-plan:drift');
+  const language = args.language ?? 'en';
 
   return {
-    title: `Review Growth Plan v${args.health.version + 1}`,
+    title: language === 'ja'
+      ? `Growth Plan v${args.health.version + 1}を見直す`
+      : `Review Growth Plan v${args.health.version + 1}`,
     why: args.health.reasons.join(' ').slice(0, 500),
-    impact: 'Keeps future campaigns and CEO recommendations aligned with the latest business evidence.',
+    impact: language === 'ja'
+      ? '今後のキャンペーンとCEO提案を最新の事業データに合わせます。'
+      : 'Keeps future campaigns and CEO recommendations aligned with the latest business evidence.',
     link: `/${args.companyId}/growth-plan`,
     severity: 'high',
     confidence: 'high',
@@ -221,6 +258,7 @@ function buildMarketResponseActions(args: {
   companyId: string;
   marketSignals: unknown[];
   evidenceById: Map<string, AdvisorEvidence>;
+  language?: ContentLanguage;
 }): BriefAction[] {
   const seen = new Set<string>();
   return args.marketSignals
@@ -246,7 +284,9 @@ function buildMarketResponseActions(args: {
       seen.add(key);
 
       return {
-        title: `Respond to ${competitorName}'s ${category}`,
+        title: args.language === 'ja'
+          ? `${competitorName}の${category}に対応する`
+          : `Respond to ${competitorName}'s ${category}`,
         why: String(signal.counterMove ?? campaignRecommendation.expectedOutcome ?? '').slice(0, 500),
         impact: campaignRecommendation.expectedOutcome,
         link: `/${args.companyId}/campaigns`,
@@ -362,6 +402,7 @@ export async function generateCeoBrief(args: {
 }): Promise<GeneratedBrief> {
   const { companyId, tenantId } = args;
   const context = await buildAdvisorContext({ companyId, tenantId });
+  const language = normalizeContentLanguage(context.business.language);
   const evidenceById = new Map(context.evidence.map((item) => [item.id, item]));
   const unavailableSources = context.sourceHealth
     .filter((source) => source.status === 'unavailable')
@@ -394,6 +435,7 @@ Prioritize what the CEO should do next using only the supplied company data.
 
 Rules:
 - Return STRICT JSON only. No markdown or prose outside JSON.
+- ${buildContentLanguageInstruction(language)}
 - Never treat an unavailable source as an empty business result.
 - Every action must cite 1-4 IDs from evidenceCatalog in "evidenceIds".
 - Do not cite IDs that are not present in evidenceCatalog.
@@ -519,11 +561,13 @@ Return:
     companyId,
     marketSignals: context.marketSignals,
     evidenceById,
+    language,
   });
   const growthPlanAction = buildGrowthPlanReviewAction({
     companyId,
     health: context.growthPlanHealth,
     evidenceById,
+    language,
   });
   const marketActionTitles = new Set(marketResponseActions.map((item) => item.title));
   const combinedActions = [
@@ -536,7 +580,7 @@ Return:
         ...combinedActions.filter((action) => action.link !== growthPlanAction.link),
       ].slice(0, 5)
     : combinedActions.slice(0, 5);
-  const assignedActions = assignAdvisorTeamTasks(prioritizedActions, context.team);
+  const assignedActions = assignAdvisorTeamTasks(prioritizedActions, context.team, language);
 
   const wins: BriefWin[] = Array.isArray(parsed.wins)
     ? parsed.wins.slice(0, 3).map((win: any) => ({
@@ -555,8 +599,12 @@ Return:
 
   if (unavailableSources.length > 0 && alerts.length < 3) {
     alerts.push({
-      what: 'Some company data was unavailable',
-      detail: `Advisor could not read: ${unavailableSources.join(', ')}. Recommendations avoid assuming those sources are empty.`,
+      what: language === 'ja'
+        ? '一部の会社データを読み取れませんでした'
+        : 'Some company data was unavailable',
+      detail: language === 'ja'
+        ? `Advisorは次の情報を読み取れませんでした: ${unavailableSources.join(', ')}。提案では、これらの情報源が空であるとは仮定しません。`
+        : `Advisor could not read: ${unavailableSources.join(', ')}. Recommendations avoid assuming those sources are empty.`,
       link: `/${companyId}/brain`,
     });
   }
@@ -564,7 +612,9 @@ Return:
   return {
     headline: typeof parsed.headline === 'string' && parsed.headline.trim()
       ? parsed.headline.trim().slice(0, 300)
-      : 'Here is your evidence-based brief for today.',
+      : language === 'ja'
+        ? '本日のデータに基づくアドバイスです。'
+        : 'Here is your evidence-based brief for today.',
     actions: assignedActions,
     wins,
     alerts,

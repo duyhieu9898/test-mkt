@@ -3,22 +3,26 @@
 import { motion } from 'framer-motion';
 import { Rocket, Search, FileText, Share2, Loader2, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { appT, type AppLanguage } from '@/lib/app-language';
 
 interface ExecutionTriggerViewProps {
   companyName: string;
   onExecute: () => void;
   isExecuting: boolean;
+  language?: AppLanguage;
 }
 
 export function ExecutionTriggerView({
   companyName,
   onExecute,
   isExecuting,
+  language = 'en',
 }: ExecutionTriggerViewProps) {
+  const t = (key: Parameters<typeof appT>[1]) => appT(language, key);
   const engines = [
-    { icon: Search, label: 'SEO Engine', desc: 'Optimize and track rankings' },
-    { icon: FileText, label: 'Content Engine', desc: 'Create SEO articles and pages' },
-    { icon: Share2, label: 'Social Engine', desc: 'Schedule and post content' },
+    { icon: Search, label: t('seoEngine'), desc: t('seoEngineDesc') },
+    { icon: FileText, label: t('contentEngine'), desc: t('contentEngineDesc') },
+    { icon: Share2, label: t('socialEngine'), desc: t('socialEngineDesc') },
   ];
 
   return (
@@ -39,9 +43,9 @@ export function ExecutionTriggerView({
           <Rocket className="w-10 h-10 text-white" />
         </motion.div>
 
-        <h2 className="text-3xl font-bold mb-3">Ready to launch?</h2>
+        <h2 className="text-3xl font-bold mb-3">{t('readyToLaunch')}</h2>
         <p className="text-muted-foreground text-lg mb-8">
-          Your AI team will start executing the growth plan for {companyName}
+          {t('readyToLaunchDesc')} {companyName}
         </p>
 
         {/* What will happen */}
@@ -87,12 +91,12 @@ export function ExecutionTriggerView({
             {isExecuting ? (
               <>
                 <Loader2 className="w-6 h-6 animate-spin" />
-                Activating AI Team...
+                {t('activatingAiTeam')}
               </>
             ) : (
               <>
                 <Rocket className="w-6 h-6" />
-                Start Growing My Company
+                {t('startGrowingCompany')}
               </>
             )}
           </Button>
@@ -104,7 +108,7 @@ export function ExecutionTriggerView({
           transition={{ delay: 0.8 }}
           className="mt-6 text-sm text-muted-foreground"
         >
-          Your AI agents will begin working autonomously
+          {t('agentsAutonomous')}
         </motion.p>
       </motion.div>
     </div>

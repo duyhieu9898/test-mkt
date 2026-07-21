@@ -9,15 +9,18 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, Brain, Shield, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useCompany } from '@/lib/api/hooks';
+import { appT, normalizeAppLanguage, type AppMessageKey } from '@/lib/app-language';
 
 const STORAGE_KEY = '1person.tour.campaigns.dismissed';
 
 interface Step {
-  title: string;
-  body: string;
+  titleKey: AppMessageKey;
+  bodyKey: AppMessageKey;
   icon: React.ReactNode;
   // Absolute position on screen (bottom-right style coach mark)
   position: { top?: string; left?: string; right?: string; bottom?: string };
@@ -26,22 +29,22 @@ interface Step {
 
 const STEPS: Step[] = [
   {
-    title: 'Create your first campaign',
-    body: 'Click “Generate Campaign” at the top right. Tell the AI your goal and audience — it will build banners, ads, and social posts in one click.',
+    titleKey: 'campaignsTourCreateTitle',
+    bodyKey: 'campaignsTourCreateDesc',
     icon: <Sparkles className="w-5 h-5 text-indigo-500" />,
     position: { top: '5.5rem', right: '1.5rem' },
     arrow: 'up',
   },
   {
-    title: 'Your Business Brain',
-    body: 'Everything the AI writes comes from what it knows about your brand, customers, and products. Keep your Brain updated for better results.',
+    titleKey: 'campaignsTourBrainTitle',
+    bodyKey: 'campaignsTourBrainDesc',
     icon: <Brain className="w-5 h-5 text-indigo-500" />,
     position: { top: '12rem', left: '17rem' },
     arrow: 'left',
   },
   {
-    title: 'Tamper-proof trust log',
-    body: 'Every AI action is recorded and cryptographically verified. You can always see what the AI did, when, and why.',
+    titleKey: 'campaignsTourTrustTitle',
+    bodyKey: 'campaignsTourTrustDesc',
     icon: <Shield className="w-5 h-5 text-indigo-500" />,
     position: { top: '19rem', left: '17rem' },
     arrow: 'left',
@@ -49,6 +52,10 @@ const STEPS: Step[] = [
 ];
 
 export function GuidedTour() {
+  const params = useParams<{ companyId?: string }>();
+  const companyId = typeof params?.companyId === 'string' ? params.companyId : '';
+  const { data: company } = useCompany(companyId);
+  const language = normalizeAppLanguage(company?.settings?.language);
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState(0);
@@ -113,7 +120,7 @@ export function GuidedTour() {
           >
             <button
               onClick={dismiss}
-              aria-label="Dismiss tour"
+              aria-label={appT(language, 'tourSkip')}
               className="absolute top-2.5 right-2.5 text-slate-400 hover:text-slate-600 transition-colors"
             >
               <X className="w-4 h-4" />
@@ -124,8 +131,8 @@ export function GuidedTour() {
                 {current.icon}
               </div>
               <div className="flex-1 min-w-0 pr-4">
-                <h3 className="font-semibold text-slate-900 text-sm">{current.title}</h3>
-                <p className="text-xs text-slate-600 mt-1 leading-relaxed">{current.body}</p>
+                <h3 className="font-semibold text-slate-900 text-sm">{appT(language, current.titleKey)}</h3>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">{appT(language, current.bodyKey)}</p>
               </div>
             </div>
 
@@ -146,7 +153,7 @@ export function GuidedTour() {
                     onClick={dismiss}
                     className="text-xs text-slate-500 hover:text-slate-700"
                   >
-                    Skip all
+                    {appT(language, 'tourSkipAll')}
                   </button>
                 )}
                 <Button
@@ -154,7 +161,7 @@ export function GuidedTour() {
                   onClick={next}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white h-7 text-xs px-3"
                 >
-                  {isLast ? 'Got it' : 'Next'}
+                  {isLast ? appT(language, 'tourGotIt') : appT(language, 'tourNext')}
                 </Button>
               </div>
             </div>

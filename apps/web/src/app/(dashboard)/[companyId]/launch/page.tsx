@@ -50,8 +50,10 @@ import {
   type LaunchStepStatus,
   type CampaignLaunch,
 } from '@/lib/api/launches-hooks';
+import { useCompany } from '@/lib/api/hooks';
 import { useBrandIq } from '@/lib/api/brand-iq-hooks';
 import { api } from '@/lib/api/client';
+import { normalizeAppLanguage } from '@/lib/app-language';
 import { useAuthStore } from '@/stores/auth-store';
 import { ImglyBannerEditor } from '@/components/marketing/imgly-banner-editor';
 import {
@@ -488,6 +490,8 @@ export default function LaunchPage() {
   const detail = useLaunch(companyId, activeLaunchId);
   const suggestions = useLaunchSuggestions(companyId);
   const brandIq = useBrandIq(companyId);
+  const company = useCompany(companyId);
+  const companyLanguage = normalizeAppLanguage(company.data?.settings?.language);
   const growthPlanPrefillKey = searchParams.toString();
 
   useEffect(() => {
@@ -626,6 +630,7 @@ export default function LaunchPage() {
         ...driveSourceRequestBody(sourceSelection),
         imageMode,
         assetIds: imageMode === 'uploaded' ? campaignImages.map((image) => image.id) : undefined,
+        language: companyLanguage,
         targets: launchTargets,
       });
       setActiveLaunchId(res.data.launchId);

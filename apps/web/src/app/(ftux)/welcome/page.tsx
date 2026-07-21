@@ -15,6 +15,7 @@ import { CelebrationView } from '@/components/ftux/celebration-view';
 import { SetupChecklist } from '@/components/setup-checklist';
 import { Button } from '@/components/ui/button';
 import { STEP_LABELS } from '@/lib/ftux/processing-simulation';
+import { appT, type AppLanguage } from '@/lib/app-language';
 import { api } from '@/lib/api/client';
 import type {
   DetectedBusinessInfo,
@@ -101,7 +102,9 @@ export default function FTUXWelcomePage() {
   const [finalizationError, setFinalizationError] = useState<string | null>(null);
   const [isApprovingPlan, setIsApprovingPlan] = useState(false);
   const [planApprovalError, setPlanApprovalError] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState<AppLanguage>('en');
   const token = useAuthStore((state) => state.token);
+  const t = useCallback((key: Parameters<typeof appT>[1]) => appT(selectedLanguage, key), [selectedLanguage]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -118,18 +121,19 @@ export default function FTUXWelcomePage() {
   }, []);
 
   // Poll backend status - REAL progress, not fake animation
-  const pollStatus = useCallback(async (sessionId: string) => {
+  const pollStatus = useCallback(async (sessionId: string, language: AppLanguage = selectedLanguage) => {
     if (!token) return;
+    const localT = (key: Parameters<typeof appT>[1]) => appT(language, key);
 
     // Map backend steps to thinking text
     const stepThinkingMap: Record<string, string> = {
-      understanding: 'Understanding your business...',
-      analyzing_website: 'Crawling and analyzing your website...',
-      creating_ceo: 'Creating your CEO agent...',
-      creating_marketing: 'Building marketing team...',
-      creating_operations: 'Setting up operations...',
-      generating_strategy: 'Generating growth strategy...',
-      setting_up_brand: 'Setting up brand identity...',
+      understanding: localT('stepUnderstanding'),
+      analyzing_website: localT('stepAnalyzingWebsite'),
+      creating_ceo: localT('stepCreatingCeo'),
+      creating_marketing: localT('stepCreatingMarketing'),
+      creating_operations: localT('stepCreatingOperations'),
+      generating_strategy: localT('stepGeneratingStrategy'),
+      setting_up_brand: localT('stepSettingUpBrand'),
     };
 
     let consecutivePollFailures = 0;
@@ -189,7 +193,7 @@ export default function FTUXWelcomePage() {
           }));
 
           const ftuxStrategy: FTUXStrategy = {
-            vision: 'AI-generated growth plan',
+            vision: selectedLanguage === 'ja' ? 'AI生成の成長プラン' : 'AI-generated growth plan',
             days: [],
           };
 
@@ -213,7 +217,7 @@ export default function FTUXWelcomePage() {
         // Handle error
         if (status.status === 'error') {
           if (pollingRef.current) clearInterval(pollingRef.current);
-          setError(status.error || 'Processing failed');
+          setError(status.error || (language === 'ja' ? '処理に失敗しました' : 'Processing failed'));
           processingRef.current = false;
         }
       } catch (err) {
@@ -221,7 +225,9 @@ export default function FTUXWelcomePage() {
         consecutivePollFailures += 1;
         if (consecutivePollFailures >= 3) {
           if (pollingRef.current) clearInterval(pollingRef.current);
-          setError(err instanceof Error ? err.message : 'Could not read onboarding status');
+          setError(err instanceof Error ? err.message : language === 'ja'
+            ? 'オンボーディング状況を読み取れませんでした'
+            : 'Could not read onboarding status');
           processingRef.current = false;
         }
       }
@@ -238,12 +244,15 @@ export default function FTUXWelcomePage() {
     setMasterPlan,
     setResults,
     setStep,
+    selectedLanguage,
   ]);
 
   // Handle prompt submission
-  const handlePromptSubmit = useCallback(async (prompt: string, url?: string) => {
+  const handlePromptSubmit = useCallback(async (prompt: string, url?: string, language?: AppLanguage) => {
     if (processingRef.current || !token) return;
     processingRef.current = true;
+    const contentLanguage = language ?? 'en';
+    setSelectedLanguage(contentLanguage);
 
     setUserPrompt(prompt);
     if (url) {
@@ -258,13 +267,16 @@ export default function FTUXWelcomePage() {
         prompt,
         websiteUrl: url,
         websiteOption: url ? 'has_website' : 'new_business',
+        language: contentLanguage,
       }, { token });
 
       // Start polling real backend status
-      pollStatus(response.sessionId);
+      pollStatus(response.sessionId, contentLanguage);
     } catch (err) {
       console.error('FTUX start error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start processing');
+      setError(err instanceof Error ? err.message : contentLanguage === 'ja'
+        ? '処理を開始できませんでした'
+        : 'Failed to start processing');
       processingRef.current = false;
     }
   }, [token, setUserPrompt, setWebsiteUrl, setInputType, startProcessing, pollStatus]);
@@ -287,12 +299,14 @@ export default function FTUXWelcomePage() {
       setFinalizationError(
         err instanceof Error
           ? err.message
-          : 'Could not prepare your company intelligence. Please try again.',
+          : selectedLanguage === 'ja'
+            ? '会社インテリジェンスを準備できませんでした。もう一度お試しください。'
+            : 'Could not prepare your company intelligence. Please try again.',
       );
     } finally {
       setIsFinalizing(false);
     }
-  }, [company, isFinalizing, setMasterPlan, setStep, token]);
+  }, [company, isFinalizing, selectedLanguage, setMasterPlan, setStep, token]);
 
   const handleBusinessDetailsSave = useCallback(async (details: DetectedBusinessInfo) => {
     if (!company || !token) return;
@@ -340,12 +354,14 @@ export default function FTUXWelcomePage() {
       setStep('execution-trigger');
     } catch (err) {
       setPlanApprovalError(
-        err instanceof Error ? err.message : 'Could not approve the Growth Plan. Please try again.',
+        err instanceof Error ? err.message : selectedLanguage === 'ja'
+          ? '成長プランを承認できませんでした。もう一度お試しください。'
+          : 'Could not approve the Growth Plan. Please try again.',
       );
     } finally {
       setIsApprovingPlan(false);
     }
-  }, [company, isApprovingPlan, setStep, token]);
+  }, [company, isApprovingPlan, selectedLanguage, setStep, token]);
 
   // Handle execution trigger
   const handleExecutionTrigger = useCallback(async () => {
@@ -375,30 +391,30 @@ export default function FTUXWelcomePage() {
   // Default master plan for display
   const displayMasterPlan: MasterPlan = masterPlan || {
     seoGrowthPlan: {
-      title: 'SEO Growth Plan',
-      description: 'Improve organic search visibility',
+      title: selectedLanguage === 'ja' ? 'SEO成長プラン' : 'SEO Growth Plan',
+      description: selectedLanguage === 'ja' ? '自然検索で見つかりやすくします' : 'Improve organic search visibility',
       items: [
-        { action: 'Optimize meta tags and descriptions', timeline: 'Week 1', expectedImpact: 'Better search indexing', priority: 'high' },
-        { action: 'Create SEO landing pages for key services', timeline: 'Week 1-2', expectedImpact: 'Target key search terms', priority: 'high' },
-        { action: 'Build internal linking structure', timeline: 'Week 2', expectedImpact: 'Improved authority', priority: 'medium' },
+        { action: selectedLanguage === 'ja' ? 'メタタグと説明文を最適化する' : 'Optimize meta tags and descriptions', timeline: selectedLanguage === 'ja' ? '1週目' : 'Week 1', expectedImpact: selectedLanguage === 'ja' ? '検索エンジンに理解されやすくなる' : 'Better search indexing', priority: 'high' },
+        { action: selectedLanguage === 'ja' ? '主要サービス向けのSEOランディングページを作成する' : 'Create SEO landing pages for key services', timeline: selectedLanguage === 'ja' ? '1〜2週目' : 'Week 1-2', expectedImpact: selectedLanguage === 'ja' ? '重要な検索語句を狙える' : 'Target key search terms', priority: 'high' },
+        { action: selectedLanguage === 'ja' ? '内部リンク構造を整える' : 'Build internal linking structure', timeline: selectedLanguage === 'ja' ? '2週目' : 'Week 2', expectedImpact: selectedLanguage === 'ja' ? 'サイト評価を高める' : 'Improved authority', priority: 'medium' },
       ],
     },
     contentPlan: {
-      title: 'Content Plan',
-      description: 'Create content that attracts and converts',
+      title: selectedLanguage === 'ja' ? 'コンテンツプラン' : 'Content Plan',
+      description: selectedLanguage === 'ja' ? '集客と成約につながるコンテンツを作成します' : 'Create content that attracts and converts',
       items: [
-        { action: 'Write pillar articles for main topics', timeline: 'Week 1-2', expectedImpact: 'Establish authority', priority: 'high' },
-        { action: 'Create content calendar', timeline: 'Week 1', expectedImpact: 'Consistent publishing', priority: 'medium' },
-        { action: 'Develop case studies', timeline: 'Week 2-3', expectedImpact: 'Build trust', priority: 'medium' },
+        { action: selectedLanguage === 'ja' ? '主要テーマの柱となる記事を書く' : 'Write pillar articles for main topics', timeline: selectedLanguage === 'ja' ? '1〜2週目' : 'Week 1-2', expectedImpact: selectedLanguage === 'ja' ? '専門性を示す' : 'Establish authority', priority: 'high' },
+        { action: selectedLanguage === 'ja' ? 'コンテンツカレンダーを作成する' : 'Create content calendar', timeline: selectedLanguage === 'ja' ? '1週目' : 'Week 1', expectedImpact: selectedLanguage === 'ja' ? '継続的に発信できる' : 'Consistent publishing', priority: 'medium' },
+        { action: selectedLanguage === 'ja' ? '事例・導入ストーリーを作成する' : 'Develop case studies', timeline: selectedLanguage === 'ja' ? '2〜3週目' : 'Week 2-3', expectedImpact: selectedLanguage === 'ja' ? '信頼を高める' : 'Build trust', priority: 'medium' },
       ],
     },
     socialMediaPlan: {
-      title: 'Social Media Plan',
-      description: 'Build brand awareness on social platforms',
+      title: selectedLanguage === 'ja' ? 'SNSプラン' : 'Social Media Plan',
+      description: selectedLanguage === 'ja' ? 'SNSでブランド認知を高めます' : 'Build brand awareness on social platforms',
       items: [
-        { action: 'Set up social media profiles', timeline: 'Week 1', expectedImpact: 'Brand presence', priority: 'high' },
-        { action: 'Post 3x/week with content mix', timeline: 'Ongoing', expectedImpact: 'Grow followers', priority: 'medium' },
-        { action: 'Engage with industry communities', timeline: 'Ongoing', expectedImpact: 'Network growth', priority: 'low' },
+        { action: selectedLanguage === 'ja' ? 'SNSプロフィールを整備する' : 'Set up social media profiles', timeline: selectedLanguage === 'ja' ? '1週目' : 'Week 1', expectedImpact: selectedLanguage === 'ja' ? 'ブランドの存在感を作る' : 'Brand presence', priority: 'high' },
+        { action: selectedLanguage === 'ja' ? '週3回、複数タイプの投稿を行う' : 'Post 3x/week with content mix', timeline: selectedLanguage === 'ja' ? '継続' : 'Ongoing', expectedImpact: selectedLanguage === 'ja' ? 'フォロワーを増やす' : 'Grow followers', priority: 'medium' },
+        { action: selectedLanguage === 'ja' ? '業界コミュニティと交流する' : 'Engage with industry communities', timeline: selectedLanguage === 'ja' ? '継続' : 'Ongoing', expectedImpact: selectedLanguage === 'ja' ? 'ネットワークを広げる' : 'Network growth', priority: 'low' },
       ],
     },
   };
@@ -438,6 +454,7 @@ export default function FTUXWelcomePage() {
             progress={progress}
             aiThinking={aiThinking}
             error={error}
+            language={selectedLanguage}
             onRetry={() => {
               if (pollingRef.current) clearInterval(pollingRef.current);
               processingRef.current = false;
@@ -465,6 +482,7 @@ export default function FTUXWelcomePage() {
             onSave={handleBusinessDetailsSave}
             isConfirming={isFinalizing}
             confirmError={finalizationError}
+            language={selectedLanguage}
             onBack={() => {
               reset();
               setStep('landing');
@@ -487,6 +505,7 @@ export default function FTUXWelcomePage() {
             companyName={company.name}
             onContinue={handleOrgChartContinue}
             onAgentsUpdated={setAgents}
+            language={selectedLanguage}
           />
         </motion.div>
       )}
@@ -505,6 +524,7 @@ export default function FTUXWelcomePage() {
             onApprove={handleMasterPlanApprove}
             isApproving={isApprovingPlan}
             approvalError={planApprovalError}
+            language={selectedLanguage}
           />
         </motion.div>
       )}
@@ -521,6 +541,7 @@ export default function FTUXWelcomePage() {
             companyName={company.name}
             onExecute={handleExecutionTrigger}
             isExecuting={isExecuting}
+            language={selectedLanguage}
           />
         </motion.div>
       )}
@@ -538,6 +559,7 @@ export default function FTUXWelcomePage() {
             agentCount={agents.length}
             taskCount={strategy?.days.reduce((sum, d) => sum + d.activities.length, 0) || 0}
             budget={500}
+            language={selectedLanguage}
             onComplete={() => router.push(`/${company.id}?tour=1`)}
           />
         </motion.div>
@@ -552,9 +574,9 @@ export default function FTUXWelcomePage() {
           <SetupChecklist variant="full" companyId={company.id} />
           <div className="text-center mt-6">
             <Button onClick={() => router.push(`/${company.id}`)}>
-              Go to Dashboard →
+              {t('goToDashboard')} →
             </Button>
-            <p className="text-xs text-muted-foreground mt-2">You can complete these steps anytime</p>
+            <p className="text-xs text-muted-foreground mt-2">{t('completeStepsAnytime')}</p>
           </div>
         </motion.div>
       )}

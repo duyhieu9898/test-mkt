@@ -34,6 +34,7 @@ import {
 } from '@1person/core/db';
 import { renderSkillKnowledgeBundle } from '@1person/core';
 import { llmGenerate, extractJSON } from '../lib/llm';
+import { buildContentLanguageInstruction } from '../lib/language';
 import { embedBrandIqProfile } from './embedding-service';
 
 // P2: ground the extraction in the product-marketing + customer-research playbooks
@@ -185,6 +186,7 @@ function buildPrompt(
   src: ExtractedSource | null,
   samples: string[],
   companyContext: string,
+  language?: unknown,
 ): string {
   const sourceBlock = src
     ? `WEBSITE TITLE: ${src.title ?? '(none)'}\nMETA DESCRIPTION: ${src.description ?? '(none)'}\nBODY EXCERPT (first 3000 chars):\n"""${src.bodyExcerpt}"""\nDETECTED COLORS: ${src.detectedColors.join(', ') || '(none)'}\nDETECTED FONTS: ${src.detectedFonts.join(', ') || '(none)'}`
@@ -196,6 +198,8 @@ function buildPrompt(
   return `You are a senior brand + product-marketing strategist. Analyze the company's existing public surface and extract a structured Brand IQ.
 
 Apply the playbooks below (product-marketing positioning + customer-research). Do NOT ask questions — infer from the material provided, and where evidence is thin, make a clearly reasonable best guess rather than leaving fields empty.
+
+${buildContentLanguageInstruction(language)}
 
 ${PMM_FRAMEWORK}
 
@@ -444,7 +448,7 @@ export async function generateBrandIq(companyId: string, input: BrandIqInput): P
   const companyContext = `${companyProfile}\n\n${input.companyContext ?? ''}`.slice(0, 18_000);
 
   // 2. LLM derivation
-  const prompt = buildPrompt(company.name, src, samples, companyContext);
+  const prompt = buildPrompt(company.name, src, samples, companyContext, company.settings?.language);
 
   let parsed: any = {};
   try {

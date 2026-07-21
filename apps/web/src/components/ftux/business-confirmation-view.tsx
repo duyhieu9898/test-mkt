@@ -11,6 +11,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import type { DetectedBusinessInfo, DetectedInfo, WebsiteAnalysis } from '@/lib/ftux/types';
+import { appT, type AppLanguage } from '@/lib/app-language';
 
 interface BusinessConfirmationViewProps {
   detectedInfo: DetectedInfo;
@@ -21,6 +22,7 @@ interface BusinessConfirmationViewProps {
   isConfirming?: boolean;
   confirmError?: string | null;
   onBack: () => void;
+  language?: AppLanguage;
 }
 
 export function BusinessConfirmationView({
@@ -32,7 +34,9 @@ export function BusinessConfirmationView({
   isConfirming = false,
   confirmError,
   onBack,
+  language = 'en',
 }: BusinessConfirmationViewProps) {
+  const t = (key: Parameters<typeof appT>[1]) => appT(language, key);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -44,11 +48,11 @@ export function BusinessConfirmationView({
     industry: businessInfo?.industry || businessInfo?.market || detectedInfo.market,
     market: businessInfo?.market || detectedInfo.market,
     model: businessInfo?.model || detectedInfo.model,
-    audience: businessInfo?.audience || 'General audience',
+    audience: businessInfo?.audience || (language === 'ja' ? '一般的な顧客' : 'General audience'),
     strategy: businessInfo?.strategy || detectedInfo.strategy,
     offerings: businessInfo?.offerings || [],
     valueProposition: businessInfo?.valueProposition || '',
-  }), [businessInfo, companyName, detectedInfo]);
+  }), [businessInfo, companyName, detectedInfo, language]);
   const [details, setDetails] = useState(initialDetails);
   const [draft, setDraft] = useState(initialDetails);
 
@@ -74,23 +78,23 @@ export function BusinessConfirmationView({
 
   const finalizationStages = [
     {
-      label: 'Building your Growth Plan',
-      detail: 'Turning your business context into practical priorities.',
+      label: t('finalGrowthPlan'),
+      detail: t('finalGrowthPlanDesc'),
       startsAt: 0,
     },
     {
-      label: 'Creating your Brand IQ',
-      detail: 'Defining audience, positioning, voice, and brand guidance.',
+      label: t('finalBrandIq'),
+      detail: t('finalBrandIqDesc'),
       startsAt: 32,
     },
     {
-      label: 'Preparing your first CEO advice',
-      detail: 'Prioritizing the most useful next actions for your company.',
+      label: t('finalAdvisor'),
+      detail: t('finalAdvisorDesc'),
       startsAt: 62,
     },
     {
-      label: 'Saving and checking everything',
-      detail: 'Making sure your company intelligence is ready to use.',
+      label: t('finalSave'),
+      detail: t('finalSaveDesc'),
       startsAt: 86,
     },
   ];
@@ -129,7 +133,9 @@ export function BusinessConfirmationView({
     };
 
     if (!normalized.companyName || !normalized.market || !normalized.model || !normalized.audience) {
-      setSaveError('Add a company name, market, business model, and target audience before saving.');
+      setSaveError(language === 'ja'
+        ? '保存する前に、会社名、市場、ビジネスモデル、ターゲット顧客を入力してください。'
+        : 'Add a company name, market, business model, and target audience before saving.');
       return;
     }
 
@@ -141,7 +147,9 @@ export function BusinessConfirmationView({
       setDraft(normalized);
       setIsEditing(false);
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : 'Could not save your changes. Please try again.');
+      setSaveError(error instanceof Error ? error.message : language === 'ja'
+        ? '変更を保存できませんでした。もう一度お試しください。'
+        : 'Could not save your changes. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -165,9 +173,9 @@ export function BusinessConfirmationView({
           >
             <CheckCircle2 className="w-7 h-7 text-green-600" />
           </motion.div>
-          <h2 className="text-2xl font-bold mb-2">We understand your business</h2>
+          <h2 className="text-2xl font-bold mb-2">{t('understandBusinessTitle')}</h2>
           <p className="text-muted-foreground">
-            Confirm these details so we can build the perfect AI team
+            {t('understandBusinessDesc')}
           </p>
         </div>
 
@@ -184,7 +192,7 @@ export function BusinessConfirmationView({
                   <h3 className="text-xl font-semibold">{details.companyName}</h3>
                   {websiteAnalysis && (
                     <div className="flex items-center gap-2 mt-1">
-                      <span className="text-xs font-medium text-muted-foreground">AI Confidence:</span>
+                      <span className="text-xs font-medium text-muted-foreground">{t('aiConfidence')}:</span>
                       <span className={`text-xs font-bold ${
                         (websiteAnalysis as any).businessInfo?.confidence >= 0.7 ? 'text-green-600' :
                         (websiteAnalysis as any).businessInfo?.confidence >= 0.4 ? 'text-amber-600' :
@@ -203,7 +211,7 @@ export function BusinessConfirmationView({
                   disabled={isSaving}
                 >
                   {isEditing ? <X className="w-3 h-3" /> : <Edit3 className="w-3 h-3" />}
-                  {isEditing ? 'Cancel' : 'Edit'}
+                  {isEditing ? t('cancel') : t('edit')}
                 </Button>
               </div>
 
@@ -211,7 +219,7 @@ export function BusinessConfirmationView({
                 <div className="space-y-5 border-t pt-5">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <Label htmlFor="business-company-name">Company name</Label>
+                      <Label htmlFor="business-company-name">{t('companyName')}</Label>
                       <Input
                         id="business-company-name"
                         value={draft.companyName}
@@ -220,17 +228,17 @@ export function BusinessConfirmationView({
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="business-industry">Industry</Label>
+                      <Label htmlFor="business-industry">{t('industry')}</Label>
                       <Input
                         id="business-industry"
                         value={draft.industry}
                         onChange={(event) => updateDraft('industry', event.target.value)}
-                        placeholder="Example: Food and beverage"
+                        placeholder={language === 'ja' ? '例：飲食業' : 'Example: Food and beverage'}
                         disabled={isSaving}
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="business-market">Market</Label>
+                      <Label htmlFor="business-market">{t('market')}</Label>
                       <Input
                         id="business-market"
                         value={draft.market}
@@ -239,60 +247,62 @@ export function BusinessConfirmationView({
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="business-model">Business model</Label>
+                      <Label htmlFor="business-model">{t('businessModel')}</Label>
                       <Input
                         id="business-model"
                         value={draft.model}
                         onChange={(event) => updateDraft('model', event.target.value)}
-                        placeholder="Example: Online sales and delivery"
+                        placeholder={language === 'ja' ? '例：オンライン販売と配送' : 'Example: Online sales and delivery'}
                         disabled={isSaving}
                       />
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="business-audience">Target audience</Label>
+                    <Label htmlFor="business-audience">{t('targetAudience')}</Label>
                     <Textarea
                       id="business-audience"
                       value={draft.audience}
                       onChange={(event) => updateDraft('audience', event.target.value)}
-                      placeholder="Who is most likely to buy from you?"
+                      placeholder={language === 'ja' ? '誰が主な顧客になりそうですか？' : 'Who is most likely to buy from you?'}
                       rows={2}
                       disabled={isSaving}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="business-offerings">Products or services</Label>
+                    <Label htmlFor="business-offerings">{t('productsServices')}</Label>
                     <Textarea
                       id="business-offerings"
                       value={draft.offerings.join('\n')}
                       onChange={(event) => updateDraft('offerings', event.target.value.split('\n'))}
-                      placeholder={'Add one item per line\nExample: In-store dining\nHome delivery'}
+                      placeholder={language === 'ja'
+                        ? '1行に1つずつ入力\n例：店内飲食\n宅配'
+                        : 'Add one item per line\nExample: In-store dining\nHome delivery'}
                       rows={3}
                       disabled={isSaving}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="business-value">What makes your business valuable?</Label>
+                    <Label htmlFor="business-value">{t('businessValue')}</Label>
                     <Textarea
                       id="business-value"
                       value={draft.valueProposition}
                       onChange={(event) => updateDraft('valueProposition', event.target.value)}
-                      placeholder="Describe the main reason customers choose you."
+                      placeholder={language === 'ja' ? '顧客があなたを選ぶ主な理由を説明してください。' : 'Describe the main reason customers choose you.'}
                       rows={2}
                       disabled={isSaving}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="business-strategy">Growth direction</Label>
+                    <Label htmlFor="business-strategy">{t('growthDirection')}</Label>
                     <Textarea
                       id="business-strategy"
                       value={draft.strategy}
                       onChange={(event) => updateDraft('strategy', event.target.value)}
-                      placeholder="How should the business attract and retain customers?"
+                      placeholder={language === 'ja' ? '顧客を獲得し、維持するための方向性を入力してください。' : 'How should the business attract and retain customers?'}
                       rows={2}
                       disabled={isSaving}
                     />
@@ -304,11 +314,11 @@ export function BusinessConfirmationView({
 
                   <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                     <Button variant="outline" onClick={cancelEditing} disabled={isSaving}>
-                      Cancel
+                      {t('cancel')}
                     </Button>
                     <Button onClick={handleSave} disabled={isSaving} className="gap-2">
                       {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                      {isSaving ? 'Saving...' : 'Save changes'}
+                      {isSaving ? t('saving') : t('saveChanges')}
                     </Button>
                   </div>
                 </div>
@@ -318,7 +328,7 @@ export function BusinessConfirmationView({
                     <div className="flex items-start gap-3">
                       <Target className="w-5 h-5 text-blue-500 mt-0.5 shrink-0" />
                       <div>
-                        <p className="text-sm font-medium text-muted-foreground">Market</p>
+                        <p className="text-sm font-medium text-muted-foreground">{t('market')}</p>
                         <p className="font-medium">{details.market}</p>
                       </div>
                     </div>
@@ -326,7 +336,7 @@ export function BusinessConfirmationView({
                     <div className="flex items-start gap-3">
                       <Package className="w-5 h-5 text-purple-500 mt-0.5 shrink-0" />
                       <div>
-                        <p className="text-sm font-medium text-muted-foreground">Business Model</p>
+                        <p className="text-sm font-medium text-muted-foreground">{t('businessModel')}</p>
                         <p className="font-medium">{details.model}</p>
                       </div>
                     </div>
@@ -334,7 +344,7 @@ export function BusinessConfirmationView({
                     <div className="flex items-start gap-3">
                       <Users className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
                       <div>
-                        <p className="text-sm font-medium text-muted-foreground">Target Audience</p>
+                        <p className="text-sm font-medium text-muted-foreground">{t('targetAudience')}</p>
                         <p className="font-medium">{details.audience}</p>
                       </div>
                     </div>
@@ -342,7 +352,7 @@ export function BusinessConfirmationView({
                     <div className="flex items-start gap-3">
                       <TrendingUp className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" />
                       <div>
-                        <p className="text-sm font-medium text-muted-foreground">Strategy</p>
+                        <p className="text-sm font-medium text-muted-foreground">{t('strategy')}</p>
                         <p className="font-medium">{details.strategy}</p>
                       </div>
                     </div>
@@ -350,7 +360,7 @@ export function BusinessConfirmationView({
 
                   {details.offerings.length > 0 && (
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground mb-2">Core Offerings</p>
+                      <p className="text-sm font-medium text-muted-foreground mb-2">{t('coreOfferings')}</p>
                       <div className="flex flex-wrap gap-2">
                         {details.offerings.map((offering, i) => (
                           <Badge key={i} variant="secondary">{offering}</Badge>
@@ -360,7 +370,7 @@ export function BusinessConfirmationView({
                   )}
                   {details.valueProposition && (
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground mb-1">Value Proposition</p>
+                      <p className="text-sm font-medium text-muted-foreground mb-1">{t('valueProposition')}</p>
                       <p className="text-sm">{details.valueProposition}</p>
                     </div>
                   )}
@@ -382,7 +392,7 @@ export function BusinessConfirmationView({
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Globe className="w-5 h-5 text-blue-500" />
-                    <h3 className="font-semibold">Website SEO Score</h3>
+                    <h3 className="font-semibold">{t('websiteSeoScore')}</h3>
                   </div>
                   <div className={`text-2xl font-bold ${
                     websiteAnalysis.seoAudit.score >= 80 ? 'text-green-600' :
@@ -395,13 +405,13 @@ export function BusinessConfirmationView({
 
                 {websiteAnalysis.seoAudit.missingElements.length > 0 && (
                   <div className="space-y-1">
-                    <p className="text-sm font-medium text-red-600">Issues Found:</p>
+                    <p className="text-sm font-medium text-red-600">{t('issuesFound')}</p>
                     {websiteAnalysis.seoAudit.missingElements.slice(0, 3).map((issue, i) => (
                       <p key={i} className="text-sm text-muted-foreground">• {issue}</p>
                     ))}
                     {websiteAnalysis.seoAudit.missingElements.length > 3 && (
                       <p className="text-sm text-muted-foreground">
-                        +{websiteAnalysis.seoAudit.missingElements.length - 3} more issues
+                        +{websiteAnalysis.seoAudit.missingElements.length - 3} {t('moreIssues')}
                       </p>
                     )}
                   </div>
@@ -410,7 +420,7 @@ export function BusinessConfirmationView({
                 {/* Social Profiles */}
                 {websiteAnalysis.socialProfiles.some(s => s.detected) && (
                   <div className="mt-4 pt-4 border-t">
-                    <p className="text-sm font-medium mb-2">Social Profiles Detected</p>
+                    <p className="text-sm font-medium mb-2">{t('socialProfilesDetected')}</p>
                     <div className="flex gap-2">
                       {websiteAnalysis.socialProfiles.filter(s => s.detected).map((profile, i) => (
                         <Badge key={i} variant="outline">{profile.platform}</Badge>
@@ -437,13 +447,13 @@ export function BusinessConfirmationView({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h3 className="font-semibold text-slate-900">Preparing your company intelligence</h3>
+                    <h3 className="font-semibold text-slate-900">{t('preparingCompanyIntelligence')}</h3>
                     <p className="mt-0.5 text-sm text-muted-foreground">
-                      One setup now, so Brand IQ and CEO Advisor are ready when you arrive.
+                      {t('preparingCompanyIntelligenceDesc')}
                     </p>
                   </div>
                   <span className="text-xs font-medium text-slate-500">
-                    Estimated {Math.round(estimatedProgress)}%
+                    {t('estimated')} {Math.round(estimatedProgress)}%
                   </span>
                 </div>
 
@@ -481,7 +491,7 @@ export function BusinessConfirmationView({
                 </div>
 
                 <p className="mt-5 border-t pt-3 text-xs text-muted-foreground">
-                  This may take about a minute. Please keep this page open while AI prepares the shared context.
+                  {t('finalKeepOpen')}
                 </p>
               </div>
             </div>
@@ -494,7 +504,7 @@ export function BusinessConfirmationView({
             className="flex gap-3 justify-center"
           >
             <Button variant="outline" onClick={onBack}>
-              Start Over
+              {t('startOver')}
             </Button>
             <Button
               onClick={onConfirm}
@@ -503,7 +513,7 @@ export function BusinessConfirmationView({
               disabled={isEditing || isSaving}
             >
               <CheckCircle2 className="w-4 h-4" />
-              Confirm & Build My Team
+              {t('confirmBuildTeam')}
             </Button>
           </motion.div>
         )}

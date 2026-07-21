@@ -12,6 +12,11 @@
  */
 
 import { llmGenerate, extractJSON } from '../lib/llm';
+import {
+  buildContentLanguageInstruction,
+  contentLanguageName,
+  normalizeContentLanguage,
+} from '../lib/language';
 import { BaseAgent, type AgentContext, type AgentResult } from './base-agent';
 import type { ExtractedContent } from './content-extraction-agent';
 
@@ -42,6 +47,7 @@ export class BusinessUnderstandingAgent extends BaseAgent {
     const extractedContent = input.extractedContent as ExtractedContent | undefined;
     const userInput = input.userInput as string | undefined;
     const url = input.url as string | undefined;
+    const language = normalizeContentLanguage(input.language);
 
     // We need at least extracted content or user input
     if (!extractedContent && !userInput) {
@@ -52,13 +58,14 @@ export class BusinessUnderstandingAgent extends BaseAgent {
     let previousProfile: string | undefined;
     try {
       const existing = await context.memory.recallKnowledge('company_profile');
-      if (existing.length > 0) {
-        previousProfile = existing[0].content.substring(0, 1000);
+      const latestProfile = existing[0];
+      if (latestProfile) {
+        previousProfile = latestProfile.content.substring(0, 1000);
       }
     } catch {}
 
     try {
-      const profile = await this.analyzeWithAI(extractedContent, userInput, url, previousProfile);
+      const profile = await this.analyzeWithAI(extractedContent, userInput, url, previousProfile, language);
 
       // Merge: user input overrides AI if conflict
       const finalProfile = this.mergeWithUserInput(profile, userInput);
@@ -103,8 +110,10 @@ export class BusinessUnderstandingAgent extends BaseAgent {
     extracted: ExtractedContent | undefined,
     userInput: string | undefined,
     url: string | undefined,
-    previousProfile: string | undefined
+    previousProfile: string | undefined,
+    language: string | undefined
   ): Promise<BusinessProfile> {
+    const outputLanguage = contentLanguageName(language);
     const contentSection = extracted
       ? `EXTRACTED WEBSITE CONTENT:
 <<<
@@ -138,7 +147,11 @@ ${extracted.rawTextSample}
 4. If information is missing, infer from context and set confidence accordingly
 5. businessType must be 3-5 words, hyper-specific (e.g., "Kids Coding Academy in HCMC" not "Education")
 6. targetAudience must include demographics: age, role, location, income level if detectable
-7. offerings must list SPECIFIC products/services with names, not categories`,
+7. offerings must list SPECIFIC products/services with names, not categories
+${buildContentLanguageInstruction(language)}
+8. Translate all descriptive business analysis values into ${outputLanguage}: businessType, targetAudience, coreOffering, industry, valueProposition, monetizationModel, market, strategy, and reasoning.
+9. Keep company names, brand names, product/course names, URLs, and exact source terms unchanged when translating them would be unnatural.
+10. If the output language is Japanese, do not write English prose in the descriptive values.`,
       }, {
         role: 'user',
         content: `Analyze this business and create a precise profile. ${url ? `URL: ${url}` : ''}
@@ -146,6 +159,8 @@ ${extracted.rawTextSample}
 ${contentSection}
 ${userSection}
 ${previousSection}
+
+Write descriptive JSON values in ${outputLanguage}. Keep only proper nouns and exact product/service names in their original language when needed.
 
 Return JSON:
 {
@@ -250,7 +265,7 @@ Return JSON:
     ];
     for (const pattern of patterns) {
       const match = input.match(pattern);
-      if (match) return match[1].trim();
+      if (match?.[1]) return match[1].trim();
     }
     return null;
   }
@@ -262,7 +277,7 @@ Return JSON:
     ];
     for (const pattern of patterns) {
       const match = input.match(pattern);
-      if (match) return match[1].trim();
+      if (match?.[1]) return match[1].trim();
     }
     return null;
   }

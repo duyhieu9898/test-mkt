@@ -6,6 +6,7 @@ import {
   generateBlogImages,
   type BlogImageVariation,
 } from './blog-image-variations';
+import { normalizeContentLanguage, resolveCompanyLanguage } from '../lib/language';
 
 export interface CreateCampaignBlogInput {
   companyId: string;
@@ -113,7 +114,9 @@ export async function createCampaignBlog(
   }
 
   const keyword = buildCampaignBlogKeyword(input);
-  const language = input.language ?? 'en';
+  const language = input.language
+    ? normalizeContentLanguage(input.language)
+    : await resolveCompanyLanguage(input.companyId);
   const generator = new BlogGenerator();
   const sourceContext = [
     input.sourceContext,

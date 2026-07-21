@@ -7,6 +7,7 @@
  */
 
 import { llmGenerate, extractJSON } from '../lib/llm';
+import { buildContentLanguageInstruction, contentLanguageName } from '../lib/language';
 
 // ============================================================================
 // TYPES
@@ -64,7 +65,7 @@ export class WebsiteAnalyzerService {
   /**
    * Full website analysis pipeline
    */
-  async analyze(url: string): Promise<WebsiteAnalysisResult> {
+  async analyze(url: string, language?: string): Promise<WebsiteAnalysisResult> {
     // Normalize URL
     const normalizedUrl = this.normalizeUrl(url);
 
@@ -78,7 +79,7 @@ export class WebsiteAnalyzerService {
     const socialProfiles = this.detectSocialProfiles(html);
 
     // Step 4: AI analysis for business info, competitors, keywords, and master plan
-    const aiAnalysis = await this.analyzeWithAI(html, normalizedUrl, seoData, socialProfiles);
+    const aiAnalysis = await this.analyzeWithAI(html, normalizedUrl, seoData, socialProfiles, language);
 
     return {
       businessInfo: aiAnalysis.businessInfo,
@@ -100,6 +101,7 @@ export class WebsiteAnalyzerService {
     prompt: string,
     detectedInfo: any,
     businessContext = '',
+    language?: string,
   ): Promise<{
     masterPlan: {
       seoGrowthPlan: PlanBlock;
@@ -109,6 +111,8 @@ export class WebsiteAnalyzerService {
     usedFallback?: boolean;
   }> {
     try {
+      const languageInstruction = buildContentLanguageInstruction(language);
+      const outputLanguage = contentLanguageName(language);
       const { text } = await llmGenerate([{
         role: 'system',
         content: `You are a growth marketing strategist who creates SPECIFIC, actionable plans. Every action item must reference the actual business, its offerings, and target audience. Never use generic advice like "create content" or "improve SEO" — always specify WHAT content, WHICH keywords, and HOW to improve.`,
@@ -119,6 +123,7 @@ export class WebsiteAnalyzerService {
 BUSINESS: ${prompt}
 MARKET: ${detectedInfo?.market || 'Analyze from business description'}
 MODEL: ${detectedInfo?.model || 'Analyze from business description'}
+${languageInstruction}
 COMPANY CONTEXT:
 ${businessContext || 'No additional context available'}
 
@@ -129,6 +134,12 @@ RULES:
 - Expected impact must be measurable (e.g., "Target 500 monthly organic visits" NOT "increase traffic")
 - Prioritize quick wins in Week 1 (things that can show results in days)
 - Include specific content titles, keyword targets, and platform choices
+- Write all user-facing plan text in ${outputLanguage}
+
+LANGUAGE RULES:
+- Write all masterPlan values in ${outputLanguage}: plan titles, descriptions, actions, timelines, and expected impacts.
+- Keep company names, brand names, product/service/course names, URLs, exact source titles, JSON keys, and enum values unchanged.
+- If the output language is Japanese, do not return English prose in user-facing plan text.
 
 Return ONLY valid JSON:
 {
@@ -207,7 +218,7 @@ Generate 4-5 items per section. Be CONCRETE — I should be able to execute each
 
     // Extract title
     const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    const title = titleMatch ? titleMatch[1].trim() : '';
+    const title = titleMatch?.[1]?.trim() ?? '';
     if (!title) {
       missingElements.push('Page title is missing');
       score -= 15;
@@ -219,7 +230,7 @@ Generate 4-5 items per section. Be CONCRETE — I should be able to execute each
     // Extract meta description
     const descMatch = html.match(/<meta\s+name=["']description["']\s+content=["']([\s\S]*?)["']/i)
       || html.match(/<meta\s+content=["']([\s\S]*?)["']\s+name=["']description["']/i);
-    const description = descMatch ? descMatch[1].trim() : '';
+    const description = descMatch?.[1]?.trim() ?? '';
     if (!description) {
       missingElements.push('Meta description is missing');
       score -= 15;
@@ -270,7 +281,7 @@ Generate 4-5 items per section. Be CONCRETE — I should be able to execute each
 
     // Check robots
     const robotsBlock = html.match(/<meta\s+name=["']robots["']\s+content=["']([\s\S]*?)["']/i);
-    if (robotsBlock && robotsBlock[1].includes('noindex')) {
+    if (robotsBlock?.[1]?.includes('noindex')) {
       issues.push('Page is set to noindex - search engines will not index it');
       score -= 20;
     }
@@ -317,7 +328,7 @@ Generate 4-5 items per section. Be CONCRETE — I should be able to execute each
       const match = pattern.exec(html);
       return {
         platform,
-        url: match ? match[1] : '',
+        url: match?.[1] ?? '',
         detected: !!match,
       };
     });
@@ -327,7 +338,8 @@ Generate 4-5 items per section. Be CONCRETE — I should be able to execute each
     html: string,
     url: string,
     seoData: WebsiteAnalysisResult['seoAudit'],
-    socialProfiles: WebsiteAnalysisResult['socialProfiles']
+    socialProfiles: WebsiteAnalysisResult['socialProfiles'],
+    language?: string
   ) {
     // Truncate HTML for token limits
     const truncatedHtml = html.substring(0, 20000);
@@ -335,6 +347,8 @@ Generate 4-5 items per section. Be CONCRETE — I should be able to execute each
       .filter((s) => s.detected)
       .map((s) => s.platform)
       .join(', ');
+    const languageInstruction = buildContentLanguageInstruction(language);
+    const outputLanguage = contentLanguageName(language);
 
     try {
       const { text } = await llmGenerate([{
@@ -349,6 +363,7 @@ CURRENT SEO SCORE: ${seoData.score}/100
 DETECTED SOCIAL PROFILES: ${detectedSocials || 'None detected'}
 SEO ISSUES FOUND: ${seoData.missingElements.join('; ') || 'None'}
 HEADINGS: H1=${seoData.headings.h1Count}, H2=${seoData.headings.h2Count}
+${languageInstruction}
 
 WEBSITE HTML (analyze this carefully):
 ${truncatedHtml}
@@ -360,6 +375,11 @@ EXTRACTION RULES:
 - audience: Identify from pricing pages, testimonials, copy language — be specific about demographics
 - competitors: Name REAL competitors in this specific niche (not generic industry leaders)
 - keywords: Suggest keywords based on the ACTUAL content and services found on the site
+
+LANGUAGE RULES:
+- Write descriptive businessInfo and masterPlan values in ${outputLanguage}: industry, model, audience, valueProposition, market, strategy, plan titles, descriptions, actions, timelines, and expected impacts.
+- Keep company names, brand names, product/service/course names, URLs, exact source titles, JSON keys, and enum values unchanged.
+- If the output language is Japanese, do not return English prose in businessInfo.market, businessInfo.model, businessInfo.audience, or businessInfo.strategy.
 
 Return ONLY valid JSON:
 {
@@ -416,9 +436,10 @@ Generate 4-5 items per plan section. EVERY item must reference something specifi
     }
 
     // Fallback
+    const fallbackCompanyName = new URL(url).hostname.replace('www.', '').split('.')[0] || 'Business';
     return {
       businessInfo: {
-        companyName: new URL(url).hostname.replace('www.', '').split('.')[0],
+        companyName: fallbackCompanyName,
         industry: 'General',
         model: 'Unknown',
         audience: 'General audience',
