@@ -2,13 +2,26 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Loader2, Rocket, Globe, ArrowRight, Lightbulb } from 'lucide-react';
+import { Sparkles, Loader2, Rocket, Globe, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import type { InputType } from '@/lib/ftux/types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  APP_LANGUAGES,
+  APP_LANGUAGE_LABELS,
+  appT,
+  normalizeAppLanguage,
+  type AppLanguage,
+} from '@/lib/app-language';
 
 interface LandingHeroProps {
-  onSubmit: (prompt: string, websiteUrl?: string) => void;
+  onSubmit: (prompt: string, websiteUrl?: string, language?: AppLanguage) => void;
   isProcessing: boolean;
 }
 
@@ -22,6 +35,8 @@ function detectIsUrl(input: string): boolean {
 export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
   const [path, setPath] = useState<UserPath>(null);
   const [prompt, setPrompt] = useState('');
+  const [language, setLanguage] = useState<AppLanguage>('en');
+  const t = useCallback((key: Parameters<typeof appT>[1]) => appT(language, key), [language]);
 
   const isUrl = useMemo(() => detectIsUrl(prompt), [prompt]);
   const trimmedLength = prompt.trim().length;
@@ -29,6 +44,9 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
   const isInputValid = isWebsiteInput
     ? trimmedLength >= 5
     : trimmedLength >= MIN_BUSINESS_DESCRIPTION_LENGTH;
+  const beginnerExamples = language === 'ja'
+    ? ['AIコンテンツ制作会社', 'フィットネスコーチング', 'オンライン教育サービス']
+    : ['AI content agency', 'Fitness coaching platform', 'Online education startup'];
 
   const handleSubmit = useCallback(() => {
     const trimmed = prompt.trim();
@@ -36,11 +54,11 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
 
     if (isWebsiteInput) {
       const url = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
-      onSubmit(`Analyze and grow this business: ${url}`, url);
+      onSubmit(`Analyze and grow this business: ${url}`, url, language);
     } else {
-      onSubmit(trimmed);
+      onSubmit(trimmed, undefined, language);
     }
-  }, [prompt, isInputValid, isWebsiteInput, onSubmit]);
+  }, [prompt, isInputValid, isWebsiteInput, language, onSubmit]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -83,11 +101,27 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
               transition={{ delay: 0.2 }}
             >
               <h2 className="text-xl md:text-2xl font-semibold mb-2">
-                How would you like to start?
+                {t('welcomeStartTitle')}
               </h2>
               <p className="text-muted-foreground mb-8">
-                AI will handle everything — just tell us where you are
+                {t('welcomeStartSubtitle')}
               </p>
+
+              <div className="mx-auto mb-6 flex max-w-xs items-center justify-center gap-2">
+                <span className="text-sm text-muted-foreground">{t('language')}</span>
+                <Select value={language} onValueChange={(value) => setLanguage(normalizeAppLanguage(value))}>
+                  <SelectTrigger className="h-9 w-36 bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {APP_LANGUAGES.map((item: AppLanguage) => (
+                      <SelectItem key={item} value={item}>
+                        {APP_LANGUAGE_LABELS[item]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 {/* Beginner */}
@@ -100,9 +134,9 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
                   <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center mb-4">
                     <Sparkles className="w-6 h-6 text-white" />
                   </div>
-                  <h3 className="font-semibold text-lg mb-1">I'm starting fresh</h3>
+                  <h3 className="font-semibold text-lg mb-1">{t('startingFresh')}</h3>
                   <p className="text-sm text-muted-foreground">
-                    Describe your idea and AI will create everything — pages, content, marketing plan
+                    {t('startingFreshDesc')}
                   </p>
                 </motion.button>
 
@@ -116,9 +150,9 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
                   <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mb-4">
                     <Globe className="w-6 h-6 text-white" />
                   </div>
-                  <h3 className="font-semibold text-lg mb-1">I have a website</h3>
+                  <h3 className="font-semibold text-lg mb-1">{t('haveWebsite')}</h3>
                   <p className="text-sm text-muted-foreground">
-                    Paste your URL and AI will analyze it, find improvements, and grow your traffic
+                    {t('haveWebsiteDesc')}
                   </p>
                 </motion.button>
               </div>
@@ -133,13 +167,13 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
             >
               <h2 className="text-xl md:text-2xl font-semibold mb-2">
                 {path === 'beginner'
-                  ? 'Describe your business idea'
-                  : 'Paste your website URL'}
+                  ? t('describeBusinessIdea')
+                  : t('pasteWebsiteUrl')}
               </h2>
               <p className="text-muted-foreground mb-6">
                 {path === 'beginner'
-                  ? 'AI will create landing pages, content, and a growth plan automatically'
-                  : 'AI will crawl your site, audit SEO, and create an improvement plan'}
+                  ? t('businessIdeaHelp')
+                  : t('websiteUrlHelp')}
               </p>
 
               {/* Input */}
@@ -150,8 +184,8 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
                   onKeyDown={handleKeyDown}
                   placeholder={
                     path === 'beginner'
-                      ? 'e.g. A fitness coaching platform for busy professionals...'
-                      : 'e.g. kidleaderhub.com'
+                      ? t('businessIdeaPlaceholder')
+                      : t('websiteUrlPlaceholder')
                   }
                   className="min-h-[100px] text-lg p-4 resize-none border-2 focus:border-primary/50 transition-colors"
                   disabled={isProcessing}
@@ -160,9 +194,8 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
                   <div className="mt-2 flex items-start justify-between gap-3">
                     {!isWebsiteInput && trimmedLength < MIN_BUSINESS_DESCRIPTION_LENGTH ? (
                       <p className="text-left text-xs text-red-600">
-                        Please add a little more detail about your business
-                        {' '}({MIN_BUSINESS_DESCRIPTION_LENGTH - trimmedLength} more character
-                        {MIN_BUSINESS_DESCRIPTION_LENGTH - trimmedLength === 1 ? '' : 's'}).
+                        {t('addMoreBusinessDetail')}
+                        {' '}({MIN_BUSINESS_DESCRIPTION_LENGTH - trimmedLength} {t('moreCharacters')}).
                       </p>
                     ) : (
                       <span />
@@ -170,7 +203,7 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
                     <span className={`text-xs px-2 py-1 rounded-full ${
                       isUrl ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'
                     }`}>
-                      {isUrl ? '🌐 Website detected' : '💡 Business idea'}
+                      {isUrl ? `🌐 ${t('websiteDetected')}` : `💡 ${t('businessIdea')}`}
                     </span>
                   </div>
                 )}
@@ -180,7 +213,7 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
               {prompt.length === 0 && (
                 <div className="flex flex-wrap gap-2 justify-center mb-6">
                   {path === 'beginner'
-                    ? ['AI content agency', 'Fitness coaching platform', 'Online education startup'].map((ex) => (
+                    ? beginnerExamples.map((ex) => (
                         <button
                           key={ex}
                           onClick={() => setPrompt(ex)}
@@ -209,7 +242,7 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
                   onClick={() => { setPath(null); setPrompt(''); }}
                   disabled={isProcessing}
                 >
-                  ← Back
+                  ← {t('back')}
                 </Button>
                 <Button
                   onClick={handleSubmit}
@@ -220,12 +253,12 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
                   {isProcessing ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      Building...
+                      {t('building')}
                     </>
                   ) : (
                     <>
                       {path === 'advanced' ? <Globe className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-                      {path === 'advanced' ? 'Analyze & Grow' : 'Create My Business'}
+                      {path === 'advanced' ? t('analyzeAndGrow') : t('createMyBusiness')}
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}
@@ -242,7 +275,9 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
           transition={{ delay: 0.5 }}
           className="mt-10 text-xs text-muted-foreground"
         >
-          AI creates pages, writes content, and drives traffic — automatically
+          {language === 'ja'
+            ? 'AIがページ作成、コンテンツ制作、集客を自動で支援します'
+            : 'AI creates pages, writes content, and drives traffic automatically'}
         </motion.p>
       </motion.div>
     </div>

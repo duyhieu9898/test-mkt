@@ -24,6 +24,12 @@ import {
   type GrowthMasterPlan,
 } from '@1person/core/db';
 import { getActiveBrandIq, renderBrandIqContext } from './brand-iq-extractor';
+import {
+  buildContentLanguageInstruction,
+  contentLanguageName,
+  normalizeContentLanguage,
+  type ContentLanguage,
+} from '../lib/language';
 
 /**
  * Visibility filter level — controls which knowledge entries are included.
@@ -79,6 +85,8 @@ export interface BusinessContext {
   industry: string;
   description: string;
   businessType: string;
+  language: ContentLanguage;
+  languageName: string;
 
   // From knowledge_base
   products: string[];
@@ -123,6 +131,7 @@ export async function buildBusinessContext(
   const company = await db.query.companies.findFirst({
     where: eq(companies.id, companyId),
   });
+  const language = normalizeContentLanguage(company?.settings?.language);
 
   // 2. Knowledge entries filtered by visibility. If a chatbot has tags,
   // empty-tag entries stay global and tagged entries must overlap.
@@ -238,6 +247,7 @@ export async function buildBusinessContext(
   contextParts.push(`COMPANY: ${company?.name || 'Unknown'}`);
   contextParts.push(`INDUSTRY: ${company?.industry || 'Unknown'}`);
   contextParts.push(`DESCRIPTION: ${company?.description || 'No description'}`);
+  contextParts.push(`\n${buildContentLanguageInstruction(language)}`);
   if (canUseInternalContext && company?.businessPlan) {
     contextParts.push(`\nAPPROVED BUSINESS & GROWTH PLAN:\n${JSON.stringify(company.businessPlan, null, 2).slice(0, 6000)}`);
   }
@@ -283,6 +293,8 @@ export async function buildBusinessContext(
     industry: company?.industry || 'Unknown',
     description: company?.description || '',
     businessType: (company as any)?.businessType || '',
+    language,
+    languageName: contentLanguageName(language),
     products,
     pricing,
     targetAudience,

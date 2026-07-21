@@ -111,6 +111,7 @@ export function useStartLaunch(companyId: string) {
       oneDriveFileName?: string;
       imageMode?: 'ai' | 'uploaded';
       assetIds?: string[];
+      language?: string;
       targets: LaunchTargets;
     }) =>
       api.post<{ data: { launchId: string } }>(`/launches/${companyId}`, body, { token: token! }),

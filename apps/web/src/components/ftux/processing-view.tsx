@@ -8,6 +8,7 @@ import { TypingText } from './typing-text';
 import { ProgressStep } from './progress-step';
 import type { ProcessingStep, DetectedInfo } from '@/lib/ftux/types';
 import { STEP_LABELS } from '@/lib/ftux/processing-simulation';
+import { appT, type AppLanguage } from '@/lib/app-language';
 
 interface ProcessingViewProps {
   userPrompt: string;
@@ -18,6 +19,7 @@ interface ProcessingViewProps {
   aiThinking: string;
   error?: string | null;
   onRetry?: () => void;
+  language?: AppLanguage;
 }
 
 const ALL_STEPS: ProcessingStep[] = [
@@ -39,7 +41,18 @@ export function ProcessingView({
   aiThinking,
   error,
   onRetry,
+  language = 'en',
 }: ProcessingViewProps) {
+  const t = (key: Parameters<typeof appT>[1]) => appT(language, key);
+  const stepLabels: Partial<Record<ProcessingStep, string>> = {
+    understanding: t('stepUnderstanding'),
+    analyzing_website: t('stepAnalyzingWebsite'),
+    creating_ceo: t('stepCreatingCeo'),
+    creating_marketing: t('stepCreatingMarketing'),
+    creating_operations: t('stepCreatingOperations'),
+    generating_strategy: t('stepGeneratingStrategy'),
+    setting_up_brand: t('stepSettingUpBrand'),
+  };
   const getStepStatus = (step: ProcessingStep): 'pending' | 'active' | 'complete' => {
     if (completedSteps.includes(step)) return 'complete';
     if (currentStep === step) return 'active';
@@ -64,9 +77,9 @@ export function ProcessingView({
           >
             <Bot className="w-8 h-8 text-white" />
           </motion.div>
-          <h1 className="text-2xl font-bold mb-2">Building Your AI Company...</h1>
+          <h1 className="text-2xl font-bold mb-2">{t('buildingAiCompany')}</h1>
           <p className="text-muted-foreground">
-            Creating your personalized AI team
+            {t('creatingPersonalizedTeam')}
           </p>
         </div>
 
@@ -79,7 +92,7 @@ export function ProcessingView({
                   <AlertCircle className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
                   <div className="flex-1">
                     <p className="text-sm font-medium text-destructive mb-1">
-                      Setup could not finish
+                      {t('setupCouldNotFinish')}
                     </p>
                     <p className="text-sm text-foreground break-words">{error}</p>
                     {onRetry && (
@@ -90,7 +103,7 @@ export function ProcessingView({
                         className="mt-3"
                         onClick={onRetry}
                       >
-                        Back and try again
+                        {t('backAndTryAgain')}
                       </Button>
                     )}
                   </div>
@@ -103,9 +116,9 @@ export function ProcessingView({
               <div className="flex items-start gap-3">
                 <Sparkles className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-primary mb-1">AI is thinking...</p>
+                  <p className="text-sm font-medium text-primary mb-1">{t('aiIsThinking')}</p>
                   <p className="text-sm text-foreground">
-                    <TypingText text={aiThinking || 'Analyzing your business idea...'} speed={25} />
+                    <TypingText text={aiThinking || t('analyzingBusinessIdea')} speed={25} />
                   </p>
                 </div>
               </div>
@@ -119,19 +132,19 @@ export function ProcessingView({
                 className="mb-6 p-4 rounded-lg bg-green-500/10 border border-green-500/20"
               >
                 <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-2">
-                  Detected:
+                  {t('detected')}
                 </p>
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <div>
-                    <span className="text-muted-foreground">Market:</span>
+                    <span className="text-muted-foreground">{t('market')}:</span>
                     <p className="font-medium">{detectedInfo.market}</p>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">Model:</span>
+                    <span className="text-muted-foreground">{t('model')}:</span>
                     <p className="font-medium">{detectedInfo.model}</p>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">Strategy:</span>
+                    <span className="text-muted-foreground">{t('strategy')}:</span>
                     <p className="font-medium">{detectedInfo.strategy}</p>
                   </div>
                 </div>
@@ -148,7 +161,7 @@ export function ProcessingView({
                   transition={{ delay: index * 0.1 }}
                 >
                   <ProgressStep
-                    label={STEP_LABELS[step]}
+                    label={stepLabels[step] || STEP_LABELS[step]}
                     status={getStepStatus(step)}
                   />
                 </motion.div>
@@ -158,7 +171,7 @@ export function ProcessingView({
             {/* Progress Bar */}
             <div className="mt-6">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-muted-foreground">Progress</span>
+                <span className="text-sm text-muted-foreground">{t('progress')}</span>
                 <span className="text-sm font-medium">{Math.round(progress)}%</span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -181,7 +194,7 @@ export function ProcessingView({
           className="mt-6 text-center"
         >
           <p className="text-sm text-muted-foreground">
-            Building: <span className="text-foreground">&quot;{userPrompt}&quot;</span>
+            {t('buildingPrompt')}: <span className="text-foreground">&quot;{userPrompt}&quot;</span>
           </p>
         </motion.div>
       </motion.div>

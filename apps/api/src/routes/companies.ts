@@ -83,6 +83,25 @@ function sanitizeCompany<T extends { settings?: unknown }>(company: T): T {
   };
 }
 
+function isPlainSettingsRecord(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeSettingsPatch(existing: unknown, patch: unknown): unknown {
+  if (!isPlainSettingsRecord(patch)) return patch;
+
+  const merged: Record<string, any> = isPlainSettingsRecord(existing) ? { ...existing } : {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (isPlainSettingsRecord(value) && isPlainSettingsRecord(merged[key])) {
+      merged[key] = mergeSettingsPatch(merged[key], value);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
 // List companies
 companiesRouter.get('/', async (c) => {
   const { userId } = c.get('user');
@@ -194,10 +213,15 @@ companiesRouter.patch('/:id', async (c) => {
     throw new HTTPException(404, { message: 'Company not found' });
   }
 
+  const updateData = { ...data };
+  if ('settings' in updateData) {
+    updateData.settings = mergeSettingsPatch(existing.settings, updateData.settings);
+  }
+
   const [updated] = await db
     .update(companies)
     .set({
-      ...data,
+      ...updateData,
       updatedAt: new Date(),
     })
     .where(eq(companies.id, companyId))
@@ -270,6 +294,7 @@ companiesRouter.post('/:id/growth-plan/refresh', async (c) => {
       model: company.businessType,
     },
     decisionContext,
+    typeof context.business.language === 'string' ? context.business.language : undefined,
   );
   if (generated.usedFallback) {
     throw new HTTPException(502, {

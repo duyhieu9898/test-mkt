@@ -22,12 +22,13 @@ const processSchema = z.object({
     .max(1000),
   websiteOption: z.enum(['has_website', 'new_business', 'skip']).default('skip'),
   websiteUrl: z.string().optional(),
+  language: z.string().optional(),
 });
 
 // Start FTUX processing
 ftuxRouter.post('/process', zValidator('json', processSchema), async (c) => {
   const { userId } = c.get('user');
-  const { prompt, websiteOption, websiteUrl } = c.req.valid('json');
+  const { prompt, websiteOption, websiteUrl, language } = c.req.valid('json');
 
   // Auto-detect website option from URL
   const effectiveWebsiteOption = websiteUrl ? 'has_website' : websiteOption;
@@ -36,6 +37,7 @@ ftuxRouter.post('/process', zValidator('json', processSchema), async (c) => {
   const sessionId = await processor.startSession(userId, prompt, {
     websiteOption: effectiveWebsiteOption,
     websiteUrl,
+    language,
   });
 
   // Start async processing (non-blocking)
@@ -258,16 +260,16 @@ ftuxRouter.post('/execute', zValidator('json', executeSchema), async (c) => {
         const { db: dbInstance } = await import('../lib/db');
         const { videoProjects } = await import('@1person/core/db');
 
-        const script = await generateScript(companyId, { format: '30s', aspectRatio: '9:16' });
-        const scenes = await breakIntoScenes(script, '30s');
+        const generatedScript = await generateScript(companyId, { format: '30s', aspectRatio: '9:16' });
+        const scenes = await breakIntoScenes(generatedScript.script, '30s');
 
         await dbInstance.insert(videoProjects).values({
           companyId,
-          title: `${ctx.companyName} - Introduction`,
+          title: generatedScript.title || `${ctx.companyName} - Introduction`,
           format: '30s',
           aspectRatio: '9:16',
           status: 'scenes',
-          script,
+          script: generatedScript.script,
           scenes: scenes as any,
         });
 

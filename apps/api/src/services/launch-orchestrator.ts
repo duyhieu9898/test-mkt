@@ -45,12 +45,19 @@ import {
   generateCampaignSocialPosts,
   type SocialPlatform,
 } from './campaign-social-generator';
+import {
+  buildContentLanguageInstruction,
+  localizedDefault,
+  normalizeContentLanguage,
+  resolveCompanyLanguage,
+} from '../lib/language';
 
 export interface LaunchTargets {
   wordpress: boolean;
   facebook: boolean;
   linkedin: boolean;
   instagram: boolean;
+  language?: string;
   imageMode?: 'ai' | 'uploaded';
   uploadedAssetIds?: string[];
 }
@@ -62,6 +69,7 @@ export interface StartLaunchArgs {
   targets: LaunchTargets;
   imageMode?: 'ai' | 'uploaded';
   assetIds?: string[];
+  language?: string;
   /** Who triggered this — defaults to manual one-click. */
   source?: 'manual' | 'autopilot';
 }
@@ -167,11 +175,13 @@ async function finalizeLaunchStatus(launchId: string): Promise<void> {
 /* ─── Public entry ──────────────────────────────────────────────── */
 
 export async function startLaunch(args: StartLaunchArgs): Promise<{ launchId: string }> {
+  const language = normalizeContentLanguage(args.language ?? await resolveCompanyLanguage(args.companyId));
   const targets: LaunchTargets = {
     wordpress: false,
     facebook: args.targets.facebook === true,
     linkedin: args.targets.linkedin === true,
     instagram: args.targets.instagram === true,
+    language,
     imageMode: args.imageMode === 'uploaded' && args.assetIds?.length ? 'uploaded' : 'ai',
     uploadedAssetIds: args.assetIds?.slice(0, 3),
   };
@@ -209,27 +219,42 @@ type BannerVariant = {
   visualDirection?: string;
 };
 
-function fallbackBannerVariants(keyword: string): BannerVariant[] {
+function fallbackBannerVariants(keyword: string, language?: string): BannerVariant[] {
+  const lang = normalizeContentLanguage(language);
   const bannerTopic = truncateAtWord(keyword, 70);
+  const discover = localizedDefault(lang, 'discover');
+  const learnMore = localizedDefault(lang, 'learnMore');
+  const getStarted = localizedDefault(lang, 'getStarted');
+  const exploreNow = localizedDefault(lang, 'exploreNow');
   return [
     {
-      headline: `Discover ${bannerTopic}`,
-      subheadline: 'Turn interest into action with a clear offer built for your audience.',
-      cta: 'Learn More',
+      headline: lang === 'en' ? `Discover ${bannerTopic}` : `${discover} ${bannerTopic}`,
+      subheadline: lang === 'ja'
+        ? '関心を行動につなげる、顧客に合った明確な提案です。'
+        : 'Turn interest into action with a clear offer built for your audience.',
+      cta: learnMore,
       angle: 'benefit',
       visualDirection: 'Clean premium social banner with strong contrast and a clear call to action.',
     },
     {
-      headline: `Make ${bannerTopic} easier`,
-      subheadline: 'A practical message for people who want a faster, simpler next step.',
-      cta: 'Get Started',
+      headline: lang === 'ja'
+        ? `${bannerTopic}をもっと簡単に`
+        : `Make ${bannerTopic} easier`,
+      subheadline: lang === 'ja'
+        ? 'より速く、わかりやすい次の一歩を求める人への実用的なメッセージです。'
+        : 'A practical message for people who want a faster, simpler next step.',
+      cta: getStarted,
       angle: 'pain',
       visualDirection: 'Bold problem-solution layout with energetic accent color and direct CTA.',
     },
     {
-      headline: `${bannerTopic} made for today`,
-      subheadline: 'A direct campaign banner designed to create attention and clicks.',
-      cta: 'Explore Now',
+      headline: lang === 'ja'
+        ? `今選ぶ${bannerTopic}`
+        : `${bannerTopic} made for today`,
+      subheadline: lang === 'ja'
+        ? '注目とクリックを生むための、わかりやすいキャンペーンバナーです。'
+        : 'A direct campaign banner designed to create attention and clicks.',
+      cta: exploreNow,
       angle: 'aspiration',
       visualDirection: 'Aspirational campaign creative with confident typography and modern visual rhythm.',
     },
@@ -335,8 +360,10 @@ async function getUploadedLaunchImages(
 async function generateBannerVariants(
   launch: typeof campaignLaunches.$inferSelect,
   brandKit?: BrandCreativeKit | null,
+  language?: string,
 ): Promise<BannerVariant[]> {
   try {
+    const normalizedLanguage = normalizeContentLanguage(language);
     const brandCreativePrompt = renderBrandCreativeKitPrompt(brandKit);
     const response = await llmGenerate(
       [
@@ -348,12 +375,14 @@ async function generateBannerVariants(
             'Return strict JSON only: {"variants":[{"headline":"","subheadline":"","cta":"","angle":"","reasoning":"","visualDirection":""}]}',
             'Headlines must be short enough for a 1200x628 banner.',
             'visualDirection describes the banner layout, mood, visual hierarchy, and imagery direction.',
+            buildContentLanguageInstruction(normalizedLanguage),
           ].join('\n'),
         },
         {
           role: 'user',
           content: [
             `Campaign topic: ${launch.keyword}`,
+            buildContentLanguageInstruction(normalizedLanguage),
             brandCreativePrompt,
             launch.brief ? `Source context and user brief:\n${launch.brief}` : '',
             'Create exactly 3 distinct banner variants. Make each variant relevant to the source context and consistent with the Brand Creative Kit.',
@@ -363,7 +392,7 @@ async function generateBannerVariants(
       {
         featureKey: 'campaign_banner_copy',
         traceName: 'launch.generateBannerVariants',
-        metadata: { companyId: launch.companyId, launchId: launch.id },
+        metadata: { companyId: launch.companyId, launchId: launch.id, language: normalizedLanguage },
         json: true,
         maxTokens: 1200,
       },
@@ -381,10 +410,10 @@ async function generateBannerVariants(
         reasoning: v.reasoning ? String(v.reasoning).slice(0, 240) : undefined,
         visualDirection: v.visualDirection ? String(v.visualDirection).slice(0, 280) : undefined,
       }));
-    return cleaned.length === 3 ? cleaned : fallbackBannerVariants(launch.keyword);
+    return cleaned.length === 3 ? cleaned : fallbackBannerVariants(launch.keyword, normalizedLanguage);
   } catch (e) {
     console.warn('[launch] banner variant generation failed:', (e as Error).message);
-    return fallbackBannerVariants(launch.keyword);
+    return fallbackBannerVariants(launch.keyword, language);
   }
 }
 
@@ -393,6 +422,7 @@ async function runBannerLaunch(
   launch: typeof campaignLaunches.$inferSelect,
   options: { blogPostId?: string; finalize?: boolean; bannerBackgroundUrls?: string[] } = {},
 ): Promise<string | null> {
+  const language = normalizeContentLanguage((launch.targets as LaunchTargets).language);
   await markStart(launchId, 'banner_campaign');
   let campaign: typeof campaigns.$inferSelect | undefined;
   try {
@@ -433,7 +463,7 @@ async function runBannerLaunch(
   const createdBanners: Array<typeof banners.$inferSelect> = [];
   try {
     const brandKit = await buildBrandCreativeKit(launch.companyId);
-    const variants = await generateBannerVariants(launch, brandKit);
+    const variants = await generateBannerVariants(launch, brandKit, language);
     const usesUploadedImages = (launch.targets as LaunchTargets).imageMode === 'uploaded';
     for (const [index, variant] of variants.entries()) {
       const theme = applyBrandKitToBannerTheme(
@@ -590,6 +620,7 @@ async function runBannerLaunch(
           blogPost?.content ? `CAMPAIGN BLOG CONTENT:\n${blogPost.content.slice(0, 3500)}` : '',
         ].filter(Boolean).join('\n\n'),
         platforms: enabledSocial.map((item) => item.platform),
+        language,
         traceName: 'launch.generateSocialPosts',
       });
       generatedSocialPosts = new Map(
@@ -648,6 +679,8 @@ async function runLaunch(launchId: string): Promise<void> {
     where: eq(campaignLaunches.id, launchId),
   });
   if (!launch) return;
+  const launchTargets = launch.targets as LaunchTargets;
+  const language = normalizeContentLanguage(launchTargets.language);
   await patchLaunch(launchId, { status: 'running' });
 
   // 1. Blog
@@ -658,7 +691,7 @@ async function runLaunch(launchId: string): Promise<void> {
     blog = await gen.generateBlogPost(launch.companyId, {
       keyword: launch.keyword,
       searchIntent: 'informational',
-      language: 'en',
+      language,
       targetWordCount: 1800,
       sourceContext: launch.brief ?? undefined,
     });
@@ -683,7 +716,7 @@ async function runLaunch(launchId: string): Promise<void> {
       faq: blog.faq,
       schemaMarkup: blog.schemaMarkup,
       wordCount: blog.wordCount,
-      language: 'en',
+      language,
       status: 'draft',
     })
     .returning();
@@ -705,7 +738,6 @@ async function runLaunch(launchId: string): Promise<void> {
   await markStart(launchId, 'images');
   let imageBundle: Awaited<ReturnType<typeof generateBlogImages>> = { hero: null, inContent: [] };
   try {
-    const launchTargets = launch.targets as LaunchTargets;
     const uploadedImages = launchTargets.imageMode === 'uploaded'
       ? await getUploadedLaunchImages(launch.companyId, launchTargets.uploadedAssetIds)
       : [];

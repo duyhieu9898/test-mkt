@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { MasterPlan } from '@/lib/ftux/types';
+import { appT, type AppLanguage } from '@/lib/app-language';
 
 interface MasterPlanViewProps {
   masterPlan: MasterPlan;
@@ -13,6 +14,7 @@ interface MasterPlanViewProps {
   onApprove: () => Promise<void>;
   isApproving?: boolean;
   approvalError?: string | null;
+  language?: AppLanguage;
 }
 
 const priorityColors = {
@@ -39,7 +41,9 @@ export function MasterPlanView({
   onApprove,
   isApproving = false,
   approvalError,
+  language = 'en',
 }: MasterPlanViewProps) {
+  const t = (key: Parameters<typeof appT>[1]) => appT(language, key);
   const plans = [
     { key: 'seoGrowthPlan' as const, data: masterPlan.seoGrowthPlan },
     { key: 'contentPlan' as const, data: masterPlan.contentPlan },
@@ -64,9 +68,9 @@ export function MasterPlanView({
           >
             <Zap className="w-7 h-7 text-white" />
           </motion.div>
-          <h2 className="text-2xl font-bold mb-2">Your Growth Master Plan</h2>
+          <h2 className="text-2xl font-bold mb-2">{t('growthMasterPlan')}</h2>
           <p className="text-muted-foreground">
-            AI has designed a comprehensive strategy for {companyName}
+            {t('growthMasterPlanDesc')} {companyName}
           </p>
         </div>
 
@@ -136,7 +140,7 @@ export function MasterPlanView({
             disabled={isApproving}
           >
             {isApproving ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
-            {isApproving ? 'Approving plan...' : 'Approve Plan'}
+            {isApproving ? t('approvingPlan') : t('approvePlan')}
             {!isApproving ? <ArrowRight className="w-5 h-5" /> : null}
           </Button>
           {approvalError && (

@@ -31,6 +31,10 @@ import {
 } from './brand-creative-kit';
 import { createCampaignBlog } from './campaign-blog';
 import { buildCampaignName } from './campaign-name';
+import {
+  buildContentLanguageInstruction,
+  localizedDefault,
+} from '../lib/language';
 
 /**
  * Load the Business Brain snapshot (W0.2) for the given company and
@@ -180,6 +184,7 @@ export class MarketingAutonomous {
             `WHY THIS CAMPAIGN EXISTS NOW: ${opportunity.reason}`,
             opportunity.channel ? `CHANNEL: ${opportunity.channel}` : '',
           ].filter(Boolean).join('\n').slice(0, 6000),
+          language: businessContext.language,
         }),
       );
 
@@ -190,7 +195,7 @@ export class MarketingAutonomous {
 
       // 6. Generate social posts
       await runStep('generate_social_posts', () =>
-        this.generatePosts(companyId, campaign.id, opportunity.audience),
+        this.generatePosts(companyId, campaign.id, opportunity),
       );
 
       // 7. Transition to 'ready'
@@ -233,13 +238,15 @@ export class MarketingAutonomous {
     const brandPrimary = brandKit.colors.primary || ctx.brandColors.primary || '#6366f1';
     const brainSection = brainBlock ? `\n\n${brainBlock}\n` : '';
     const brandCreativePrompt = renderBrandCreativeKitPrompt(brandKit);
+    const languageInstruction = buildContentLanguageInstruction(ctx.language);
 
     const { text } = await llmGenerate([{
       role: 'system',
       content: `You are a creative director. Create 3 banner ad concepts. Headlines MAX 8 words, CTA 2-4 words. Follow the brand voice strictly — tone, preferred words, and avoided words are non-negotiable.`,
     }, {
       role: 'user',
-      content: `Create exactly 3 banner variants for this campaign.${brainSection}
+      content: `Create exactly 3 banner variants for this campaign.
+${languageInstruction}${brainSection}
 
 ${brandCreativePrompt}
 
@@ -260,7 +267,7 @@ Return ONLY JSON:
       featureKey: 'campaign_banner_copy',
       tier: 'balanced',
       traceName: 'marketingAutonomous.generateBanners',
-      metadata: { companyId, campaignId },
+      metadata: { companyId, campaignId, language: ctx.language },
     });
 
     const parsed = extractJSON(text) || {};
@@ -269,21 +276,21 @@ Return ONLY JSON:
       {
         headline: opportunity.goal,
         subheadline: `Created for ${opportunity.audience}`,
-        cta: 'Learn More',
+        cta: localizedDefault(ctx.language, 'learnMore'),
         angle: 'benefit',
         visualDirection: `A concrete commercial scene showing ${opportunity.audience} experiencing the main benefit of ${opportunity.goal}`,
       },
       {
-        headline: `A Better Way Forward`,
+        headline: localizedDefault(ctx.language, 'betterWay'),
         subheadline: opportunity.reason,
-        cta: 'Explore Now',
+        cta: localizedDefault(ctx.language, 'exploreNow'),
         angle: 'aspiration',
         visualDirection: `An aspirational real-world scene that visualizes the desired outcome of ${opportunity.goal} for ${opportunity.audience}`,
       },
       {
-        headline: `Make It Happen`,
+        headline: localizedDefault(ctx.language, 'makeItHappen'),
         subheadline: `Built around what matters to ${opportunity.audience}`,
-        cta: 'Get Started',
+        cta: localizedDefault(ctx.language, 'getStarted'),
         angle: 'pain',
         visualDirection: `An authentic problem-to-solution scene relevant to ${opportunity.audience}, focused on the need behind ${opportunity.goal}`,
       },
@@ -303,7 +310,7 @@ Return ONLY JSON:
       );
       const headline = (variant.headline || '').split(' ').slice(0, 8).join(' ');
       const subheadline = (variant.subheadline || '').split(' ').slice(0, 15).join(' ');
-      const cta = (variant.cta || 'Get Started').split(' ').slice(0, 4).join(' ');
+      const cta = (variant.cta || localizedDefault(ctx.language, 'getStarted')).split(' ').slice(0, 4).join(' ');
       const visualDirection = String(variant.visualDirection || '').slice(0, 400);
 
       try {
@@ -415,24 +422,29 @@ Return ONLY JSON:
    * snapshot (W0.2/P0-B3) so posts use brand voice and persona language
    * consistent with every other generation path.
    */
-  private async generatePosts(companyId: string, campaignId: string, audience: string): Promise<void> {
+  private async generatePosts(
+    companyId: string,
+    campaignId: string,
+    opportunity: AutonomousOpportunity,
+  ): Promise<void> {
     const [ctx, brainBlock] = await Promise.all([
       buildBusinessContext(companyId),
       loadBrainPromptBlock(companyId),
     ]);
     const brainSection = brainBlock ? `\n\n${brainBlock}\n` : '';
+    const languageInstruction = buildContentLanguageInstruction(ctx.language);
 
     const { text } = await llmGenerate([{
       role: 'system',
       content: 'You are a social media manager. Write posts using specific business details. Follow the brand voice strictly — tone, preferred words, and avoided words are non-negotiable.',
     }, {
       role: 'user',
-      content: `Generate 3 social posts for this business targeting: ${audience}${brainSection}\n\nBUSINESS CONTEXT:\n${ctx.fullContext.substring(0, 600)}\n\nReturn ONLY JSON array:\n[{"platform":"facebook|linkedin","content":"Post text","hashtags":["#tag"]}]`,
+      content: `Generate exactly 3 social posts for this business targeting: ${opportunity.audience}\n${languageInstruction}${brainSection}\n\nBUSINESS CONTEXT:\n${ctx.fullContext.substring(0, 600)}\n\nReturn ONLY JSON array in this platform order:\n[{"platform":"facebook","content":"Post text","hashtags":["RelevantTag"]},{"platform":"instagram","content":"Post text","hashtags":["RelevantTag"]},{"platform":"linkedin","content":"Post text","hashtags":["RelevantTag"]}]`,
     }], {
       featureKey: 'campaign_social_post',
       tier: 'balanced',
       traceName: 'marketingAutonomous.generatePosts',
-      metadata: { companyId, campaignId },
+      metadata: { companyId, campaignId, language: ctx.language },
     });
 
     const parsed = extractJSON(text) || [];

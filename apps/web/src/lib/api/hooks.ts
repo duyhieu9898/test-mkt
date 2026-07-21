@@ -26,6 +26,7 @@ export interface Company {
     monthlyBudget?: number;
     currency?: string;
     timezone?: string;
+    language?: string;
     websiteUrl?: string;
     websiteOption?: 'has_website' | 'new_business' | 'skip';
   };

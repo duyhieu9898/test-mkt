@@ -46,6 +46,7 @@ launchesRouter.post(
       oneDriveFileName: z.string().max(255).optional(),
       imageMode: z.enum(['ai', 'uploaded']).default('ai').optional(),
       assetIds: z.array(z.string().uuid()).max(3).optional(),
+      language: z.string().optional(),
       targets: z.object({
         wordpress: z.boolean().default(false),
         facebook: z.boolean().default(false),
@@ -71,6 +72,7 @@ launchesRouter.post(
       brief: effectiveBrief,
       imageMode: body.imageMode,
       assetIds: body.assetIds,
+      language: body.language,
       targets: body.targets,
     });
     return c.json({ data: result });

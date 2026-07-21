@@ -28,6 +28,13 @@ import {
 import { useCompany, useCurrentUser } from '@/lib/api/hooks';
 import { api } from '@/lib/api/client';
 import { useAuthStore } from '@/stores/auth-store';
+import {
+  APP_LANGUAGES,
+  APP_LANGUAGE_LABELS,
+  appT,
+  normalizeAppLanguage,
+  type AppLanguage,
+} from '@/lib/app-language';
 
 // Platform icon mapping
 const PLATFORM_ICONS: Record<string, string> = {
@@ -154,7 +161,7 @@ export default function SettingsPage() {
       setCompanyName(company.name || '');
       setCompanyIndustry(company.industry || '');
       setCompanyDescription(company.description || '');
-      setCompanyLanguage((company as any).settings?.language || 'en');
+      setCompanyLanguage(normalizeAppLanguage(company.settings?.language));
     }
   }, [company]);
 
@@ -338,6 +345,7 @@ export default function SettingsPage() {
         name: companyName,
         industry: companyIndustry,
         description: companyDescription,
+        settings: { language: normalizeAppLanguage(companyLanguage) },
       }, { token });
       toast.success('Company settings saved');
     } catch {
@@ -640,19 +648,20 @@ export default function SettingsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">Content Language</label>
-                <p className="text-xs text-muted-foreground">AI will generate all content (banners, posts, pages) in this language</p>
+                <label className="text-sm font-medium">
+                  {appT(companyLanguage, 'companyLanguage')}
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  {appT(companyLanguage, 'companyLanguageHelp')}
+                </p>
                 <Select value={companyLanguage} onValueChange={setCompanyLanguage}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="vi">Tiếng Việt</SelectItem>
-                    <SelectItem value="zh">中文 (Chinese)</SelectItem>
-                    <SelectItem value="ja">日本語 (Japanese)</SelectItem>
-                    <SelectItem value="ko">한국어 (Korean)</SelectItem>
-                    <SelectItem value="th">ภาษาไทย (Thai)</SelectItem>
-                    <SelectItem value="fr">Français (French)</SelectItem>
-                    <SelectItem value="es">Español (Spanish)</SelectItem>
+                    {APP_LANGUAGES.map((language: AppLanguage) => (
+                      <SelectItem key={language} value={language}>
+                        {APP_LANGUAGE_LABELS[language]}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

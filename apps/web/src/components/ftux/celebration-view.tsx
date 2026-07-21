@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import Confetti from 'react-confetti';
 import { useWindowSize } from '@/hooks/use-window-size';
+import { appT, type AppLanguage } from '@/lib/app-language';
 
 interface CelebrationViewProps {
   companyId: string;
@@ -16,6 +17,7 @@ interface CelebrationViewProps {
   taskCount: number;
   budget: number;
   onComplete?: () => void;
+  language?: AppLanguage;
 }
 
 export function CelebrationView({
@@ -25,7 +27,9 @@ export function CelebrationView({
   taskCount,
   budget,
   onComplete,
+  language = 'en',
 }: CelebrationViewProps) {
+  const t = (key: Parameters<typeof appT>[1]) => appT(language, key);
   const router = useRouter();
   const { width, height } = useWindowSize();
   const [countdown, setCountdown] = useState(5);
@@ -68,9 +72,9 @@ export function CelebrationView({
   };
 
   const stats = [
-    { icon: Users, label: 'Agents Active', value: agentCount, color: 'text-blue-500' },
-    { icon: DollarSign, label: 'Monthly Budget', value: `$${budget}`, color: 'text-green-500' },
-    { icon: ListTodo, label: 'Tasks Scheduled', value: taskCount, color: 'text-purple-500' },
+    { icon: Users, label: t('agentsActive'), value: agentCount, color: 'text-blue-500' },
+    { icon: DollarSign, label: t('monthlyBudget'), value: `$${budget}`, color: 'text-green-500' },
+    { icon: ListTodo, label: t('tasksScheduled'), value: taskCount, color: 'text-purple-500' },
   ];
 
   return (
@@ -109,7 +113,7 @@ export function CelebrationView({
           transition={{ delay: 0.3 }}
           className="text-3xl md:text-4xl font-bold mb-3"
         >
-          Your AI Company is Live!
+          {t('aiCompanyLive')}
         </motion.h1>
 
         <motion.p
@@ -118,7 +122,7 @@ export function CelebrationView({
           transition={{ delay: 0.4 }}
           className="text-lg text-muted-foreground mb-8"
         >
-          <span className="text-foreground font-semibold">{companyName}</span> is ready to operate
+          <span className="text-foreground font-semibold">{companyName}</span> {t('readyToOperate')}
         </motion.p>
 
         {/* Stats */}
@@ -157,7 +161,7 @@ export function CelebrationView({
             size="lg"
             className="gap-2 px-8 py-6 text-lg bg-gradient-to-r from-primary to-purple-500 hover:from-primary/90 hover:to-purple-500/90 shadow-lg"
           >
-            Go to CEO Dashboard
+            {t('goToCeoDashboard')}
             <ArrowRight className="w-5 h-5" />
           </Button>
 
@@ -167,7 +171,7 @@ export function CelebrationView({
             transition={{ delay: 1.1 }}
             className="mt-4 text-sm text-muted-foreground"
           >
-            Redirecting in {countdown} seconds...
+            {t('redirectingIn')} {countdown} {t('seconds')}...
           </motion.p>
         </motion.div>
       </motion.div>

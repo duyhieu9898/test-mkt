@@ -36,6 +36,7 @@ export async function finalizeFtuxCompany(
         model: company.businessType,
       },
       context.fullContext,
+      context.language,
     );
     masterPlan = generated.masterPlan;
   }

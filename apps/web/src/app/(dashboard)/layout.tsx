@@ -8,6 +8,7 @@ import { Header } from '@/components/layout/header';
 import { CreditBadge } from '@/components/credit-badge';
 import { CompanyGuidedTour } from '@/components/guided-tour/company-guided-tour';
 import { NavigationProgress } from '@/components/layout/navigation-progress';
+import { StaticJapaneseLocalizer } from '@/components/layout/static-japanese-localizer';
 
 export default function DashboardLayout({
   children,
@@ -42,6 +43,7 @@ export default function DashboardLayout({
   return (
     <div className="min-h-screen bg-muted/30">
       <NavigationProgress />
+      <StaticJapaneseLocalizer />
       <Sidebar />
       <CompanyGuidedTour />
       <div className="lg:pl-64">

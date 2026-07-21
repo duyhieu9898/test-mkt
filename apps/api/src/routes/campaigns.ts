@@ -59,6 +59,11 @@ import {
   getCampaignPerformance,
   syncCampaignFacebookPerformance,
 } from '../services/campaign-performance';
+import {
+  buildContentLanguageInstruction,
+  localizedDefault,
+  normalizeContentLanguage,
+} from '../lib/language';
 
 const campaignsRouter = new Hono();
 
@@ -209,6 +214,7 @@ const generateSchema = z.object({
   advisorActionIndex: z.number().int().min(0).max(50).optional(),
   advisorActionTitle: z.string().max(255).optional(),
   advisorEvidenceIds: z.array(z.string().max(255)).max(10).optional(),
+  language: z.string().optional(),
   /** Quality tier — 'fast' | 'balanced' | 'premium'. Default balanced. */
   tier: z.enum(['fast', 'balanced', 'premium']).default('balanced'),
 });
@@ -419,7 +425,7 @@ campaignsRouter.post(
 
     const company = await db.query.companies.findFirst({
       where: eq(companies.id, companyId),
-      columns: { id: true },
+      columns: { id: true, settings: true },
     });
     if (!company) {
       throw new HTTPException(404, { message: 'Company not found' });
@@ -454,7 +460,11 @@ campaignsRouter.post(
     // (build context → banners → posts → finalize) runs in the
     // background and publishes step events to the event bus.
     try {
-      const campaignId = await createCampaignWithStream(companyId, { ...input, sourceContext });
+      const campaignId = await createCampaignWithStream(companyId, {
+        ...input,
+        language: normalizeContentLanguage(input.language ?? company.settings?.language),
+        sourceContext,
+      });
       return c.json({
         campaignId,
         estimatedCost,
@@ -665,6 +675,7 @@ async function generateForExisting(
   const ctx = await runStep('build_business_context', async () => {
     return buildBusinessContext(companyId);
   });
+  const language = normalizeContentLanguage(input.language ?? ctx.language);
   const campaignContext = [
     ctx.fullContext,
     input.sourceContext ? `\nCAMPAIGN SOURCE CONTENT:\n${input.sourceContext}` : '',
@@ -703,6 +714,7 @@ async function generateForExisting(
       contentAngle: creativeBrief.angle,
       audience: input.audience,
       sourceContext: publicCampaignContext.substring(0, 6000),
+      language,
     });
   });
 
@@ -714,6 +726,7 @@ async function generateForExisting(
     const brandCreativePrompt = renderBrandCreativeKitPrompt(brandKit);
 
     const brainBlock = brainPromptBlock ? `\n\n${brainPromptBlock}\n` : '';
+    const languageInstruction = buildContentLanguageInstruction(language);
     const llmRes = await llmGenerate(
       [
         {
@@ -722,14 +735,14 @@ async function generateForExisting(
         },
         {
           role: 'user',
-          content: `Create 3 banner variants for this business.${brainBlock}\n\n${brandCreativePrompt}\n\nBUSINESS CONTEXT:\n${publicCampaignContext.substring(0, 2400)}\n\nTARGET AUDIENCE: ${input.audience}\nPUBLIC TOPIC: ${creativeBrief.topic}\nCUSTOMER-FACING ANGLE: ${creativeBrief.angle}\n${input.offer ? `OFFER OR PRODUCT: ${input.offer}` : ''}\n${input.reason ? `STRATEGIC CONTEXT FOR AI ONLY:\n${input.reason}` : ''}\n\nDo not copy the internal campaign objective into public headlines. Write for the customer, not for the internal strategy team.\nHeadlines and CTAs must follow the Brand Creative Kit voice and style rules.\nEach visualDirection must describe a concrete, text-free photographic scene that directly represents this public campaign topic and matches the Brand Creative Kit visual mood. The 3 scenes must be meaningfully different in subject, setting, and camera framing while still feeling like one brand campaign.\n\nReturn ONLY JSON:\n{"variants":[{"headline":"Max 8 words","subheadline":"Max 15 words","cta":"2-4 words","angle":"aspiration|pain|benefit","visualDirection":"Concrete text-free photographic scene, subject, setting, mood and composition"}]}`,
+          content: `Create 3 banner variants for this business.\n${languageInstruction}${brainBlock}\n\n${brandCreativePrompt}\n\nBUSINESS CONTEXT:\n${publicCampaignContext.substring(0, 2400)}\n\nTARGET AUDIENCE: ${input.audience}\nPUBLIC TOPIC: ${creativeBrief.topic}\nCUSTOMER-FACING ANGLE: ${creativeBrief.angle}\n${input.offer ? `OFFER OR PRODUCT: ${input.offer}` : ''}\n${input.reason ? `STRATEGIC CONTEXT FOR AI ONLY:\n${input.reason}` : ''}\n\nDo not copy the internal campaign objective into public headlines. Write for the customer, not for the internal strategy team.\nHeadlines and CTAs must follow the Brand Creative Kit voice and style rules.\nEach visualDirection must describe a concrete, text-free photographic scene that directly represents this public campaign topic and matches the Brand Creative Kit visual mood. The 3 scenes must be meaningfully different in subject, setting, and camera framing while still feeling like one brand campaign.\n\nReturn ONLY JSON:\n{"variants":[{"headline":"Max 8 words","subheadline":"Max 15 words","cta":"2-4 words","angle":"aspiration|pain|benefit","visualDirection":"Concrete text-free photographic scene, subject, setting, mood and composition"}]}`,
         },
       ],
       {
         featureKey: 'campaign_banner_copy',
         tier: input.tier,
         traceName: 'campaigns.generateBanners',
-        metadata: { companyId, campaignId },
+        metadata: { companyId, campaignId, language },
       },
     );
     const text = llmRes.text;
@@ -746,21 +759,23 @@ async function generateForExisting(
       {
         headline: creativeBrief.topic,
         subheadline: creativeBrief.angle,
-        cta: 'Learn More',
+        cta: localizedDefault(language, 'learnMore'),
         angle: 'benefit',
         visualDirection: `A concrete commercial scene showing ${input.audience} experiencing the main benefit of ${input.offer || creativeBrief.topic}`,
       },
       {
-        headline: `Made For What Matters`,
-        subheadline: `A better outcome for ${input.audience}`,
-        cta: 'Explore Now',
+        headline: localizedDefault(language, 'betterWay'),
+        subheadline: language === 'ja'
+          ? `${input.audience}により良い成果を`
+          : `A better outcome for ${input.audience}`,
+        cta: localizedDefault(language, 'exploreNow'),
         angle: 'aspiration',
         visualDirection: `An aspirational real-world scene focused on ${input.audience} achieving ${creativeBrief.angle}`,
       },
       {
-        headline: `Choose With Confidence`,
+        headline: localizedDefault(language, 'confidence'),
         subheadline: creativeBrief.topic,
-        cta: 'Get Started',
+        cta: localizedDefault(language, 'getStarted'),
         angle: 'pain',
         visualDirection: `An authentic problem-to-solution scene showing the need behind ${creativeBrief.topic} for ${input.audience}`,
       },
@@ -788,7 +803,7 @@ async function generateForExisting(
       const theme = applyBrandKitToBannerTheme(baseTheme, brandKit, index);
       const headline = (variant.headline || '').split(' ').slice(0, 8).join(' ');
       const subheadline = (variant.subheadline || '').split(' ').slice(0, 15).join(' ');
-      const cta = (variant.cta || 'Get Started').split(' ').slice(0, 4).join(' ');
+      const cta = (variant.cta || localizedDefault(language, 'getStarted')).split(' ').slice(0, 4).join(' ');
       const visualDirection = variant.visualDirection
         ? String(variant.visualDirection).slice(0, 400)
         : undefined;
@@ -903,6 +918,7 @@ async function generateForExisting(
       context: publicCampaignContext,
       platforms: [...CAMPAIGN_SOCIAL_PLATFORMS],
       brandPromptBlock: brainPromptBlock,
+      language,
       tier: input.tier,
       traceName: 'campaigns.generateSocialPosts',
     });
@@ -933,14 +949,14 @@ async function generateForExisting(
         },
         {
           role: 'user',
-          content: `Generate exactly 3 social posts for this business targeting: ${input.audience}${brainBlock}\n\nPUBLIC TOPIC: ${creativeBrief.topic}\nCUSTOMER-FACING ANGLE: ${creativeBrief.angle}\n\nBUSINESS CONTEXT:\n${publicCampaignContext.substring(0, 1400)}\n\nCreate one post for each platform: facebook, instagram, linkedin.\nAdapt the writing style to each platform:\n- facebook: conversational and community-friendly\n- instagram: visual, concise, hashtag-friendly\n- linkedin: professional and insight-led\n\nDo not copy internal campaign objectives into public post text.\nReturn ONLY JSON array in this exact platform order:\n[{"platform":"facebook","content":"Post text","hashtags":["#tag"]},{"platform":"instagram","content":"Post text","hashtags":["#tag"]},{"platform":"linkedin","content":"Post text","hashtags":["#tag"]}]`,
+          content: `Generate exactly 3 social posts for this business targeting: ${input.audience}\n${buildContentLanguageInstruction(language)}${brainBlock}\n\nPUBLIC TOPIC: ${creativeBrief.topic}\nCUSTOMER-FACING ANGLE: ${creativeBrief.angle}\n\nBUSINESS CONTEXT:\n${publicCampaignContext.substring(0, 1400)}\n\nCreate one post for each platform: facebook, instagram, linkedin.\nAdapt the writing style to each platform:\n- facebook: conversational and community-friendly\n- instagram: visual, concise, hashtag-friendly\n- linkedin: professional and insight-led\n\nDo not copy internal campaign objectives into public post text.\nReturn ONLY JSON array in this exact platform order:\n[{"platform":"facebook","content":"Post text","hashtags":["#tag"]},{"platform":"instagram","content":"Post text","hashtags":["#tag"]},{"platform":"linkedin","content":"Post text","hashtags":["#tag"]}]`,
         },
       ],
       {
         featureKey: 'campaign_social_post',
         tier: input.tier,
         traceName: 'campaigns.generateSocialPosts',
-        metadata: { companyId, campaignId },
+        metadata: { companyId, campaignId, language },
       },
     );
     const text = llmRes.text;

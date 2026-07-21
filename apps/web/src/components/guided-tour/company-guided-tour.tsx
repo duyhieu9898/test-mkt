@@ -5,11 +5,13 @@ import { createPortal } from 'react-dom';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, Check, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useCompany } from '@/lib/api/hooks';
+import { appT, normalizeAppLanguage, type AppMessageKey } from '@/lib/app-language';
 
 interface TourStep {
   target: string;
-  title: string;
-  description: string;
+  titleKey: AppMessageKey;
+  descriptionKey: AppMessageKey;
   path?: string;
 }
 
@@ -25,58 +27,58 @@ interface HighlightRect {
 const tourSteps: TourStep[] = [
   {
     target: 'dashboard-menu',
-    title: 'Start with the big picture',
-    description: 'Dashboard shows what is happening in this company: priorities, progress, AI team activity, and the next useful thing to do.',
+    titleKey: 'tourDashboardTitle',
+    descriptionKey: 'tourDashboardDesc',
   },
   {
     target: 'walkthrough-menu',
-    title: 'Use the setup guide',
-    description: 'Walkthrough turns the product into a simple checklist, so you know where to start and what to set up first.',
+    titleKey: 'tourWalkthroughTitle',
+    descriptionKey: 'tourWalkthroughDesc',
   },
   {
     target: 'walkthrough-quick-start',
     path: '/walkthrough',
-    title: 'Follow Quick Start',
-    description: 'This checklist helps you get real value quickly: add knowledge, review your brand, create a page, and connect the tools AI needs.',
+    titleKey: 'tourQuickStartTitle',
+    descriptionKey: 'tourQuickStartDesc',
   },
   {
     target: 'knowledge-menu',
     path: '/walkthrough',
-    title: 'Teach AI your business',
-    description: 'Knowledge Hub is where you add product details, FAQs, documents, offers, and internal notes that AI should trust.',
+    titleKey: 'tourKnowledgeTitle',
+    descriptionKey: 'tourKnowledgeDesc',
   },
   {
     target: 'brain-hub-menu',
     path: '/walkthrough',
-    title: 'See what AI has learned',
-    description: 'Brain Hub shows the sources, signals, and business context AI is using, so recommendations stay grounded in your real company.',
+    titleKey: 'tourBrainTitle',
+    descriptionKey: 'tourBrainDesc',
   },
   {
     target: 'landing-pages-menu',
     path: '/walkthrough',
-    title: 'Create a page to send customers to',
-    description: 'Landing Pages helps you build a focused public page for an offer, campaign, product, or lead generation without needing a developer.',
+    titleKey: 'tourLandingPagesTitle',
+    descriptionKey: 'tourLandingPagesDesc',
   },
   {
     target: 'market-menu',
     path: '/walkthrough',
-    title: 'Understand competitors and demand',
-    description: 'Market & Competitors helps AI compare your business with the market, spot gaps, and find opportunities worth acting on.',
+    titleKey: 'tourMarketTitle',
+    descriptionKey: 'tourMarketDesc',
   },
   {
     target: 'ceo-advisor-menu',
-    title: 'Ask for strategic next steps',
-    description: 'CEO Advisor reads your company context, knowledge, campaigns, blogs, and market signals, then suggests the highest-impact actions.',
+    titleKey: 'tourCeoAdvisorTitle',
+    descriptionKey: 'tourCeoAdvisorDesc',
   },
   {
     target: 'campaign-launcher-menu',
-    title: 'Turn strategy into a campaign',
-    description: 'Campaign Launcher creates a practical marketing package from your inputs: blog content, social posts, banners, and campaign assets.',
+    titleKey: 'tourCampaignLauncherTitle',
+    descriptionKey: 'tourCampaignLauncherDesc',
   },
   {
     target: 'analytics-menu',
-    title: 'Measure what is working',
-    description: 'Analytics helps you see performance after campaigns and pages go live, so you can improve based on results instead of guessing.',
+    titleKey: 'tourAnalyticsTitle',
+    descriptionKey: 'tourAnalyticsDesc',
   },
 ];
 
@@ -113,6 +115,8 @@ export function CompanyGuidedTour() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { data: company } = useCompany(companyId ?? '');
+  const language = normalizeAppLanguage(company?.settings?.language);
   const [active, setActive] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [highlight, setHighlight] = useState<HighlightRect | null>(null);
@@ -347,7 +351,7 @@ export function CompanyGuidedTour() {
         <div className="pointer-events-auto fixed inset-0 flex items-center justify-center bg-slate-950/55">
           <div className="flex items-center gap-2 rounded-lg bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-xl">
             <Loader2 className="h-4 w-4 animate-spin text-violet-600" />
-            {transitioning ? 'Opening Walkthrough...' : 'Preparing the next guide step...'}
+            {transitioning ? appT(language, 'tourOpeningWalkthrough') : appT(language, 'tourPreparingNextStep')}
           </div>
         </div>
       )}
@@ -359,7 +363,7 @@ export function CompanyGuidedTour() {
         >
           <button
             type="button"
-            aria-label="Skip guided tour"
+            aria-label={appT(language, 'tourSkip')}
             onClick={finish}
             className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
@@ -367,13 +371,13 @@ export function CompanyGuidedTour() {
           </button>
 
           <p className="text-xs font-semibold text-violet-600">
-            Step {stepIndex + 1} of {tourSteps.length}
+            {appT(language, 'tourStep')} {stepIndex + 1} {appT(language, 'tourOf')} {tourSteps.length}
             <span className="ml-2 font-normal text-slate-400">
-              {tourSteps.length - stepIndex - 1} remaining
+              {tourSteps.length - stepIndex - 1} {appT(language, 'tourRemaining')}
             </span>
           </p>
-          <h2 className="mt-2 pr-7 text-lg font-semibold text-slate-900">{step.title}</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">{step.description}</p>
+          <h2 className="mt-2 pr-7 text-lg font-semibold text-slate-900">{appT(language, step.titleKey)}</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{appT(language, step.descriptionKey)}</p>
 
           <div className="mt-5 flex items-center justify-between gap-3">
             <button
@@ -381,16 +385,16 @@ export function CompanyGuidedTour() {
               onClick={finish}
               className="text-sm font-medium text-slate-500 hover:text-slate-800"
             >
-              Skip tour
+              {appT(language, 'tourSkip')}
             </button>
             <Button onClick={next} className="gap-2 bg-violet-600 hover:bg-violet-700">
               {stepIndex === tourSteps.length - 1 ? (
                 <>
-                  Finish <Check className="h-4 w-4" />
+                  {appT(language, 'tourFinish')} <Check className="h-4 w-4" />
                 </>
               ) : (
                 <>
-                  Next <ArrowRight className="h-4 w-4" />
+                  {appT(language, 'tourNext')} <ArrowRight className="h-4 w-4" />
                 </>
               )}
             </Button>

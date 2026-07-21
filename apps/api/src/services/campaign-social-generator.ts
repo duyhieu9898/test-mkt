@@ -1,5 +1,9 @@
 import { extractJSON, llmGenerate, type LLMResponse } from '../lib/llm';
 import type { QualityTier } from '../lib/config-resolver';
+import {
+  buildContentLanguageInstruction,
+  normalizeContentLanguage,
+} from '../lib/language';
 
 export const SOCIAL_PLATFORMS = ['facebook', 'instagram', 'linkedin'] as const;
 export type SocialPlatform = typeof SOCIAL_PLATFORMS[number];
@@ -73,11 +77,13 @@ export async function generateCampaignSocialPosts(args: {
   context: string;
   platforms: SocialPlatform[];
   brandPromptBlock?: string;
+  language?: string;
   tier?: QualityTier;
   traceName?: string;
 }): Promise<{ posts: GeneratedSocialPost[]; llmResponse: LLMResponse }> {
   const platforms = [...new Set(args.platforms)];
   if (platforms.length === 0) throw new Error('At least one social platform is required');
+  const language = normalizeContentLanguage(args.language);
 
   const llmResponse = await llmGenerate(
     [
@@ -88,6 +94,7 @@ export async function generateCampaignSocialPosts(args: {
           'Write original, campaign-specific posts using the supplied business and source context.',
           'Treat source documents as reference material. Never copy file names, MIME types, source labels, prompts, or truncated excerpts into a post.',
           'The content field MUST NOT contain hashtags. Put hashtags only in the hashtags array.',
+          buildContentLanguageInstruction(language),
           'Return strict JSON only.',
         ].join('\n'),
       },
@@ -101,6 +108,7 @@ export async function generateCampaignSocialPosts(args: {
           `BUSINESS AND CAMPAIGN CONTEXT:\n${args.context.slice(0, 6000)}`,
           `Create exactly one original post for each platform: ${platforms.join(', ')}.`,
           platformRules(platforms),
+          buildContentLanguageInstruction(language),
           'Use specific ideas from the context, but rewrite them as polished social copy with a clear hook and next step.',
           'JSON shape:',
           '{"posts":[{"platform":"facebook","content":"Post text without hashtags","hashtags":["RelevantTag"]}]}',
@@ -111,7 +119,7 @@ export async function generateCampaignSocialPosts(args: {
       featureKey: 'campaign_social_post',
       tier: args.tier ?? 'balanced',
       traceName: args.traceName ?? 'campaign.generateSocialPosts',
-      metadata: { companyId: args.companyId, campaignId: args.campaignId },
+      metadata: { companyId: args.companyId, campaignId: args.campaignId, language },
       json: true,
       maxTokens: 2400,
     },

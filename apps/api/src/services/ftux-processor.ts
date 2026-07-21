@@ -18,6 +18,12 @@ import { BusinessUnderstandingAgent } from '../agents/business-understanding-age
 import { SeoAuditAgent } from '../agents/seo-audit-agent';
 import { SocialDetectionAgent } from '../agents/social-detection-agent';
 import { memorySystem } from '../agents';
+import {
+  buildContentLanguageInstruction,
+  contentLanguageName,
+  normalizeContentLanguage,
+  type ContentLanguage,
+} from '../lib/language';
 
 // Session storage (in production, use Redis)
 const sessions = new Map<string, FTUXSession>();
@@ -41,6 +47,7 @@ export interface FTUXSession {
   id: string;
   userId: string;
   prompt: string;
+  language: ContentLanguage;
   websiteOption: WebsiteOption;
   websiteUrl?: string;
   status: 'processing' | 'complete' | 'error';
@@ -230,9 +237,10 @@ function createCompanySlug(companyName: string, websiteUrl?: string): string {
   return `${base || 'company'}-${suffix}`;
 }
 
-async function generateWithAI(prompt: string): Promise<AIGeneratedCompany> {
+async function generateWithAI(prompt: string, language: ContentLanguage = 'en'): Promise<AIGeneratedCompany> {
   const provider = env.FTUX_AI_PROVIDER;
   const model = env.FTUX_AI_MODEL;
+  const outputLanguage = contentLanguageName(language);
 
   // Check if the selected provider has API key configured
   if (provider === 'openai' && !openai) {
@@ -290,7 +298,11 @@ Rules:
 - Title can be specific to the business (e.g., "Restaurant Success Manager", "Product Lead")
 - Use realistic names
 - Capabilities should be specific actions the agent can do
-- Strategy should have 5-7 day entries (can combine days like "4-5")`;
+- Strategy should have 5-7 day entries (can combine days like "4-5")
+- ${buildContentLanguageInstruction(language)}
+- Translate all descriptive JSON values into ${outputLanguage}: detectedInfo.market, detectedInfo.model, detectedInfo.strategy, agent titles/descriptions, strategy.vision, strategy day titles, and activities.
+- Keep company names, brand names, product/service names, URLs, JSON keys, enum role values, and capability IDs unchanged.
+- If the output language is Japanese, do not return English prose for market, model, or strategy.`;
 
   try {
     let content: string | null = null;
@@ -603,6 +615,7 @@ export class FTUXProcessor {
     options?: {
       websiteOption?: WebsiteOption;
       websiteUrl?: string;
+      language?: string;
     }
   ): Promise<string> {
     const sessionId = uuidv4();
@@ -610,6 +623,7 @@ export class FTUXProcessor {
       id: sessionId,
       userId,
       prompt,
+      language: normalizeContentLanguage(options?.language),
       websiteOption: options?.websiteOption || 'skip',
       websiteUrl: options?.websiteUrl,
       status: 'processing',
@@ -725,6 +739,7 @@ export class FTUXProcessor {
                 extractedContent: contentQuality.level !== 'insufficient' ? extractedContent : undefined,
                 userInput: session.prompt,
                 url: session.websiteUrl,
+                language: session.language,
               },
               agentContext
             ),
@@ -832,7 +847,7 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
       }
 
       const finalWebsiteAnalysis = websiteAnalysis as WebsiteAnalysisResult | null;
-      const generated = await generateWithAI(enrichedPrompt);
+      const generated = await generateWithAI(enrichedPrompt, session.language);
 
       // If website analysis gave us a company name, use it
       if (finalWebsiteAnalysis?.businessInfo?.companyName) {
@@ -867,7 +882,7 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
         settings: {
           timezone: 'UTC',
           currency: 'USD',
-          language: 'en',
+          language: session.language,
           websiteUrl: session.websiteUrl,
           websiteOption: session.websiteOption,
           approvalThresholds: {

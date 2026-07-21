@@ -987,13 +987,7 @@ export default function MarketingPage() {
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="en">English</SelectItem>
-                      <SelectItem value="vi">Tiếng Việt</SelectItem>
-                      <SelectItem value="zh">中文</SelectItem>
                       <SelectItem value="ja">日本語</SelectItem>
-                      <SelectItem value="ko">한국어</SelectItem>
-                      <SelectItem value="th">ภาษาไทย</SelectItem>
-                      <SelectItem value="fr">Français</SelectItem>
-                      <SelectItem value="es">Español</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
