@@ -24,6 +24,7 @@ export interface LaunchTargets {
   facebook: boolean;
   linkedin: boolean;
   instagram: boolean;
+  video?: boolean;
   imageMode?: 'ai' | 'uploaded';
   uploadedAssetIds?: string[];
 }

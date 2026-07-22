@@ -296,7 +296,6 @@ export function PublishDialog({
   const [submitting, setSubmitting] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
   const [offlineConfirmationOpen, setOfflineConfirmationOpen] = useState(false);
-  const hostedPublishingComingSoon = true;
 
   const { data: page } = useQuery<PageData>({
     queryKey: ['publish-dialog-page', pageId],
@@ -334,19 +333,13 @@ export function PublishDialog({
     if (!page) return;
     setSubdomain(page.subdomain || page.slug || '');
     if (page.deploymentProvider === 'wordpress') setTarget('wordpress');
-    if (page.deploymentProvider === 'cloudflare' && !hostedPublishingComingSoon) setTarget('hosted');
+    if (page.deploymentProvider === 'cloudflare') setTarget('hosted');
     if (page.deploymentProvider === 'wordpress' && page.status === 'published') setWpStatus('publish');
   }, [page, open]);
 
   useEffect(() => {
     if (!open) setOfflineConfirmationOpen(false);
   }, [open]);
-
-  useEffect(() => {
-    if (hostedPublishingComingSoon && target === 'hosted') {
-      setTarget('wordpress');
-    }
-  }, [hostedPublishingComingSoon, target]);
 
   useEffect(() => {
     const current = options?.wordpress.current;
@@ -361,7 +354,7 @@ export function PublishDialog({
     const canUseHosted = options.hosted.urlMode === 'path'
       ? !!options.hosted.baseUrl
       : !!options.hosted.baseDomain;
-    if (!options.wordpress.connected && canUseHosted && !hostedPublishingComingSoon) setTarget('hosted');
+    if (!options.wordpress.connected && canUseHosted) setTarget('hosted');
   }, [open, options, page?.deploymentProvider]);
 
   const isPublished = page?.status === 'published' && !!page.publishedUrl;
@@ -400,7 +393,6 @@ export function PublishDialog({
   const handlePublish = async () => {
     if (!token) return;
     if (target === 'hosted') {
-      if (hostedPublishingComingSoon) return toast.info('Create a new public website is coming soon.');
       if (!hostedConfigured) return toast.error('Hosted website URL is not configured.');
       if (normalizedSubdomain.length < 3) return toast.error('Website address must use at least 3 characters.');
     }
@@ -491,7 +483,7 @@ export function PublishDialog({
             Publish landing page
           </DialogTitle>
           <DialogDescription>
-            Add this page to your WordPress website. Public website hosting is coming soon.
+            Add this page to your WordPress website or publish it as a new public website.
           </DialogDescription>
         </DialogHeader>
 
@@ -552,27 +544,19 @@ export function PublishDialog({
               <Label>Where should this page go?</Label>
               <RadioGroup
                 value={target}
-                onValueChange={(value) => {
-                  if (value === 'hosted' && hostedPublishingComingSoon) return;
-                  setTarget(value as PublishTarget);
-                }}
+                onValueChange={(value) => setTarget(value as PublishTarget)}
                 className="grid gap-3 sm:grid-cols-2"
               >
-                <label className={`flex gap-3 border p-4 ${target === 'hosted' ? 'border-primary bg-primary/5' : ''} ${hostedPublishingComingSoon || (isPublished && publishedTarget !== 'hosted') ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                <label className={`flex gap-3 border p-4 ${target === 'hosted' ? 'border-primary bg-primary/5' : ''} ${isPublished && publishedTarget !== 'hosted' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
                   <RadioGroupItem
                     value="hosted"
-                    disabled={hostedPublishingComingSoon || (isPublished && publishedTarget !== 'hosted')}
+                    disabled={isPublished && publishedTarget !== 'hosted'}
                   />
                   <Server className="h-5 w-5 shrink-0" />
                   <span>
-                    <span className="flex flex-wrap items-center gap-2 font-semibold">
-                      Create a new public website
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                        Coming soon
-                      </span>
-                    </span>
+                    <span className="block font-semibold">Create a new public website</span>
                     <span className="block text-sm text-muted-foreground">
-                      We host it and give you a public link. This option is temporarily disabled.
+                      We host it and give you a public link.
                     </span>
                   </span>
                 </label>
@@ -745,7 +729,7 @@ export function PublishDialog({
               disabled={
                 submitting
                 || optionsLoading
-                || (target === 'hosted' && (hostedPublishingComingSoon || !hostedConfigured || normalizedSubdomain.length < 3))
+                || (target === 'hosted' && (!hostedConfigured || normalizedSubdomain.length < 3))
                 || (target === 'wordpress' && !options?.wordpress.connected)
               }
             >

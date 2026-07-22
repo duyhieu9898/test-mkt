@@ -21,6 +21,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Rocket,
   Loader2,
@@ -39,6 +40,7 @@ import {
   ImagePlus,
   Trash2,
   UploadCloud,
+  Video,
 } from 'lucide-react';
 import {
   useLaunches,
@@ -481,6 +483,7 @@ export default function LaunchPage() {
     facebook: false,
     linkedin: true,
     instagram: false,
+    video: false,
   });
   const [activeLaunchId, setActiveLaunchId] = useState<string | null>(null);
   const [optimisticRunningLaunchId, setOptimisticRunningLaunchId] = useState<string | null>(null);
@@ -641,6 +644,7 @@ export default function LaunchPage() {
       setSourceSelection({});
       setImageMode('ai');
       setCampaignImages([]);
+      setTargets((current) => ({ ...current, video: false }));
       toast.success('Launch queued. Watch the progress below.');
     } catch (e) {
       toast.error((e as Error).message || 'Failed to start launch');
@@ -969,6 +973,35 @@ export default function LaunchPage() {
               live. Website publishing happens from the blog review page.
             </p>
           </div>
+
+          <label
+            className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+              targets.video
+                ? 'border-indigo-300 bg-indigo-50'
+                : 'border-slate-200 bg-white hover:bg-slate-50'
+            }`}
+          >
+            <Checkbox
+              checked={targets.video}
+              onCheckedChange={(checked) => setTargets((current) => ({
+                ...current,
+                video: checked === true,
+              }))}
+              className="mt-0.5"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <Video className="h-4 w-4 text-indigo-500" />
+                Create one AI video
+                <Badge variant="secondary" className="bg-emerald-50 text-[10px] text-emerald-700">
+                  Free for now
+                </Badge>
+              </span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                AI will create one short campaign video only, no matter how many social channels you choose. Later this action can use paid credits.
+              </span>
+            </span>
+          </label>
 
           <p className="text-[11px] text-muted-foreground">
             Each launch creates a blog draft and 3 editable advertising banners. Only selected social outputs are saved as campaign drafts.

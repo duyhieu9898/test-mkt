@@ -30,6 +30,7 @@ import { getViralFrameworkPrompt, getAdCopySpecPrompt, AIDA_FRAMEWORK, AB_TEST_A
 import { adaptDesignForSize, AD_SIZES } from '../services/creative-adapter';
 import { validateBanner } from '../services/creative-quality';
 import { generateScript, breakIntoScenes } from '../services/video-engine';
+import { createCampaignVideoProject } from '../services/campaign-video-creative';
 import {
   applyLatestCampaignBannerMedia,
   bannerIdFromMediaUrl,
@@ -1987,14 +1988,31 @@ marketingEngineRouter.post(
   '/company/:companyId/videos/generate',
   zValidator('json', z.object({
     campaignId: z.string().uuid().nullish(),
-    format: z.enum(['15s', '30s', '60s']).default('30s'),
+    format: z.enum(['15s', '30s', '60s']).default('15s'),
     aspectRatio: z.enum(['9:16', '16:9', '1:1']).default('9:16'),
+    render: z.boolean().optional().default(false),
   })),
   async (c) => {
     const companyId = c.req.param('companyId');
-    const { campaignId, format, aspectRatio } = c.req.valid('json');
+    const { campaignId, format, aspectRatio, render } = c.req.valid('json');
 
     try {
+      if (render) {
+        if (!campaignId) {
+          return c.json({ error: 'Campaign is required to render an AI video.' }, 400);
+        }
+        if (aspectRatio === '1:1') {
+          return c.json({ error: 'AI video rendering currently supports 9:16 and 16:9.' }, 400);
+        }
+        const project = await createCampaignVideoProject({
+          companyId,
+          campaignId,
+          format,
+          aspectRatio,
+        });
+        return c.json(project);
+      }
+
       // Step 1: Generate script
       const { title, script } = await generateScript(companyId, { format, aspectRatio });
 
@@ -2009,6 +2027,9 @@ marketingEngineRouter.post(
         script: script as any,
         scenes: [] as any,
       }).returning();
+      if (!project) {
+        throw new Error('Video project could not be created.');
+      }
 
       // Step 2: Auto-break into scenes
       const scenes = await breakIntoScenes(script, format);
@@ -2031,6 +2052,16 @@ marketingEngineRouter.post(
     }
   }
 );
+
+marketingEngineRouter.get('/company/:companyId/videos/:id', async (c) => {
+  const companyId = c.req.param('companyId');
+  const id = c.req.param('id');
+  const [project] = await db.select().from(videoProjects)
+    .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
+    .limit(1);
+  if (!project) return c.json({ error: 'Video project not found' }, 404);
+  return c.json(project);
+});
 
 // List video projects
 marketingEngineRouter.get('/company/:companyId/videos', async (c) => {
@@ -2064,6 +2095,55 @@ marketingEngineRouter.patch(
     return c.json(updated);
   }
 );
+
+marketingEngineRouter.post('/company/:companyId/videos/:id/imgly-export', async (c) => {
+  const companyId = c.req.param('companyId');
+  const id = c.req.param('id');
+  const formData = await c.req.formData();
+  const file = formData.get('file') as File | null;
+  const scene = formData.get('scene');
+  const duration = formData.get('duration');
+
+  if (!file) return c.json({ error: 'Missing exported video file.' }, 400);
+  if (!file.type.startsWith('video/')) return c.json({ error: 'Export must be a video file.' }, 400);
+  if (file.size > 200 * 1024 * 1024) return c.json({ error: 'Video is too large. Please export a file under 200MB.' }, 400);
+
+  const [existing] = await db.select().from(videoProjects)
+    .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
+    .limit(1);
+  if (!existing) return c.json({ error: 'Video project not found' }, 404);
+
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const extension = file.type.includes('webm') ? 'webm' : 'mp4';
+  const exportVersion = Date.now();
+  const savedVideo = await saveObject({
+    key: `campaigns/${companyId}/${existing.campaignId ?? 'standalone'}/videos/${id}/imgly-video-${id}-current.${extension}`,
+    body: bytes,
+    contentType: file.type || 'video/mp4',
+    cacheControl: 'public, max-age=60, must-revalidate',
+  });
+  const outputUrl = `${savedVideo.url}?v=${exportVersion}`;
+  const currentScript = (existing.script as Record<string, any> | null) ?? {};
+
+  const [updated] = await db.update(videoProjects)
+    .set({
+      status: 'ready',
+      outputUrl,
+      script: {
+        ...currentScript,
+        imglyScene: typeof scene === 'string' ? scene : currentScript.imglyScene,
+        imglySceneVideoUrl: outputUrl,
+        imglyDurationSeconds: typeof duration === 'string' ? Number(duration) || undefined : undefined,
+        imglyUpdatedAt: new Date().toISOString(),
+      } as any,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
+    .returning();
+
+  if (!updated) return c.json({ error: 'Video project could not be updated.' }, 500);
+  return c.json({ video: updated });
+});
 
 // ===============================================================
 // UTM TRACKING LINKS — Generate UTM-tagged links for campaigns

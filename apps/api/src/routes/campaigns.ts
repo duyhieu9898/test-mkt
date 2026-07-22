@@ -23,7 +23,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { campaigns, banners, socialPosts, companies, campaignLaunches, blogPosts } from '@1person/core/db';
+import { campaigns, banners, socialPosts, companies, campaignLaunches, blogPosts, videoProjects } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import type { CampaignStepEvent } from '../services/marketing-autonomous';
@@ -1573,7 +1573,7 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
   const targetingBlogPostId = (
     campaign.targeting as { blogPostId?: string } | null | undefined
   )?.blogPostId;
-  const [bannerRows, postRows, targetingBlogPost] = await Promise.all([
+  const [bannerRows, postRows, videoRows, targetingBlogPost] = await Promise.all([
     db
       .select({
         id: banners.id,
@@ -1615,6 +1615,24 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
       .from(socialPosts)
       .where(eq(socialPosts.campaignId, id))
       .orderBy(desc(socialPosts.createdAt)),
+    db
+      .select({
+        id: videoProjects.id,
+        title: videoProjects.title,
+        format: videoProjects.format,
+        aspectRatio: videoProjects.aspectRatio,
+        status: videoProjects.status,
+        script: videoProjects.script,
+        scenes: videoProjects.scenes,
+        outputUrl: videoProjects.outputUrl,
+        thumbnailUrl: videoProjects.thumbnailUrl,
+        createdAt: videoProjects.createdAt,
+        updatedAt: videoProjects.updatedAt,
+      })
+      .from(videoProjects)
+      .where(and(eq(videoProjects.companyId, companyId), eq(videoProjects.campaignId, id)))
+      .orderBy(desc(videoProjects.createdAt))
+      .limit(1),
     targetingBlogPostId
       ? db.select({
         id: blogPosts.id,
@@ -1680,6 +1698,7 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
     campaign,
     banners: bannerRows,
     socialPosts: normalizedPostRows,
+    videos: videoRows,
     blogPost: blogPost ?? null,
     launch: linkedLaunch
       ? {

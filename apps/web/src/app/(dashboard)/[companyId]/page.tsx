@@ -32,7 +32,9 @@ import {
   useStreak,
   useCompleteMission,
   useSkipMission,
+  useCompany,
 } from '@/lib/api/hooks';
+import { normalizeAppLanguage } from '@/lib/app-language';
 import { GrowthScoreWidget } from '@/components/dashboard/growth-score-widget';
 import { TodaysFocus } from '@/components/dashboard/todays-focus';
 import { SystemProgressBars } from '@/components/dashboard/system-progress-bars';
@@ -82,6 +84,8 @@ export default function DashboardPage() {
   const streakQ = useStreak(companyId);
   const completeMutation = useCompleteMission(companyId);
   const skipMutation = useSkipMission(companyId);
+  const companyQ = useCompany(companyId);
+  const language = normalizeAppLanguage(companyQ.data?.settings?.language);
 
   // === Existing data hooks ===
   const briefQ = useQuery({
@@ -119,12 +123,16 @@ export default function DashboardPage() {
   const lastMeetingLabel = relativeDate(lastMeeting?.meetingDate ?? lastMeeting?.createdAt);
 
   const firstName = user?.name?.split(' ')[0] ?? 'there';
+  const isJapanese = language === 'ja';
+  const localizedLastMeetingLabel = isJapanese
+    ? (lastMeetingLabel === 'today' ? '今日' : lastMeetingLabel === 'yesterday' ? '昨日' : lastMeetingLabel)
+    : lastMeetingLabel;
 
   const stats = [
-    { icon: Megaphone, label: 'Campaigns', value: campaignsCount, link: `/${companyId}/campaigns`, tint: 'text-orange-600 bg-orange-50' },
-    { icon: Briefcase, label: 'Deals', value: dealsCount, link: `/${companyId}/sales`, tint: 'text-emerald-600 bg-emerald-50' },
-    { icon: Target, label: 'Competitors', value: competitorsCount, link: `/${companyId}/market`, tint: 'text-rose-600 bg-rose-50' },
-    { icon: CalendarClock, label: 'Last meeting', value: lastMeetingLabel, link: `/${companyId}/meetings`, tint: 'text-indigo-600 bg-indigo-50' },
+    { icon: Megaphone, label: isJapanese ? 'キャンペーン' : 'Campaigns', value: campaignsCount, link: `/${companyId}/campaigns`, tint: 'text-orange-600 bg-orange-50' },
+    { icon: Briefcase, label: isJapanese ? '商談' : 'Deals', value: dealsCount, link: `/${companyId}/sales`, tint: 'text-emerald-600 bg-emerald-50' },
+    { icon: Target, label: isJapanese ? '競合' : 'Competitors', value: competitorsCount, link: `/${companyId}/market`, tint: 'text-rose-600 bg-rose-50' },
+    { icon: CalendarClock, label: isJapanese ? '最新ミーティング' : 'Last meeting', value: localizedLastMeetingLabel, link: `/${companyId}/meetings`, tint: 'text-indigo-600 bg-indigo-50' },
   ];
 
   const gamificationLoading = growthScoreQ.isLoading || missionsQ.isLoading;
@@ -133,9 +141,13 @@ export default function DashboardPage() {
     <div className="max-w-5xl mx-auto space-y-6">
       {/* Greeting */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Chào {firstName}</h1>
+        <h1 className="text-2xl font-bold text-slate-900">
+          {isJapanese ? `${firstName}さん、こんにちは` : `Hello ${firstName}`}
+        </h1>
         <p className="text-sm text-slate-600 mt-1">
-          Here's what your AI thinks you should focus on today.
+          {isJapanese
+            ? '今日、AIが優先すべきだと考えていることです。'
+            : "Here's what your AI thinks you should focus on today."}
         </p>
       </div>
 
@@ -200,7 +212,7 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between mt-1">
                   <p className="text-xs text-slate-500">{s.label}</p>
                   <span className="text-xs text-indigo-600 flex items-center gap-0.5">
-                    View <ArrowRight className="w-3 h-3" />
+                    {isJapanese ? '表示' : 'View'} <ArrowRight className="w-3 h-3" />
                   </span>
                 </div>
               </CardContent>
@@ -232,7 +244,7 @@ export default function DashboardPage() {
           onClick={() => router.push(`/${companyId}/insights`)}
         >
           <Sparkles className="w-4 h-4" />
-          Ask AI for personalized advice
+          {isJapanese ? 'AIに個別アドバイスを依頼' : 'Ask AI for personalized advice'}
           <Badge className="ml-1 bg-indigo-500 text-white gap-1 hover:bg-indigo-500">
             <Coins className="w-3 h-3" /> 10
           </Badge>

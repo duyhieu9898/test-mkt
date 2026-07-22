@@ -52,6 +52,7 @@ launchesRouter.post(
         facebook: z.boolean().default(false),
         linkedin: z.boolean().default(false),
         instagram: z.boolean().default(false),
+        video: z.boolean().optional().default(false),
       }),
     }),
   ),

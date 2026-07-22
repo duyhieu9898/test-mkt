@@ -51,12 +51,14 @@ import {
   normalizeContentLanguage,
   resolveCompanyLanguage,
 } from '../lib/language';
+import { createCampaignVideoProject } from './campaign-video-creative';
 
 export interface LaunchTargets {
   wordpress: boolean;
   facebook: boolean;
   linkedin: boolean;
   instagram: boolean;
+  video?: boolean;
   language?: string;
   imageMode?: 'ai' | 'uploaded';
   uploadedAssetIds?: string[];
@@ -81,6 +83,7 @@ const ALL_STEP_KEYS = [
   'social_fb',
   'social_li',
   'social_ig',
+  'video',
   'geo_seed',
   'banner_campaign',
   'banners',
@@ -112,6 +115,7 @@ function initSteps(targets: LaunchTargets): LaunchStep[] {
   if (targets.facebook) wanted.push({ key: 'social_fb', label: 'Draft Facebook campaign post' });
   if (targets.linkedin) wanted.push({ key: 'social_li', label: 'Draft LinkedIn campaign post' });
   if (targets.instagram) wanted.push({ key: 'social_ig', label: 'Draft Instagram campaign post' });
+  if (targets.video) wanted.push({ key: 'video', label: 'Generate campaign video' });
   wanted.push({ key: 'geo_seed', label: 'Track keyword in AI search (GEO)' });
   return wanted.map((w) => ({ key: w.key, label: w.label, status: 'pending' }));
 }
@@ -181,6 +185,7 @@ export async function startLaunch(args: StartLaunchArgs): Promise<{ launchId: st
     facebook: args.targets.facebook === true,
     linkedin: args.targets.linkedin === true,
     instagram: args.targets.instagram === true,
+    video: args.targets.video === true,
     language,
     imageMode: args.imageMode === 'uploaded' && args.assetIds?.length ? 'uploaded' : 'ai',
     uploadedAssetIds: args.assetIds?.slice(0, 3),
@@ -819,6 +824,26 @@ async function runLaunch(launchId: string): Promise<void> {
     bannerBackgroundUrls: launchGeneratedImageUrls.slice(0, 3),
   });
   if (!campaignId) return;
+
+  if (launchTargets.video) {
+    await markStart(launchId, 'video');
+    try {
+      const video = await createCampaignVideoProject({
+        companyId: launch.companyId,
+        campaignId,
+        format: '15s',
+        aspectRatio: '9:16',
+      });
+      await markDone(launchId, 'video', {
+        campaignId,
+        videoProjectId: video.id,
+        status: video.status,
+        outputUrl: video.outputUrl,
+      }, 'One campaign video is ready for review.');
+    } catch (e) {
+      await markError(launchId, 'video', (e as Error).message);
+    }
+  }
 
   // 5. Seed GEO tracking prompt for the keyword
   await markStart(launchId, 'geo_seed');

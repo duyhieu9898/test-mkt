@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/auth-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { UserAvatar } from '@/components/ui/avatar';
 import { LanguageSwitcher } from '@/components/layout/language-switcher';
 import { useCompany } from '@/lib/api/hooks';
-import { appT, normalizeAppLanguage } from '@/lib/app-language';
+import { APP_LANGUAGE_STORAGE_KEY, appT, normalizeAppLanguage, type AppLanguage } from '@/lib/app-language';
 import {
   Bell,
   Search,
@@ -35,7 +36,24 @@ export function Header() {
   const companyId = typeof params?.companyId === 'string' ? params.companyId : undefined;
   const settingsHref = companyId ? `/${companyId}/settings` : '/companies';
   const { data: company } = useCompany(companyId ?? '');
-  const language = normalizeAppLanguage(company?.settings?.language);
+  const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage>('en');
+  const language = companyId
+    ? normalizeAppLanguage(company?.settings?.language)
+    : preferredLanguage;
+
+  useEffect(() => {
+    if (companyId) return;
+    try {
+      setPreferredLanguage(normalizeAppLanguage(window.localStorage.getItem(APP_LANGUAGE_STORAGE_KEY)));
+    } catch {
+      setPreferredLanguage('en');
+    }
+    const handleLanguageChange = (event: Event) => {
+      setPreferredLanguage(normalizeAppLanguage((event as CustomEvent).detail));
+    };
+    window.addEventListener('app-language:changed', handleLanguageChange);
+    return () => window.removeEventListener('app-language:changed', handleLanguageChange);
+  }, [companyId]);
 
   const handleLogout = () => {
     logout();

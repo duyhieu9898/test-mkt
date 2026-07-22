@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -11,17 +12,57 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLogin } from '@/lib/api/hooks';
 import { Mail, Lock, ArrowRight } from 'lucide-react';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
-const loginSchema = z.object({
-  email: z.string().email('Please enter a valid email'),
-  password: z.string().min(1, 'Password is required'),
-});
+type LoginForm = {
+  email: string;
+  password: string;
+};
 
-type LoginForm = z.infer<typeof loginSchema>;
+const loginCopy = {
+  en: {
+    invalidEmail: 'Please enter a valid email',
+    passwordRequired: 'Password is required',
+    welcomeToast: 'Welcome back!',
+    failedToast: 'Login failed',
+    welcomeBack: 'Welcome back',
+    subtitle: 'Sign in to your account to continue',
+    email: 'Email',
+    password: 'Password',
+    forgotPassword: 'Forgot password?',
+    passwordPlaceholder: 'Enter your password',
+    signIn: 'Sign In',
+    orContinueWith: 'Or continue with',
+    noAccount: "Don't have an account?",
+    signUp: 'Sign up',
+  },
+  ja: {
+    invalidEmail: '有効なメールアドレスを入力してください',
+    passwordRequired: 'パスワードを入力してください',
+    welcomeToast: 'おかえりなさい',
+    failedToast: 'ログインに失敗しました',
+    welcomeBack: 'おかえりなさい',
+    subtitle: 'アカウントにログインして続行してください',
+    email: 'メールアドレス',
+    password: 'パスワード',
+    forgotPassword: 'パスワードをお忘れですか？',
+    passwordPlaceholder: 'パスワードを入力',
+    signIn: 'ログイン',
+    orContinueWith: 'または以下で続行',
+    noAccount: 'アカウントをお持ちでないですか？',
+    signUp: '新規登録',
+  },
+};
 
 export default function LoginPage() {
   const router = useRouter();
   const loginMutation = useLogin();
+  const [language] = usePreferredAppLanguage('en');
+  const copy = loginCopy[language];
+  const loginSchema = useMemo(() => z.object({
+    email: z.string().email(copy.invalidEmail),
+    password: z.string().min(1, copy.passwordRequired),
+  }), [copy.invalidEmail, copy.passwordRequired]);
 
   const {
     register,
@@ -34,7 +75,7 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginForm) => {
     try {
       const response = await loginMutation.mutateAsync(data);
-      toast.success('Welcome back!');
+      toast.success(copy.welcomeToast);
 
       // Redirect based on role + onboarding status:
       // - Admins go straight to the admin CMS
@@ -48,7 +89,7 @@ export default function LoginPage() {
         router.push('/welcome');
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Login failed');
+      toast.error(error instanceof Error ? error.message : copy.failedToast);
     }
   };
 
@@ -68,13 +109,13 @@ export default function LoginPage() {
 
       <Card className="border-0 shadow-none lg:border lg:shadow-sm">
         <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
-          <CardDescription>Sign in to your account to continue</CardDescription>
+          <CardTitle className="text-2xl font-bold">{copy.welcomeBack}</CardTitle>
+          <CardDescription>{copy.subtitle}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Email</label>
+              <label className="text-sm font-medium">{copy.email}</label>
               <Input
                 {...register('email')}
                 type="email"
@@ -89,15 +130,15 @@ export default function LoginPage() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">Password</label>
+                <label className="text-sm font-medium">{copy.password}</label>
                 <Link href="/forgot-password" className="text-sm text-primary hover:underline">
-                  Forgot password?
+                  {copy.forgotPassword}
                 </Link>
               </div>
               <Input
                 {...register('password')}
                 type="password"
-                placeholder="Enter your password"
+                placeholder={copy.passwordPlaceholder}
                 icon={<Lock className="w-4 h-4" />}
                 disabled={isLoading}
               />
@@ -107,7 +148,7 @@ export default function LoginPage() {
             </div>
 
             <Button type="submit" className="w-full" size="lg" loading={isLoading}>
-              Sign In
+              {copy.signIn}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </form>
@@ -118,7 +159,7 @@ export default function LoginPage() {
                 <div className="w-full border-t" />
               </div>
               <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
+                <span className="bg-background px-2 text-muted-foreground">{copy.orContinueWith}</span>
               </div>
             </div>
 
@@ -154,9 +195,9 @@ export default function LoginPage() {
           </div>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
-            Don&apos;t have an account?{' '}
+            {copy.noAccount}{' '}
             <Link href="/register" className="text-primary hover:underline font-medium">
-              Sign up
+              {copy.signUp}
             </Link>
           </p>
         </CardContent>

@@ -1,5 +1,6 @@
 export const APP_LANGUAGES = ['en', 'ja'] as const;
 export type AppLanguage = typeof APP_LANGUAGES[number];
+export const APP_LANGUAGE_STORAGE_KEY = '1person.appLanguage';
 
 export const APP_LANGUAGE_LABELS: Record<AppLanguage, string> = {
   en: 'English',

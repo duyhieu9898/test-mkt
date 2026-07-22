@@ -21,6 +21,7 @@ import {
   BarChart3,
   Brain,
   CheckCircle2,
+  Clapperboard,
   ExternalLink,
   Eye,
   FileEdit,
@@ -40,6 +41,7 @@ import {
   TrendingUp,
   UploadCloud,
   Users,
+  Wand2,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -67,6 +69,12 @@ import { Input } from '@/components/ui/input';
 const ImglyBannerEditor = dynamic(
   () => import('@/components/marketing/imgly-banner-editor')
     .then((module) => module.ImglyBannerEditor),
+  { ssr: false },
+);
+
+const ImglyVideoEditor = dynamic(
+  () => import('@/components/marketing/imgly-video-editor')
+    .then((module) => module.ImglyVideoEditor),
   { ssr: false },
 );
 
@@ -181,6 +189,44 @@ interface Banner {
     } | null;
   } | null;
   strategyTag?: string | null;
+}
+
+interface VideoProject {
+  id: string;
+  title: string;
+  format: '15s' | '30s' | '60s';
+  aspectRatio: '9:16' | '16:9' | '1:1';
+  status: 'script' | 'scenes' | 'rendering' | 'ready' | 'failed';
+  outputUrl?: string | null;
+  thumbnailUrl?: string | null;
+  script?: {
+    hook?: string;
+    body?: string[];
+    cta?: string;
+    voiceoverText?: string;
+    error?: string;
+    overlay?: {
+      headline?: string;
+      subheadline?: string;
+      cta?: string;
+    };
+    brandKit?: {
+      companyName?: string;
+      logoUrl?: string | null;
+      colors?: {
+        primary?: string;
+        secondary?: string;
+        text?: string;
+        ctaBg?: string;
+        ctaText?: string;
+      };
+    };
+    imglyScene?: string;
+    imglySceneVideoUrl?: string;
+  } | null;
+  scenes?: unknown[] | null;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 interface SocialPost {
@@ -415,6 +461,7 @@ interface DetailResponse {
   campaign: Campaign;
   banners: Banner[];
   socialPosts: SocialPost[];
+  videos?: VideoProject[];
   blogPost?: BlogPost | null;
   launch?: LaunchSummary | null;
 }
@@ -1078,6 +1125,9 @@ export default function CampaignDetailPage() {
   const [bannerToDelete, setBannerToDelete] = useState<Banner | null>(null);
   const [deletingBannerId, setDeletingBannerId] = useState<string | null>(null);
   const [selectedBannerIds, setSelectedBannerIds] = useState<string[]>([]);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<'9:16' | '16:9'>('9:16');
+  const [videoGenerating, setVideoGenerating] = useState(false);
+  const [editingVideo, setEditingVideo] = useState<VideoProject | null>(null);
   const [savingPostMedia, setSavingPostMedia] = useState(false);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
   const [selectedApplyPlatforms, setSelectedApplyPlatforms] = useState<SocialImagePlatform[]>([]);
@@ -1251,6 +1301,8 @@ export default function CampaignDetailPage() {
   }
 
   const { campaign, banners, socialPosts, blogPost } = data;
+  const videos = data.videos ?? [];
+  const hasCampaignVideo = videos.length > 0;
   const displayTitle = campaignDisplayTitle(campaign);
   const accountNameForPlatform = (platformValue: string): string => {
     const platform = platformValue.toLowerCase();
@@ -1378,6 +1430,46 @@ export default function CampaignDetailPage() {
       toast.error(friendlyError(error, 'Facebook data could not be refreshed. Please try again.'));
     } finally {
       setPerformanceSyncing(false);
+    }
+  };
+
+  const generateCampaignVideo = async () => {
+    if (!token || videoGenerating) return;
+    if (hasCampaignVideo) {
+      toast.info('This campaign already has one video. Edit the existing video instead.');
+      return;
+    }
+    setVideoGenerating(true);
+    const toastId = toast.loading('Creating your AI video...');
+    try {
+      const project = await api.post<VideoProject>(
+        `/marketing/company/${companyId}/videos/generate`,
+        {
+          campaignId,
+          format: '15s',
+          aspectRatio: videoAspectRatio,
+          render: true,
+        },
+        { token },
+      );
+      queryClient.setQueryData<DetailResponse>(
+        ['campaign', companyId, campaignId],
+        (current) => current
+          ? {
+            ...current,
+            videos: [
+              project,
+              ...(current.videos ?? []).filter((item) => item.id !== project.id),
+            ],
+          }
+          : current,
+      );
+      toast.success('AI video is ready to review.', { id: toastId });
+      await queryClient.invalidateQueries({ queryKey: ['campaign', companyId, campaignId] });
+    } catch (error) {
+      toast.error(friendlyError(error, "We couldn't create this video. Please try again."), { id: toastId });
+    } finally {
+      setVideoGenerating(false);
     }
   };
 
@@ -2138,6 +2230,146 @@ export default function CampaignDetailPage() {
         )}
       </div>
 
+      {/* Videos */}
+      <div>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+            <Clapperboard className="w-5 h-5 text-indigo-500" /> Video ({hasCampaignVideo ? '1/1' : '0/1'})
+          </h2>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="grid grid-cols-2 rounded-lg border border-slate-200 bg-white p-1 text-xs">
+              {([
+                { value: '9:16' as const, label: 'Vertical' },
+                { value: '16:9' as const, label: 'Wide' },
+              ]).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={cn(
+                    'rounded-md px-3 py-1.5 font-medium transition',
+                    videoAspectRatio === option.value
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-50',
+                  )}
+                  onClick={() => setVideoAspectRatio(option.value)}
+                  disabled={videoGenerating}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-2"
+              onClick={generateCampaignVideo}
+              disabled={!token || videoGenerating || isGenerating || isLaunching || hasCampaignVideo}
+              title={hasCampaignVideo ? 'This campaign already has one video.' : undefined}
+            >
+              {videoGenerating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Wand2 className="h-4 w-4" />
+              )}
+              {videoGenerating ? 'Creating video...' : hasCampaignVideo ? 'Video created' : 'Create AI video'}
+            </Button>
+          </div>
+        </div>
+        <Card className="border-indigo-100 bg-indigo-50/35">
+          <CardContent className="p-4">
+            <div className="mb-4 flex items-start gap-3 rounded-lg bg-white/70 p-3 text-sm text-slate-600">
+              <Clapperboard className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+              <p>
+                Create one short AI video from this campaign. Veo generates the text-free background video,
+                then IMG.LY lets you edit the headline, supporting text, and CTA. One campaign only keeps one video to control cost.
+              </p>
+            </div>
+            {videos.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-indigo-200 bg-white py-8 text-center">
+                <Clapperboard className="mx-auto h-8 w-8 text-indigo-300" />
+                <p className="mt-2 text-sm font-medium text-slate-900">
+                  No campaign video yet
+                </p>
+                <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
+                  Start with one short video for Reels, TikTok, Facebook, or LinkedIn. You can edit it before publishing.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {videos.map((video) => {
+                  const isReadyVideo = video.status === 'ready' && Boolean(video.outputUrl);
+                  const isRenderingVideo = video.status === 'rendering';
+                  const isFailedVideo = video.status === 'failed';
+                  return (
+                    <Card key={video.id} className="overflow-hidden border-slate-200 bg-white shadow-sm">
+                      <div className={cn(
+                        'relative bg-slate-950',
+                        video.aspectRatio === '16:9' ? 'aspect-video' : video.aspectRatio === '1:1' ? 'aspect-square' : 'aspect-[9/16]',
+                      )}>
+                        {isReadyVideo ? (
+                          <video
+                            className="h-full w-full object-contain"
+                            src={campaignImageSrc(video.outputUrl)}
+                            controls
+                            playsInline
+                            preload="metadata"
+                          />
+                        ) : (
+                          <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-white">
+                            {isRenderingVideo ? (
+                              <Loader2 className="h-6 w-6 animate-spin text-indigo-200" />
+                            ) : (
+                              <AlertCircle className="h-6 w-6 text-rose-200" />
+                            )}
+                            <p className="text-sm font-medium">
+                              {isRenderingVideo ? 'AI is rendering this video' : 'Video failed to render'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      <CardContent className="space-y-3 p-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900" title={video.title}>
+                              {video.title}
+                            </p>
+                            <Badge
+                              variant="secondary"
+                              className={cn('shrink-0 text-[10px]', statusVariant[video.status] || 'bg-slate-100 text-slate-700')}
+                            >
+                              {video.status}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            {video.aspectRatio} · {video.format}
+                          </p>
+                          {isFailedVideo && video.script?.error && (
+                            <p className="line-clamp-2 text-xs text-rose-600" title={video.script.error}>
+                              {video.script.error}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full gap-2"
+                          disabled={!isReadyVideo}
+                          onClick={() => setEditingVideo(video)}
+                        >
+                          <Clapperboard className="h-4 w-4" />
+                          Edit video
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
       {/* Social posts */}
       <div>
         <h2 className="mb-3 text-lg font-semibold text-slate-900 flex items-center gap-2">
@@ -2860,6 +3092,32 @@ export default function CampaignDetailPage() {
             },
           );
           setEditingBanner(null);
+          void queryClient.invalidateQueries({
+            queryKey: ['campaign', companyId, campaignId],
+          });
+        }}
+      />
+      <ImglyVideoEditor
+        open={!!editingVideo}
+        companyId={companyId}
+        video={editingVideo}
+        token={token}
+        onOpenChange={(open) => {
+          if (!open) setEditingVideo(null);
+        }}
+        onSaved={(savedVideo) => {
+          queryClient.setQueryData<DetailResponse>(
+            ['campaign', companyId, campaignId],
+            (current) => current
+              ? {
+                ...current,
+                videos: (current.videos ?? []).map((video) =>
+                  video.id === savedVideo.id ? { ...video, ...savedVideo } : video,
+                ),
+              }
+              : current,
+          );
+          setEditingVideo(null);
           void queryClient.invalidateQueries({
             queryKey: ['campaign', companyId, campaignId],
           });
