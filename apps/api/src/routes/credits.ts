@@ -1,7 +1,7 @@
 /**
  * User Credits API (Phase B)
  *
- * Per-tenant credit balance, transaction history, and plan info for
+ * Per-account credit balance, transaction history, and plan info for
  * the user-facing UI (header badge, settings page, low-balance modal).
  *
  * Route: /api/v1/credits/*
@@ -13,8 +13,9 @@ import { db } from '../lib/db';
 import { companies } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
-import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
+import { getTenantAI } from '../lib/tenant-ai';
 import { getUsageCreditCosts } from '../lib/credit-costs';
+import { getCreditTenantIdFromCompanyId } from '../lib/credits';
 
 const creditsRouter = new Hono();
 creditsRouter.use('*', authMiddleware);
@@ -25,13 +26,15 @@ async function verifyOwnershipAndGetTenantId(
 ): Promise<string> {
   const company = await db.query.companies.findFirst({
     where: eq(companies.id, companyId),
-    columns: { id: true, name: true, ownerId: true },
+    columns: { id: true, ownerId: true },
   });
   if (!company) throw new HTTPException(404, { message: 'Company not found' });
   if (company.ownerId !== userId) {
     throw new HTTPException(403, { message: 'You do not own this company' });
   }
-  return ensureTenantForCompany(company.id, company.name);
+  const tenantId = await getCreditTenantIdFromCompanyId(company.id);
+  if (!tenantId) throw new HTTPException(404, { message: 'Credit wallet not found' });
+  return tenantId;
 }
 
 // ─── GET /credits/:companyId — current balance + plan ───────────────

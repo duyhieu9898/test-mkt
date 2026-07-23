@@ -32,6 +32,7 @@ import { snapshotToPromptBlock } from '@1person/ai-tenant';
 import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
 import { ensureSufficientCredits, chargeForLLMCall, chargeFixedCredits } from '../lib/credits';
 import { resolveFeature, resolveImageProvider } from '../lib/config-resolver';
+import { llmGenerate, extractJSON } from '../lib/llm';
 import {
   CAMPAIGN_BANNER_PALETTE,
   renderContextualCampaignBanner,
@@ -64,6 +65,7 @@ import {
   localizedDefault,
   normalizeContentLanguage,
 } from '../lib/language';
+import { syncCampaignVideoProject } from '../services/campaign-video-creative';
 
 const campaignsRouter = new Hono();
 
@@ -235,6 +237,193 @@ function firstMeaningfulSentence(value: unknown, maxLength = 220): string {
   const [firstParagraph = text] = text.split(/\s+(?:Impact|Expected outcome|Evidence):/i);
   const [firstSentence = firstParagraph] = firstParagraph.split(/(?<=[.!?])\s+/);
   return cleanBriefText(firstSentence, maxLength);
+}
+
+function stringifyForPrompt(value: unknown, maxLength = 12_000): string {
+  const text = typeof value === 'string'
+    ? value
+    : JSON.stringify(value, null, 2);
+  return cleanBriefText(text, maxLength);
+}
+
+function normalizeAdvisorCampaignBridge(parsed: any, fallback: {
+  action: any;
+  proposal: any;
+  evidence: any[];
+}) {
+  const evidence = Array.isArray(parsed?.evidenceToUse)
+    ? parsed.evidenceToUse
+      .map((item: unknown) => cleanBriefText(item, 260))
+      .filter(Boolean)
+      .slice(0, 5)
+    : [];
+  const doNotSay = Array.isArray(parsed?.doNotSay)
+    ? parsed.doNotSay
+      .map((item: unknown) => cleanBriefText(item, 180))
+      .filter(Boolean)
+      .slice(0, 4)
+    : [];
+
+  return {
+    campaignDirection: cleanBriefText(
+      parsed?.campaignDirection
+        ?? fallback.action?.recommendation
+        ?? fallback.action?.why
+        ?? fallback.proposal?.goal,
+      900,
+    ),
+    customerTopic: cleanBriefText(
+      parsed?.customerTopic
+        ?? fallback.proposal?.publicTopic
+        ?? fallback.proposal?.goal,
+      260,
+    ),
+    customerAngle: cleanBriefText(
+      parsed?.customerAngle
+        ?? fallback.proposal?.contentAngle
+        ?? fallback.action?.marketContext
+        ?? fallback.action?.recommendation,
+      600,
+    ),
+    marketSignal: cleanBriefText(
+      parsed?.marketSignal
+        ?? fallback.action?.marketContext
+        ?? fallback.action?.strategicGap?.marketSignal,
+      650,
+    ),
+    evidenceToUse: evidence.length
+      ? evidence
+      : fallback.evidence
+        .map((item) => cleanBriefText(`${item?.label ?? 'Evidence'}: ${item?.detail ?? ''}${item?.link ? ` Source: ${item.link}` : ''}`, 260))
+        .filter(Boolean)
+        .slice(0, 4),
+    doNotSay,
+    expectedOutcome: cleanBriefText(
+      parsed?.expectedOutcome
+        ?? fallback.proposal?.expectedOutcome
+        ?? fallback.action?.expectedImpact
+        ?? fallback.action?.impact,
+      450,
+    ),
+  };
+}
+
+async function buildAdvisorCampaignSourceContext(args: {
+  companyId: string;
+  companyName: string;
+  input: GenerateCampaignInput;
+}): Promise<string | undefined> {
+  const { companyId, companyName, input } = args;
+  if (!input.advisorBriefId || typeof input.advisorActionIndex !== 'number') return undefined;
+
+  const tenantId = await ensureTenantForCompany(companyId, companyName);
+  const briefs = await getTenantAI().ceoAdvisor.list(tenantId, 20);
+  const brief = briefs.find((item) => item.id === input.advisorBriefId);
+  const action = brief?.actions?.[input.advisorActionIndex];
+  if (!brief || !action) return undefined;
+
+  const proposal = (action as any).campaignProposal ?? {};
+  const allEvidence = Array.isArray((action as any).evidence) ? (action as any).evidence : [];
+  const selectedEvidence = input.advisorEvidenceIds?.length
+    ? allEvidence.filter((item: any) => input.advisorEvidenceIds?.includes(String(item?.id ?? '')))
+    : allEvidence;
+  const evidence = selectedEvidence.length ? selectedEvidence : allEvidence.slice(0, 4);
+
+  const rawAdvisorContext = {
+    headline: brief.headline,
+    generatedAt: brief.generatedAt,
+    issue: (action as any).issue ?? (action as any).title,
+    priority: (action as any).priority ?? (action as any).severity,
+    marketContext: (action as any).marketContext,
+    evidenceSummary: (action as any).evidenceSummary ?? (action as any).why,
+    recommendation: (action as any).recommendation ?? (action as any).why,
+    todayMove: (action as any).todayMove,
+    sevenDayMove: (action as any).sevenDayMove,
+    expectedImpact: (action as any).expectedImpact ?? (action as any).impact,
+    strategicGap: (action as any).strategicGap,
+    campaignProposal: proposal,
+    evidence,
+  };
+
+  try {
+    const llmRes = await llmGenerate(
+      [
+        {
+          role: 'system',
+          content: `You are a senior marketing strategist. Convert a CEO Advisor recommendation into a compact campaign execution brief.
+Use the raw evidence carefully. Do not invent facts. Preserve the market signal, proof, audience, offer, positioning angle, and expected outcome.
+The output is for another AI that will create public blog posts, social posts, banners, and video. Keep internal CEO wording separate from customer-facing messaging.`,
+        },
+        {
+          role: 'user',
+          content: `Company: ${companyName}
+
+Raw CEO Advisor recommendation:
+${stringifyForPrompt(rawAdvisorContext)}
+
+Return ONLY JSON:
+{
+  "campaignDirection": "Internal strategy in 2-4 sentences. Include issue, evidence, recommendation and why now.",
+  "customerTopic": "Customer-facing topic, not an internal CEO task title.",
+  "customerAngle": "Customer-facing angle that explains the offer's differentiated value.",
+  "marketSignal": "Most important market/competitor signal to account for.",
+  "evidenceToUse": ["Short factual evidence item with source if available"],
+  "expectedOutcome": "Expected business/customer outcome.",
+  "doNotSay": ["Internal phrases that must not appear in public content"]
+}`,
+        },
+      ],
+      {
+        featureKey: 'ceo_advisor_brief',
+        tier: 'fast',
+        json: true,
+        maxTokens: 1100,
+        traceName: 'campaigns.advisorCampaignBridge',
+        metadata: {
+          companyId,
+          advisorBriefId: input.advisorBriefId,
+          advisorActionIndex: input.advisorActionIndex,
+        },
+      },
+    );
+    await chargeForLLMCall(companyId, llmRes, {
+      featureKey: 'campaign_advisor_bridge',
+      refKind: 'ceo_advisor_action',
+      refId: input.advisorBriefId,
+    });
+
+    const bridge = normalizeAdvisorCampaignBridge(extractJSON(llmRes.text), {
+      action,
+      proposal,
+      evidence,
+    });
+    return [
+      'CEO ADVISOR CAMPAIGN EXECUTION BRIEF:',
+      `Internal campaign direction: ${bridge.campaignDirection}`,
+      `Customer-facing topic: ${bridge.customerTopic}`,
+      `Customer-facing angle: ${bridge.customerAngle}`,
+      bridge.marketSignal ? `Market signal to reflect: ${bridge.marketSignal}` : '',
+      bridge.evidenceToUse.length ? `Evidence to use:\n- ${bridge.evidenceToUse.join('\n- ')}` : '',
+      bridge.expectedOutcome ? `Expected outcome: ${bridge.expectedOutcome}` : '',
+      bridge.doNotSay.length ? `Do not copy these internal phrases into public content:\n- ${bridge.doNotSay.join('\n- ')}` : '',
+    ].filter(Boolean).join('\n');
+  } catch (err) {
+    console.warn('[campaigns.advisorCampaignBridge] AI bridge failed, using deterministic fallback:', err);
+    const bridge = normalizeAdvisorCampaignBridge({}, {
+      action,
+      proposal,
+      evidence,
+    });
+    return [
+      'CEO ADVISOR CAMPAIGN EXECUTION BRIEF:',
+      `Internal campaign direction: ${bridge.campaignDirection}`,
+      `Customer-facing topic: ${bridge.customerTopic}`,
+      `Customer-facing angle: ${bridge.customerAngle}`,
+      bridge.marketSignal ? `Market signal to reflect: ${bridge.marketSignal}` : '',
+      bridge.evidenceToUse.length ? `Evidence to use:\n- ${bridge.evidenceToUse.join('\n- ')}` : '',
+      bridge.expectedOutcome ? `Expected outcome: ${bridge.expectedOutcome}` : '',
+    ].filter(Boolean).join('\n');
+  }
 }
 
 function buildPublicCreativeBrief(input: GenerateCampaignInput): {
@@ -425,7 +614,7 @@ campaignsRouter.post(
 
     const company = await db.query.companies.findFirst({
       where: eq(companies.id, companyId),
-      columns: { id: true, settings: true },
+      columns: { id: true, name: true, settings: true },
     });
     if (!company) {
       throw new HTTPException(404, { message: 'Company not found' });
@@ -434,28 +623,43 @@ campaignsRouter.post(
     // Pre-check credits — sum the cost across the steps the flow will
     // execute (banners + posts) at the chosen tier. Fail fast with 402
     // if the tenant can't afford the full run.
-    const [bannerFeature, postFeature] = await Promise.all([
+    const [bannerFeature, postFeature, advisorBridgeFeature] = await Promise.all([
       resolveFeature('campaign_banner_copy', input.tier),
       resolveFeature('campaign_social_post', input.tier),
+      input.advisorBriefId ? resolveFeature('ceo_advisor_brief', 'fast') : Promise.resolve(null),
     ]);
     const imageProvider = await resolveImageProvider('dalle');
     const estimatedBannerImageCost = (imageProvider?.creditCost ?? 10) * 3;
-    const estimatedCost = bannerFeature.creditCost + postFeature.creditCost + estimatedBannerImageCost;
+    const estimatedCost = bannerFeature.creditCost
+      + postFeature.creditCost
+      + estimatedBannerImageCost
+      + (advisorBridgeFeature?.creditCost ?? 0);
     await ensureSufficientCredits(companyId, estimatedCost);
 
-    const sourceContext = await buildEffectiveSourceContext({
-      companyId,
-      userId,
-      input: {
-        brief: input.reason,
-        googleDriveFileId: input.googleDriveFileId,
-        googleDriveFileName: input.googleDriveFileName,
-        googleDriveUrl: input.googleDriveUrl,
-        oneDriveFileId: input.oneDriveFileId,
-        oneDriveFileName: input.oneDriveFileName,
-      },
-      briefLabel: 'Campaign direction',
-    });
+    const [directSourceContext, advisorSourceContext] = await Promise.all([
+      buildEffectiveSourceContext({
+        companyId,
+        userId,
+        input: {
+          brief: input.reason,
+          googleDriveFileId: input.googleDriveFileId,
+          googleDriveFileName: input.googleDriveFileName,
+          googleDriveUrl: input.googleDriveUrl,
+          oneDriveFileId: input.oneDriveFileId,
+          oneDriveFileName: input.oneDriveFileName,
+        },
+        briefLabel: input.advisorBriefId ? 'Advisor action summary' : 'Campaign direction',
+      }),
+      buildAdvisorCampaignSourceContext({
+        companyId,
+        companyName: company.name,
+        input,
+      }),
+    ]);
+    const sourceContext = [
+      directSourceContext,
+      advisorSourceContext,
+    ].filter(Boolean).join('\n\n') || undefined;
 
     // Approach: insert the campaign shell row synchronously so we can
     // return the ID to the client in ~100ms. The generation pipeline
@@ -1669,6 +1873,26 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
       hashtags: normalized.hashtags,
     };
   });
+  const syncedVideoRows = await Promise.all(
+    videoRows.map(async (video) => {
+      if (video.status !== 'rendering') return video;
+      const synced = await syncCampaignVideoProject({ companyId, projectId: video.id });
+      if (!synced) return video;
+      return {
+        id: synced.id,
+        title: synced.title,
+        format: synced.format,
+        aspectRatio: synced.aspectRatio,
+        status: synced.status,
+        script: synced.script,
+        scenes: synced.scenes,
+        outputUrl: synced.outputUrl,
+        thumbnailUrl: synced.thumbnailUrl,
+        createdAt: synced.createdAt,
+        updatedAt: synced.updatedAt,
+      };
+    }),
+  );
 
   let linkedLaunch: typeof campaignLaunches.$inferSelect | undefined;
   let blogPost = targetingBlogPost[0] ?? null;
@@ -1710,7 +1934,7 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
     campaign,
     banners: bannerRows,
     socialPosts: normalizedPostRows,
-    videos: videoRows,
+    videos: syncedVideoRows,
     blogPost: blogPost ?? null,
     launch: linkedLaunch
       ? {

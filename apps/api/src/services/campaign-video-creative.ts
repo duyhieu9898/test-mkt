@@ -41,11 +41,16 @@ interface GeneratedVideoResult {
   jobId: string;
   sourceStorageKey?: string;
 }
+interface SubmittedVideoJob {
+  provider: 'aws_bedrock_luma';
+  model: string;
+  jobId: string;
+  outputBucket: string;
+  outputPrefix: string;
+}
 
 const BEDROCK_DEFAULT_REGION = 'us-west-2';
 const BEDROCK_LUMA_DEFAULT_MODEL = 'luma.ray-v2:0';
-const BEDROCK_LUMA_POLL_INTERVAL_MS = 10_000;
-const BEDROCK_LUMA_MAX_POLL_ATTEMPTS = 72;
 const BEDROCK_LUMA_DURATION = '9s';
 const BEDROCK_LUMA_RESOLUTION = '720p';
 
@@ -183,10 +188,6 @@ async function s3BodyToBuffer(responseBody: unknown): Promise<Buffer> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function summarizePostText(post: typeof socialPosts.$inferSelect): string {
@@ -355,13 +356,13 @@ async function findBedrockGeneratedMp4(args: {
   };
 }
 
-async function generateBedrockLumaVideo(args: {
+async function submitBedrockLumaVideoJob(args: {
   companyId: string;
   campaignId: string;
   projectId: string;
   prompt: string;
   aspectRatio: CampaignVideoAspectRatio;
-}): Promise<GeneratedVideoResult> {
+}): Promise<SubmittedVideoJob> {
   const model = getBedrockLumaModel();
   const outputBase = getBedrockOutputBase();
   const outputPrefix = joinS3Prefix(
@@ -404,26 +405,29 @@ async function generateBedrockLumaVideo(args: {
   const invocationArn = started.invocationArn;
   if (!invocationArn) throw new Error('AWS Bedrock did not return a Luma invocation ARN.');
 
-  let status: string | undefined = 'InProgress';
-  let failureMessage: string | undefined;
-  for (let attempt = 0; attempt < BEDROCK_LUMA_MAX_POLL_ATTEMPTS; attempt += 1) {
-    await delay(BEDROCK_LUMA_POLL_INTERVAL_MS);
-    const job = await bedrock.send(new GetAsyncInvokeCommand({ invocationArn }));
-    status = job.status;
-    failureMessage = job.failureMessage;
-    if (status === 'Completed' || status === 'Failed') {
-      break;
-    }
-  }
+  return {
+    provider: 'aws_bedrock_luma',
+    model,
+    jobId: invocationArn,
+    outputBucket: output.bucket,
+    outputPrefix: output.prefix,
+  };
+}
 
-  if (status === 'Failed') {
-    throw new Error(failureMessage || 'AWS Bedrock Luma video generation failed.');
-  }
-  if (status !== 'Completed') {
-    throw new Error('AWS Bedrock Luma video generation timed out. Please try again in a few minutes.');
-  }
-
-  const source = await findBedrockGeneratedMp4(output);
+async function persistCompletedBedrockVideo(args: {
+  companyId: string;
+  campaignId: string;
+  projectId: string;
+  model: string;
+  jobId: string;
+  outputBucket: string;
+  outputPrefix: string;
+  prompt?: string;
+}): Promise<GeneratedVideoResult> {
+  const source = await findBedrockGeneratedMp4({
+    bucket: args.outputBucket,
+    prefix: args.outputPrefix,
+  });
   const saved = await saveObject({
     key: `campaigns/${args.companyId}/${args.campaignId}/videos/${args.projectId}/bedrock-luma-${args.projectId}-current.mp4`,
     body: source.bytes,
@@ -435,10 +439,89 @@ async function generateBedrockLumaVideo(args: {
     url: saved.url,
     storageKey: saved.key,
     provider: 'aws_bedrock_luma',
-    model,
-    jobId: invocationArn,
+    model: args.model,
+    jobId: args.jobId,
     sourceStorageKey: source.key,
   };
+}
+
+export async function syncCampaignVideoProject(args: {
+  companyId: string;
+  projectId: string;
+}) {
+  const [project] = await db.select().from(videoProjects)
+    .where(and(eq(videoProjects.id, args.projectId), eq(videoProjects.companyId, args.companyId)))
+    .limit(1);
+  if (!project || project.status !== 'rendering') return project ?? null;
+
+  const script = (project.script ?? {}) as Record<string, any>;
+  const generation = script.videoGeneration as Record<string, any> | undefined;
+  const jobId = String(generation?.jobId ?? '');
+  if (!jobId || !project.campaignId) return project;
+
+  const bedrock = createBedrockClient();
+  const job = await bedrock.send(new GetAsyncInvokeCommand({ invocationArn: jobId }));
+  if (job.status !== 'Completed' && job.status !== 'Failed') {
+    return project;
+  }
+
+  if (job.status === 'Failed') {
+    const [failed] = await db.update(videoProjects)
+      .set({
+        status: 'failed',
+        script: {
+          ...script,
+          error: job.failureMessage || 'AWS Bedrock Luma video generation failed.',
+          failedAt: new Date().toISOString(),
+          videoGeneration: {
+            ...generation,
+            status: job.status,
+            failureMessage: job.failureMessage,
+            checkedAt: new Date().toISOString(),
+          },
+        } as any,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(videoProjects.id, project.id), eq(videoProjects.companyId, args.companyId)))
+      .returning();
+    return failed ?? project;
+  }
+
+  const rendered = await persistCompletedBedrockVideo({
+    companyId: args.companyId,
+    campaignId: project.campaignId,
+    projectId: project.id,
+    model: String(generation?.model ?? getBedrockLumaModel()),
+    jobId,
+    outputBucket: String(generation?.outputBucket ?? ''),
+    outputPrefix: String(generation?.outputPrefix ?? ''),
+    prompt: String(generation?.prompt ?? ''),
+  });
+
+  const [updated] = await db.update(videoProjects)
+    .set({
+      status: 'ready',
+      outputUrl: rendered.url,
+      script: {
+        ...script,
+        videoGeneration: {
+          ...generation,
+          provider: rendered.provider,
+          jobId: rendered.jobId,
+          model: rendered.model,
+          storageKey: rendered.storageKey,
+          sourceStorageKey: rendered.sourceStorageKey,
+          status: job.status,
+          completedAt: new Date().toISOString(),
+          checkedAt: new Date().toISOString(),
+        },
+      } as any,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(videoProjects.id, project.id), eq(videoProjects.companyId, args.companyId)))
+    .returning();
+
+  return updated ?? project;
 }
 
 export async function createCampaignVideoProject(args: {
@@ -516,7 +599,7 @@ export async function createCampaignVideoProject(args: {
   }
 
   try {
-    const rendered = await generateBedrockLumaVideo({
+    const submitted = await submitBedrockLumaVideoJob({
       companyId: args.companyId,
       campaignId: args.campaignId,
       projectId: project.id,
@@ -526,18 +609,19 @@ export async function createCampaignVideoProject(args: {
 
     const [updated] = await db.update(videoProjects)
       .set({
-        status: 'ready',
-        outputUrl: rendered.url,
+        status: 'rendering',
+        outputUrl: null,
         script: {
           ...(project.script as Record<string, any> | null),
           videoGeneration: {
-            provider: rendered.provider,
-            jobId: rendered.jobId,
-            model: rendered.model,
+            provider: submitted.provider,
+            jobId: submitted.jobId,
+            model: submitted.model,
             prompt: creativeBrief.videoPrompt,
-            storageKey: rendered.storageKey,
-            sourceStorageKey: rendered.sourceStorageKey,
-            generatedAt: new Date().toISOString(),
+            outputBucket: submitted.outputBucket,
+            outputPrefix: submitted.outputPrefix,
+            status: 'InProgress',
+            submittedAt: new Date().toISOString(),
           },
         } as any,
         updatedAt: new Date(),
@@ -545,7 +629,7 @@ export async function createCampaignVideoProject(args: {
       .where(and(eq(videoProjects.id, project.id), eq(videoProjects.companyId, args.companyId)))
       .returning();
 
-    return updated ?? project;
+    return { ...(updated ?? project), justSubmitted: true };
   } catch (error) {
     await db.update(videoProjects)
       .set({

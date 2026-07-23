@@ -12,13 +12,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Sparkles, RefreshCw, Loader2, ArrowRight, Trophy, AlertTriangle, Coins, Target, Database, Users } from 'lucide-react';
+import { Sparkles, RefreshCw, Loader2, ArrowRight, Trophy, AlertTriangle, Coins, Target, Database, Users, CalendarDays } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api/client';
 import { friendlyError } from '@/lib/friendly-errors';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { FirstVisitTip } from '@/components/first-visit-tip';
+import { OutOfCreditsModal } from '@/components/out-of-credits-modal';
 
 type Severity = 'critical' | 'high' | 'medium' | 'low';
 type Priority = 'urgent' | 'high' | 'medium' | 'low';
@@ -90,11 +91,24 @@ interface AdvisorTeamTask {
 interface BriefWin { what: string; detail?: string; }
 interface BriefAlert { what: string; detail?: string; link?: string; }
 interface SourceHealth { source: string; status: 'ok' | 'empty' | 'unavailable'; count: number; message?: string; }
+interface AdvisorWeeklyAction {
+  day: number;
+  dayLabel: string;
+  title: string;
+  action: string;
+  why: string;
+  ownerDepartment?: string;
+  priority?: Priority;
+  evidenceIds?: string[];
+  successSignal?: string;
+  link?: string;
+}
 interface AdvisorBrief {
   id: string;
   generatedAt: string;
   headline: string | null;
   actions: BriefAction[];
+  weeklyActions?: AdvisorWeeklyAction[];
   wins: BriefWin[];
   alerts: BriefAlert[];
   sourcesUsed: {
@@ -108,6 +122,14 @@ interface AdvisorBrief {
     brainEventsCount?: number;
     videosCount?: number;
     sourceHealth?: SourceHealth[];
+  };
+}
+interface CreditResponse {
+  balance: { totalAvailable: number };
+  costs?: {
+    campaignGenerate?: Partial<Record<'fast' | 'balanced' | 'premium', number>>;
+    advisorCampaignBridge?: number;
+    supportMessage?: string;
   };
 }
 
@@ -234,6 +256,9 @@ export default function CeoAdvisorPage() {
   const qc = useQueryClient();
   const autoGenerateAttemptedFor = useRef<string | null>(null);
   const [creatingActionIndex, setCreatingActionIndex] = useState<number | null>(null);
+  const [outOfCreditsOpen, setOutOfCreditsOpen] = useState(false);
+  const [outOfCreditsRequired, setOutOfCreditsRequired] = useState<number | undefined>();
+  const [outOfCreditsAvailable, setOutOfCreditsAvailable] = useState<number | undefined>();
 
   const latestQ = useQuery({
     queryKey: ['ceo-advisor', 'latest', companyId],
@@ -243,6 +268,19 @@ export default function CeoAdvisorPage() {
 
   const brief = latestQ.data?.brief ?? null;
   const hasAdvice = Boolean(brief);
+
+  const creditsQ = useQuery({
+    queryKey: ['credits', companyId],
+    queryFn: () => api.get<CreditResponse>(`/credits/${companyId}`, { token: token! }),
+    enabled: !!token && !!companyId,
+    staleTime: 30_000,
+  });
+  const advisorCampaignCreditCost =
+    (creditsQ.data?.costs?.campaignGenerate?.balanced ?? 5)
+    + (creditsQ.data?.costs?.advisorCampaignBridge ?? 0);
+  const availableCredits = creditsQ.data?.balance.totalAvailable;
+  const hasEnoughAdvisorCampaignCredits =
+    typeof availableCredits !== 'number' || availableCredits >= advisorCampaignCreditCost;
 
   const refreshM = useMutation({
     mutationFn: () => api.post<{ brief: AdvisorBrief }>(`/insights/${companyId}/advisor/refresh`, {}, { token: token! }),
@@ -258,21 +296,7 @@ export default function CeoAdvisorPage() {
     mutationFn: async ({ action, index }: { action: BriefAction; index: number }) => {
       if (!action.campaignProposal) throw new Error('No campaign recommendation found.');
       const proposal = action.campaignProposal;
-      const evidenceSummary = (action.evidence ?? [])
-        .slice(0, 3)
-        .map((evidence) => `${evidence.label}: ${evidence.detail}`)
-        .join('\n');
-      const reason = [
-        `Issue: ${actionIssue(action)}`,
-        actionMarketContext(action) ? `Market context today: ${actionMarketContext(action)}` : '',
-        `Evidence: ${actionEvidenceSummary(action)}`,
-        `Recommendation: ${actionRecommendation(action)}`,
-        `Do today: ${actionTodayMove(action)}`,
-        `Next 7 days: ${actionSevenDayMove(action)}`,
-        actionExpectedImpact(action) ? `Expected impact: ${actionExpectedImpact(action)}` : '',
-        proposal.expectedOutcome ? `Expected outcome: ${proposal.expectedOutcome}` : '',
-        evidenceSummary ? `Evidence:\n${evidenceSummary}` : '',
-      ].filter(Boolean).join('\n\n');
+      const reason = actionIssue(action);
 
       setCreatingActionIndex(index);
       return api.post<{
@@ -302,10 +326,21 @@ export default function CeoAdvisorPage() {
     },
     onSuccess: (data) => {
       toast.success('Campaign is being created');
+      qc.invalidateQueries({ queryKey: ['credits', companyId] });
       qc.invalidateQueries({ queryKey: ['ceo-advisor', 'latest', companyId] });
       router.push(`/${companyId}/campaigns/${data.campaignId}`);
     },
-    onError: (err) => toast.error(friendlyError(err)),
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '';
+      const match = message.match(/need\s+(\d+)\s+credits?\s+but\s+only\s+have\s+(\d+)/i);
+      if (/credit|402/i.test(message)) {
+        setOutOfCreditsRequired(match ? Number(match[1]) : advisorCampaignCreditCost);
+        setOutOfCreditsAvailable(match ? Number(match[2]) : availableCredits);
+        setOutOfCreditsOpen(true);
+        return;
+      }
+      toast.error(friendlyError(err));
+    },
     onSettled: () => setCreatingActionIndex(null),
   });
 
@@ -324,6 +359,9 @@ export default function CeoAdvisorPage() {
     }))
     .filter((item) => Boolean(item.context))
     .slice(0, 3);
+  const weeklyActions = [...(brief?.weeklyActions ?? [])]
+    .sort((left, right) => left.day - right.day)
+    .slice(0, 7);
 
   useEffect(() => {
     if (
@@ -469,6 +507,70 @@ export default function CeoAdvisorPage() {
                     </CardContent>
                   </Card>
                 ))}
+              </div>
+            </section>
+          )}
+
+          {weeklyActions.length > 0 && (
+            <section>
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
+                    <CalendarDays className="h-4 w-4 text-indigo-600" /> Weekly actions
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    A practical timeline for this week. Refresh after new crawl or market scan data to update the plan.
+                  </p>
+                </div>
+                <Badge variant="outline" className="w-fit border-indigo-200 bg-indigo-50 text-indigo-700">
+                  {weeklyActions.length} days planned
+                </Badge>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {weeklyActions.map((item) => {
+                  const priority = item.priority ?? 'medium';
+                  return (
+                    <Card key={`${item.day}-${item.title}`} className="border-0 shadow-sm ring-1 ring-slate-200">
+                      <CardContent className="flex h-full flex-col p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="rounded-full bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-white">
+                            {item.dayLabel || `Day ${item.day}`}
+                          </span>
+                          <Badge className={cn('border text-[11px] capitalize', priorityStyles[priority])}>
+                            {priority}
+                          </Badge>
+                        </div>
+                        <h3 className="mt-3 break-words text-sm font-semibold leading-snug text-slate-950">{item.title}</h3>
+                        <p className="mt-2 break-words text-sm leading-relaxed text-slate-700">{item.action}</p>
+                        <div className="mt-3 rounded-lg bg-slate-50 p-2.5">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Why</p>
+                          <p className="mt-1 break-words text-xs leading-relaxed text-slate-600">{item.why}</p>
+                        </div>
+                        <div className="mt-auto pt-3">
+                          {item.ownerDepartment && (
+                            <p className="text-xs text-slate-500">
+                              Owner: <span className="font-medium text-slate-700">{item.ownerDepartment}</span>
+                            </p>
+                          )}
+                          {item.successSignal && (
+                            <p className="mt-1 text-xs leading-relaxed text-emerald-700">{item.successSignal}</p>
+                          )}
+                          {item.link && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="mt-3 w-full gap-1"
+                              onClick={() => router.push(item.link!)}
+                            >
+                              Review <ArrowRight className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -650,11 +752,20 @@ export default function CeoAdvisorPage() {
                             <Button
                               size="sm"
                               className="shrink-0 gap-1.5 bg-indigo-600 hover:bg-indigo-700"
-                              disabled={createCampaignM.isPending || !token}
-                              onClick={() => createCampaignM.mutate({ action, index: originalIndex })}
+                              disabled={createCampaignM.isPending || !token || !hasEnoughAdvisorCampaignCredits}
+                              title={!hasEnoughAdvisorCampaignCredits ? 'Not enough credits. Contact support to add more.' : undefined}
+                              onClick={() => {
+                                if (!hasEnoughAdvisorCampaignCredits) {
+                                  setOutOfCreditsRequired(advisorCampaignCreditCost);
+                                  setOutOfCreditsAvailable(availableCredits);
+                                  setOutOfCreditsOpen(true);
+                                  return;
+                                }
+                                createCampaignM.mutate({ action, index: originalIndex });
+                              }}
                             >
                               {creatingActionIndex === originalIndex ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                              {creatingActionIndex === originalIndex ? 'Creating...' : 'Create campaign'}
+                              {creatingActionIndex === originalIndex ? 'Creating...' : `Create campaign · ${advisorCampaignCreditCost} credits`}
                             </Button>
                           ) : action.link ? (
                             <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => router.push(action.link!)}>
@@ -687,6 +798,13 @@ export default function CeoAdvisorPage() {
               </div>
             </section>
           )}
+
+          <OutOfCreditsModal
+            open={outOfCreditsOpen}
+            onClose={() => setOutOfCreditsOpen(false)}
+            required={outOfCreditsRequired}
+            available={outOfCreditsAvailable}
+          />
 
           {brief.alerts.length > 0 && (
             <section>

@@ -2,7 +2,7 @@
  * Credit charging helpers (Phase B-2).
  *
  * Wraps the TenantAI credit-store with the API-side ergonomics:
- * looking up tenantId from companyId, friendly 402 errors, and a
+ * looking up the account wallet from companyId, friendly 402 errors, and a
  * pre-check helper for routes that want to fail fast before doing
  * expensive work.
  *
@@ -20,22 +20,78 @@
 
 import { HTTPException } from 'hono/http-exception';
 import { OutOfCreditsError } from '@1person/ai-tenant';
-import { getTenantAI, ensureTenantForCompany } from './tenant-ai';
+import { getTenantAI, ensureTenantForAccount } from './tenant-ai';
 import { db } from './db';
-import { companies } from '@1person/core/db';
-import { eq } from 'drizzle-orm';
+import { companies, users } from '@1person/core/db';
+import { eq, sql } from 'drizzle-orm';
 import { CREDIT_SUPPORT_MESSAGE } from './credit-costs';
 
-async function getTenantIdFromCompanyId(companyId: string): Promise<string | null> {
+async function adoptLegacyCompanyWalletIfNeeded(args: {
+  accountTenantId: string;
+  companyId: string;
+}): Promise<void> {
+  try {
+    await db.transaction(async (tx) => {
+      const accountRows = await tx.execute(sql`
+        SELECT id FROM trustai_credit_balances
+        WHERE tenant_id = ${args.accountTenantId}
+        LIMIT 1
+      `);
+      if ((accountRows as any[])[0]) return;
+
+      const legacyTenantRows = await tx.execute(sql`
+        SELECT id FROM trustai_tenants
+        WHERE external_id = ${args.companyId}
+        LIMIT 1
+      `);
+      const legacyTenantId = (legacyTenantRows as any[])[0]?.id as string | undefined;
+      if (!legacyTenantId || legacyTenantId === args.accountTenantId) return;
+
+      const legacyBalanceRows = await tx.execute(sql`
+        SELECT id FROM trustai_credit_balances
+        WHERE tenant_id = ${legacyTenantId}
+        LIMIT 1
+      `);
+      if (!(legacyBalanceRows as any[])[0]) return;
+
+      // One-time compatibility path: before credits became account-level,
+      // balances were company-scoped. Move the first existing company wallet
+      // into the account wallet so users do not get a second free grant.
+      await tx.execute(sql`
+        UPDATE trustai_credit_balances
+        SET tenant_id = ${args.accountTenantId}, updated_at = NOW()
+        WHERE tenant_id = ${legacyTenantId}
+      `);
+      await tx.execute(sql`
+        UPDATE trustai_credit_transactions
+        SET tenant_id = ${args.accountTenantId}
+        WHERE tenant_id = ${legacyTenantId}
+      `);
+    });
+  } catch (err) {
+    console.warn('[credits] legacy company wallet adoption skipped:', err);
+  }
+}
+
+export async function getCreditTenantIdFromCompanyId(companyId: string): Promise<string | null> {
   try {
     const company = await db.query.companies.findFirst({
       where: eq(companies.id, companyId),
-      columns: { id: true, name: true },
+      columns: { id: true, ownerId: true },
     });
     if (!company) return null;
-    return await ensureTenantForCompany(company.id, company.name);
+    const owner = await db.query.users.findFirst({
+      where: eq(users.id, company.ownerId),
+      columns: { id: true, name: true, email: true },
+    });
+    const label = owner
+      ? `${owner.name || owner.email}'s credits`
+      : `Account ${company.ownerId}`;
+    const accountTenantId = await ensureTenantForAccount(company.ownerId, label);
+    await adoptLegacyCompanyWalletIfNeeded({ accountTenantId, companyId: company.id });
+    return accountTenantId;
   } catch (err) {
-    console.warn('[credits] tenant lookup failed:', err);
+    console.warn('[credits] account wallet lookup failed:', err);
     return null;
   }
 }
@@ -49,7 +105,7 @@ export async function ensureSufficientCredits(
   required: number,
 ): Promise<void> {
   if (required <= 0) return;
-  const tenantId = await getTenantIdFromCompanyId(companyId);
+  const tenantId = await getCreditTenantIdFromCompanyId(companyId);
   if (!tenantId) return; // No tenant yet — let downstream call create it
 
   const ai = getTenantAI();
@@ -62,7 +118,8 @@ export async function ensureSufficientCredits(
 }
 
 /**
- * Charge for a completed LLM call. Reads `creditCost` and `tierUsed`
+ * Charge for a completed LLM call against the account wallet that owns
+ * the company. Reads `creditCost` and `tierUsed`
  * from the LLMResponse object that `llmGenerate` returns. Non-fatal:
  * if charging fails, logs and continues (the work is already done).
  *
@@ -85,7 +142,7 @@ export async function chargeForLLMCall(
   const cost = llmResponse.creditCost ?? 0;
   if (cost <= 0) return null;
 
-  const tenantId = await getTenantIdFromCompanyId(companyId);
+  const tenantId = await getCreditTenantIdFromCompanyId(companyId);
   if (!tenantId) return null;
 
   try {
@@ -131,7 +188,7 @@ export async function chargeFixedCredits(
   } = {},
 ): Promise<{ totalAvailable: number; charged: number } | null> {
   if (amount <= 0) return null;
-  const tenantId = await getTenantIdFromCompanyId(companyId);
+  const tenantId = await getCreditTenantIdFromCompanyId(companyId);
   if (!tenantId) return null;
 
   try {

@@ -820,6 +820,7 @@ export type {
   AdvisorStrategicGap,
   AdvisorResponsibleDepartment,
   AdvisorTeamTask,
+  AdvisorWeeklyAction,
   BriefEvidence,
   CampaignProposal,
   BriefWin,

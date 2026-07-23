@@ -96,11 +96,25 @@ export interface BriefAlert {
   link?: string;
 }
 
+export interface AdvisorWeeklyAction {
+  day: number;
+  dayLabel: string;
+  title: string;
+  action: string;
+  why: string;
+  ownerDepartment?: string;
+  priority?: 'urgent' | 'high' | 'medium' | 'low';
+  evidenceIds?: string[];
+  successSignal?: string;
+  link?: string;
+}
+
 export interface AdvisorBriefInput {
   headline?: string | null;
   actions?: BriefAction[];
   wins?: BriefWin[];
   alerts?: BriefAlert[];
+  weeklyActions?: AdvisorWeeklyAction[];
   sourcesUsed?: Record<string, unknown>;
   model?: string | null;
   traceId?: string | null;
@@ -114,6 +128,7 @@ export interface AdvisorBrief {
   actions: BriefAction[];
   wins: BriefWin[];
   alerts: BriefAlert[];
+  weeklyActions?: AdvisorWeeklyAction[];
   sourcesUsed: Record<string, unknown>;
   model: string | null;
   traceId: string | null;
@@ -131,6 +146,7 @@ function mapBrief(row: any): AdvisorBrief {
     wins: (row.wins as BriefWin[]) ?? [],
     alerts: (row.alerts as BriefAlert[]) ?? [],
     sourcesUsed: (row.sourcesUsed as Record<string, unknown>) ?? {},
+    weeklyActions: ((row.sourcesUsed as Record<string, unknown> | null)?.weeklyActions as AdvisorWeeklyAction[] | undefined) ?? [],
     model: row.model ?? null,
     traceId: row.traceId ?? null,
   };
@@ -179,7 +195,10 @@ export async function appendBrief(
       actions: (input.actions ?? []) as any,
       wins: (input.wins ?? []) as any,
       alerts: (input.alerts ?? []) as any,
-      sourcesUsed: (input.sourcesUsed ?? {}) as any,
+      sourcesUsed: {
+        ...(input.sourcesUsed ?? {}),
+        weeklyActions: input.weeklyActions ?? [],
+      } as any,
       model: input.model ?? null,
       traceId: input.traceId ?? null,
     })

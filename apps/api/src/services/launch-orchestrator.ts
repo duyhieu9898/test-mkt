@@ -839,7 +839,9 @@ async function runLaunch(launchId: string): Promise<void> {
         videoProjectId: video.id,
         status: video.status,
         outputUrl: video.outputUrl,
-      }, 'One campaign video is ready for review.');
+      }, video.status === 'ready'
+        ? 'One campaign video is ready for review.'
+        : 'One campaign video is being generated in the background.');
     } catch (e) {
       await markError(launchId, 'video', (e as Error).message);
     }
