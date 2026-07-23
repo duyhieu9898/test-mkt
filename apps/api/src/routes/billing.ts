@@ -169,16 +169,10 @@ billing.post('/webhook', async (c) => {
           // and grant the monthly allocation. Non-fatal — billing
           // success is the primary outcome here.
           try {
-            const { ensureTenantForCompany, getTenantAI } = await import('../lib/tenant-ai');
-            const { db } = await import('../lib/db');
-            const { companies } = await import('@1person/core/db');
-            const { eq } = await import('drizzle-orm');
-            const co = await db.query.companies.findFirst({
-              where: eq(companies.id, companyId),
-              columns: { id: true, name: true },
-            });
-            if (co) {
-              const tenantId = await ensureTenantForCompany(co.id, co.name);
+            const { getTenantAI } = await import('../lib/tenant-ai');
+            const { getCreditTenantIdFromCompanyId } = await import('../lib/credits');
+            const tenantId = await getCreditTenantIdFromCompanyId(companyId);
+            if (tenantId) {
               const ai = getTenantAI();
               await ai.credits.changePlan(tenantId, plan, {
                 customerId:
@@ -216,8 +210,10 @@ billing.post('/webhook', async (c) => {
           });
           // Mirror to credit balance row
           try {
-            const { ensureTenantForCompany, getTenantAI } = await import('../lib/tenant-ai');
-            const tenantId = await ensureTenantForCompany(company.id, company.name);
+            const { getTenantAI } = await import('../lib/tenant-ai');
+            const { getCreditTenantIdFromCompanyId } = await import('../lib/credits');
+            const tenantId = await getCreditTenantIdFromCompanyId(company.id);
+            if (!tenantId) throw new Error('Credit account wallet not found');
             await getTenantAI().credits.changePlan(tenantId, plan, {
               customerId,
               subscriptionId: sub.id,
@@ -244,8 +240,10 @@ billing.post('/webhook', async (c) => {
           });
           // Downgrade credit balance to Free
           try {
-            const { ensureTenantForCompany, getTenantAI } = await import('../lib/tenant-ai');
-            const tenantId = await ensureTenantForCompany(company.id, company.name);
+            const { getTenantAI } = await import('../lib/tenant-ai');
+            const { getCreditTenantIdFromCompanyId } = await import('../lib/credits');
+            const tenantId = await getCreditTenantIdFromCompanyId(company.id);
+            if (!tenantId) throw new Error('Credit account wallet not found');
             await getTenantAI().credits.changePlan(tenantId, 'free');
           } catch (err) {
             console.error('[billing] credit plan downgrade failed (non-fatal):', err);

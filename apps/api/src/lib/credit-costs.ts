@@ -31,6 +31,11 @@ export async function getCampaignGenerateCosts() {
   return Object.fromEntries(pairs) as Record<CreditTier, number>;
 }
 
+export async function getAdvisorCampaignBridgeCost() {
+  const feature = await resolveFeature('ceo_advisor_brief', 'fast');
+  return feature.creditCost;
+}
+
 export function getLaunchCampaignCost(input: {
   includeVideo?: boolean;
   imageMode?: 'ai' | 'uploaded';
@@ -47,6 +52,7 @@ export function getLaunchCampaignCost(input: {
 export async function getUsageCreditCosts() {
   return {
     campaignGenerate: await getCampaignGenerateCosts(),
+    advisorCampaignBridge: await getAdvisorCampaignBridgeCost(),
     launchCampaignBase: FIXED_CREDIT_COSTS.launchCampaignBase,
     launchCampaignUploadedImages: getLaunchCampaignCost({ imageMode: 'uploaded' }),
     campaignVideo: FIXED_CREDIT_COSTS.campaignVideo,

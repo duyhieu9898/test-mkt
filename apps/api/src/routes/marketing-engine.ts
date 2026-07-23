@@ -32,7 +32,7 @@ import { getViralFrameworkPrompt, getAdCopySpecPrompt, AIDA_FRAMEWORK, AB_TEST_A
 import { adaptDesignForSize, AD_SIZES } from '../services/creative-adapter';
 import { validateBanner } from '../services/creative-quality';
 import { generateScript, breakIntoScenes } from '../services/video-engine';
-import { createCampaignVideoProject } from '../services/campaign-video-creative';
+import { createCampaignVideoProject, syncCampaignVideoProject } from '../services/campaign-video-creative';
 import {
   applyLatestCampaignBannerMedia,
   bannerIdFromMediaUrl,
@@ -2145,13 +2145,15 @@ marketingEngineRouter.post(
           creativeNotes,
           forceNew,
         });
-        await chargeFixedCredits(companyId, FIXED_CREDIT_COSTS.campaignVideo, {
-          featureKey: 'campaign_video',
-          tier: 'premium',
-          refKind: 'video_project',
-          refId: project.id,
-          note: `AI campaign video (${format}, ${aspectRatio})`,
-        });
+        if ((project as any).justSubmitted) {
+          await chargeFixedCredits(companyId, FIXED_CREDIT_COSTS.campaignVideo, {
+            featureKey: 'campaign_video',
+            tier: 'premium',
+            refKind: 'video_project',
+            refId: project.id,
+            note: `AI campaign video (${format}, ${aspectRatio})`,
+          });
+        }
         return c.json(project);
       }
 
@@ -2203,7 +2205,8 @@ marketingEngineRouter.get('/company/:companyId/videos/:id', async (c) => {
     .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
     .limit(1);
   if (!project) return c.json({ error: 'Video project not found' }, 404);
-  return c.json(project);
+  const synced = await syncCampaignVideoProject({ companyId, projectId: id });
+  return c.json(synced ?? project);
 });
 
 // List video projects
@@ -2212,7 +2215,12 @@ marketingEngineRouter.get('/company/:companyId/videos', async (c) => {
   const items = await db.select().from(videoProjects)
     .where(eq(videoProjects.companyId, companyId))
     .orderBy(desc(videoProjects.createdAt));
-  return c.json({ data: items });
+  const syncedItems = await Promise.all(
+    items.map((item) => item.status === 'rendering'
+      ? syncCampaignVideoProject({ companyId, projectId: item.id }).then((synced) => synced ?? item)
+      : item),
+  );
+  return c.json({ data: syncedItems });
 });
 
 // Update video project (edit script/scenes)

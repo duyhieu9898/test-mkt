@@ -1209,6 +1209,7 @@ export default function CampaignDetailPage() {
     refetchInterval: (q) => {
       const s = q.state.data?.campaign?.status;
       if (s === 'launching') return 1000;
+      if ((q.state.data?.videos ?? []).some((video) => video.status === 'rendering')) return 5000;
       return s === 'generating' || s === 'planned' ? 2000 : false;
     },
     staleTime: 15_000,
@@ -1271,7 +1272,8 @@ export default function CampaignDetailPage() {
   }, [campaignId]);
 
   useEffect(() => {
-    if (!videoGenerating) return;
+    const hasRenderingVideo = (data?.videos ?? []).some((video) => video.status === 'rendering');
+    if (!videoGenerating && !hasRenderingVideo) return;
 
     const timer = window.setInterval(() => {
       setVideoProgress((current) => {
@@ -1281,7 +1283,7 @@ export default function CampaignDetailPage() {
     }, 1400);
 
     return () => window.clearInterval(timer);
-  }, [videoGenerating]);
+  }, [data?.videos, videoGenerating]);
 
   useEffect(() => {
     const currentStatus = data?.campaign.status;
@@ -1374,6 +1376,8 @@ export default function CampaignDetailPage() {
   const { campaign, banners, socialPosts, blogPost } = data;
   const videos = data.videos ?? [];
   const hasCampaignVideo = videos.length > 0;
+  const hasRenderingVideo = videos.some((video) => video.status === 'rendering');
+  const isVideoWorking = videoGenerating || hasRenderingVideo;
   const readyVideos = videos.filter((video) => video.status === 'ready' && Boolean(video.outputUrl));
   const selectedVideo = readyVideos.find((video) => video.id === selectedVideoId) ?? null;
   const currentVideoPhase = videoGenerationPhase(videoProgress);
@@ -1512,7 +1516,7 @@ export default function CampaignDetailPage() {
   };
 
   const generateCampaignVideo = async (options?: { forceNew?: boolean; creativeNotes?: string }) => {
-    if (!token || videoGenerating) return;
+    if (!token || isVideoWorking) return;
     if (!hasEnoughVideoCredits) {
       toast.error(
         `This AI video needs ${videoCreditCost} credits, but you only have ${availableCredits ?? 0}. Please contact support to add more credits.`,
@@ -1526,7 +1530,7 @@ export default function CampaignDetailPage() {
     setVideoGenerating(true);
     setVideoProgress(8);
     setVideoRegenerateDialogOpen(false);
-    const toastId = toast.loading('Creating your AI video...');
+    const toastId = toast.loading('Submitting your AI video job...');
     try {
       const project = await api.post<VideoProject>(
         `/marketing/company/${companyId}/videos/generate`,
@@ -1552,10 +1556,15 @@ export default function CampaignDetailPage() {
           }
           : current,
       );
-      setVideoProgress(100);
+      setVideoProgress(project.status === 'ready' ? 100 : 18);
       if (project.status === 'ready' && project.outputUrl) setSelectedVideoId(project.id);
       setVideoCreativeNotes('');
-      toast.success('AI video is ready to review.', { id: toastId });
+      toast.success(
+        project.status === 'ready'
+          ? 'AI video is ready to review.'
+          : 'AI video generation started. You can keep working while it renders.',
+        { id: toastId },
+      );
       queryClient.invalidateQueries({ queryKey: ['credits', companyId] });
       await queryClient.invalidateQueries({ queryKey: ['campaign', companyId, campaignId] });
     } catch (error) {
@@ -2402,7 +2411,7 @@ export default function CampaignDetailPage() {
                       : 'text-slate-600 hover:bg-slate-50',
                   )}
                   onClick={() => setVideoAspectRatio(option.value)}
-                  disabled={videoGenerating}
+                  disabled={isVideoWorking}
                 >
                   {option.label}
                 </button>
@@ -2413,16 +2422,16 @@ export default function CampaignDetailPage() {
               size="sm"
               className="gap-2"
               onClick={() => void generateCampaignVideo()}
-              disabled={!token || videoGenerating || isGenerating || isLaunching || !hasEnoughVideoCredits}
+              disabled={!token || isVideoWorking || isGenerating || isLaunching || !hasEnoughVideoCredits}
               title={!hasEnoughVideoCredits ? 'Not enough credits. Contact support to add more.' : undefined}
             >
-              {videoGenerating ? (
+              {isVideoWorking ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Wand2 className="h-4 w-4" />
               )}
-              {videoGenerating
-                ? 'Creating video...'
+              {isVideoWorking
+                ? `${currentVideoPhase.label} ${Math.round(videoProgress)}%`
                 : `${hasCampaignVideo ? 'Create another video' : 'Create AI video'} · ${videoCreditCost} credits`}
             </Button>
           </div>
@@ -2473,7 +2482,7 @@ export default function CampaignDetailPage() {
                 </Button>
               </div>
             )}
-            {videoGenerating && (
+            {isVideoWorking && (
               <div className="mb-4 rounded-xl border border-indigo-100 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex min-w-0 items-start gap-3">
@@ -2508,10 +2517,10 @@ export default function CampaignDetailPage() {
               <div className="rounded-lg border border-dashed border-indigo-200 bg-white py-8 text-center">
                 <Clapperboard className="mx-auto h-8 w-8 text-indigo-300" />
                 <p className="mt-2 text-sm font-medium text-slate-900">
-                  {videoGenerating ? 'Creating your first campaign video' : 'No campaign video yet'}
+                  {isVideoWorking ? 'Creating your first campaign video' : 'No campaign video yet'}
                 </p>
                 <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
-                  {videoGenerating
+                  {isVideoWorking
                     ? 'AI video rendering can take a few minutes. Keep this page open while the preview is prepared.'
                     : 'Start with one short video for Reels, TikTok, Facebook, or LinkedIn. Review the generated video before publishing.'}
                 </p>
@@ -3025,7 +3034,7 @@ export default function CampaignDetailPage() {
             <Button
               type="button"
               variant="outline"
-              disabled={videoGenerating}
+              disabled={isVideoWorking}
               onClick={() => setVideoRegenerateDialogOpen(false)}
             >
               Cancel
@@ -3033,14 +3042,14 @@ export default function CampaignDetailPage() {
             <Button
               type="button"
               className="gap-1.5"
-              disabled={videoGenerating || !hasEnoughVideoCredits}
+              disabled={isVideoWorking || !hasEnoughVideoCredits}
               title={!hasEnoughVideoCredits ? 'Not enough credits. Contact support to add more.' : undefined}
               onClick={() => void generateCampaignVideo({
                 forceNew: true,
                 creativeNotes: videoCreativeNotes,
               })}
             >
-              {videoGenerating ? (
+              {isVideoWorking ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Wand2 className="h-4 w-4" />

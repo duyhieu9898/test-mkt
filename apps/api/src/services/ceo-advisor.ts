@@ -17,6 +17,7 @@ import type {
   AdvisorResponsibleDepartment,
   AdvisorTeamTask,
   AdvisorBriefInput,
+  AdvisorWeeklyAction,
 } from '@1person/ai-tenant';
 import {
   buildAdvisorContext,
@@ -35,6 +36,7 @@ import {
 export interface GeneratedBrief extends AdvisorBriefInput {
   headline: string;
   actions: BriefAction[];
+  weeklyActions: AdvisorWeeklyAction[];
   wins: BriefWin[];
   alerts: BriefAlert[];
   sourcesUsed: {
@@ -59,6 +61,7 @@ const VALID_CONFIDENCE = new Set(['high', 'medium', 'low']);
 const VALID_ACTION_KIND = new Set(['campaign', 'content', 'sales', 'market', 'operations']);
 const VALID_GAP_TYPE = new Set(['market_gap', 'content_gap', 'creative_gap', 'channel_gap', 'conversion_gap', 'knowledge_gap']);
 const VALID_SUGGESTED_ASSET = new Set(['blog', 'landing_page', 'social_posts', 'banner_images', 'video', 'market_scan', 'sales_enablement']);
+const VALID_WEEKLY_DAY = new Set([1, 2, 3, 4, 5, 6, 7]);
 
 type AdvisorPriority = NonNullable<BriefAction['priority']>;
 type AdvisorSuggestedAsset = NonNullable<AdvisorStrategicGap['suggestedAssets']>[number];
@@ -457,6 +460,94 @@ export function assignAdvisorTeamTasks(
       responsibleDepartments: responsibleDepartments.length > 0
         ? responsibleDepartments
         : responsibleDepartmentsFromTasks(teamTasks),
+    };
+  });
+}
+
+function defaultWeekDayLabel(day: number, language: ContentLanguage): string {
+  if (language === 'ja') return `${day}日目`;
+  if (language === 'vi') return `Ngày ${day}`;
+  return `Day ${day}`;
+}
+
+function sanitizeWeeklyActions(args: {
+  value: unknown;
+  evidenceById: Map<string, AdvisorEvidence>;
+  companyId: string;
+  language: ContentLanguage;
+}): AdvisorWeeklyAction[] {
+  const rows = Array.isArray(args.value) ? args.value : [];
+  const seenDays = new Set<number>();
+  return rows
+    .map((raw): AdvisorWeeklyAction | null => {
+      const record = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+      if (!record) return null;
+      const day = Number(record.day);
+      if (!VALID_WEEKLY_DAY.has(day) || seenDays.has(day)) return null;
+      const title = truncateAdvisorText(record.title, 140);
+      const action = truncateAdvisorText(record.action, 360);
+      const why = truncateAdvisorText(record.why ?? record.reason, 280);
+      if (!title || !action || !why) return null;
+      seenDays.add(day);
+      const priority = normalizePriority(record.priority);
+      const evidenceIds = Array.isArray(record.evidenceIds)
+        ? [...new Set<string>(record.evidenceIds.filter((id: unknown): id is string => typeof id === 'string'))]
+          .filter((id) => args.evidenceById.has(id))
+          .slice(0, 3)
+        : [];
+      return {
+        day,
+        dayLabel: truncateAdvisorText(record.dayLabel, 40) || defaultWeekDayLabel(day, args.language),
+        title,
+        action,
+        why,
+        ownerDepartment: record.ownerDepartment
+          ? truncateAdvisorText(record.ownerDepartment, 80)
+          : undefined,
+        priority,
+        evidenceIds,
+        successSignal: record.successSignal
+          ? truncateAdvisorText(record.successSignal, 220)
+          : undefined,
+        link: validLink(record.link, args.companyId),
+      };
+    })
+    .filter((item): item is AdvisorWeeklyAction => item !== null)
+    .sort((left, right) => left.day - right.day)
+    .slice(0, 7);
+}
+
+function buildFallbackWeeklyActions(args: {
+  actions: BriefAction[];
+  language: ContentLanguage;
+}): AdvisorWeeklyAction[] {
+  const actionPool = args.actions.length > 0 ? args.actions : [];
+  if (actionPool.length === 0) return [];
+  return Array.from({ length: 7 }, (_, index) => {
+    const action = actionPool[index % actionPool.length]!;
+    const owners = action.responsibleDepartments ?? [];
+    const priority = normalizePriority(action.priority, action.severity);
+    const day = index + 1;
+    const isFirstPass = index < actionPool.length;
+    return {
+      day,
+      dayLabel: defaultWeekDayLabel(day, args.language),
+      title: isFirstPass
+        ? truncateAdvisorText(action.issue ?? action.title, 140)
+        : args.language === 'ja'
+          ? '進捗確認と次の調整'
+          : args.language === 'vi'
+            ? 'Kiểm tra tiến độ và điều chỉnh tiếp'
+            : 'Review progress and adjust the next move',
+      action: isFirstPass
+        ? truncateAdvisorText(action.todayMove ?? action.recommendation ?? action.why, 360)
+        : truncateAdvisorText(action.sevenDayMove ?? action.expectedImpact ?? action.impact ?? action.why, 360),
+      why: truncateAdvisorText(action.marketContext ?? action.evidenceSummary ?? action.why, 280),
+      ownerDepartment: owners[0]?.department,
+      priority,
+      evidenceIds: (action.evidence ?? []).map((evidence) => evidence.id).slice(0, 3),
+      successSignal: truncateAdvisorText(action.expectedImpact ?? action.impact ?? '', 220) || undefined,
+      link: action.link,
     };
   });
 }
@@ -1066,6 +1157,11 @@ Rules:
 - For each action, include "responsibleDepartments": the departments or roles that should execute the CEO decision.
 - responsibleDepartments.ownerAgentId may be included only when it exactly matches an ID from the supplied team.
 - responsibleDepartments are execution owners; they must not become the main recommendation.
+- Include "weeklyActions": 5-7 timeline items for what should happen this week after this refresh.
+- weeklyActions must use the same evidenceCatalog, todayMarketPulse, strategicGaps, Knowledge Hub, campaigns, and marketSignals already supplied. Do not use a separate source.
+- weeklyActions must be ordered by day 1-7. Put urgent/high market responses earlier in the week, validation/measurement later in the week.
+- weeklyActions should be practical daily moves, not generic reminders. Each item must cite 1-3 evidenceIds from evidenceCatalog when evidence is available.
+- If the user refreshes after new crawl/market scan data, weeklyActions should naturally change based on that new evidence.
 - Keep 3-5 actions, 0-3 wins, and 0-3 alerts.
 - Allowed links begin with:
   ${linkPrefix}/campaigns, ${linkPrefix}/landing-pages, ${linkPrefix}/sales,
@@ -1117,6 +1213,18 @@ Return:
       "assets": string[],
       "expectedOutcome": string?
     }?
+  }],
+  "weeklyActions": [{
+    "day": 1,
+    "dayLabel": "Day 1",
+    "title": "short daily action title",
+    "action": "specific action to perform on this day",
+    "why": "why this is the right move based on evidence",
+    "ownerDepartment": "Executive|Marketing|Sales|Content|Analytics|Operations",
+    "priority": "urgent|high|medium|low",
+    "evidenceIds": ["id-from-evidenceCatalog"],
+    "successSignal": "what should be true by the end of the day",
+    "link": string?
   }],
   "wins": [{"what": string, "detail": string?}],
   "alerts": [{"what": string, "detail": string?, "link": string?}]
@@ -1256,6 +1364,18 @@ Return:
       ].sort((left, right) => actionPriority(right) - actionPriority(left)).slice(0, 5)
     : combinedActions.sort((left, right) => actionPriority(right) - actionPriority(left)).slice(0, 5);
   const assignedActions = assignAdvisorTeamTasks(prioritizedActions, context.team, language);
+  const generatedWeeklyActions = sanitizeWeeklyActions({
+    value: parsed.weeklyActions,
+    evidenceById,
+    companyId,
+    language,
+  });
+  const weeklyActions = generatedWeeklyActions.length >= 3
+    ? generatedWeeklyActions
+    : buildFallbackWeeklyActions({
+        actions: assignedActions,
+        language,
+      });
 
   const wins: BriefWin[] = Array.isArray(parsed.wins)
     ? parsed.wins.slice(0, 3).map((win: any) => ({
@@ -1297,6 +1417,7 @@ Return:
           ? 'Đây là bản tư vấn hôm nay dựa trên dữ liệu thực tế.'
           : 'Here is your evidence-based brief for today.',
     actions: assignedActions,
+    weeklyActions,
     wins,
     alerts,
     sourcesUsed: {
@@ -1340,6 +1461,7 @@ export async function generateAndSaveCeoBrief(args: {
     {
       headline: result.headline,
       actions: result.actions,
+      weeklyActions: result.weeklyActions,
       wins: result.wins,
       alerts: result.alerts,
       sourcesUsed: result.sourcesUsed,
