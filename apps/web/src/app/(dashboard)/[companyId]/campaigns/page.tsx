@@ -39,10 +39,18 @@ import {
 type Tier = 'fast' | 'balanced' | 'premium';
 
 const TIERS: { key: Tier; icon: typeof Zap; label: string; cost: number; desc: string }[] = [
-  { key: 'fast', icon: Zap, label: 'Fast', cost: 2, desc: 'Quick draft' },
-  { key: 'balanced', icon: Star, label: 'Balanced', cost: 6, desc: 'Recommended' },
-  { key: 'premium', icon: Gem, label: 'Premium', cost: 20, desc: 'Best quality' },
+  { key: 'fast', icon: Zap, label: 'Fast', cost: 5, desc: 'Quick draft' },
+  { key: 'balanced', icon: Star, label: 'Balanced', cost: 5, desc: 'Recommended' },
+  { key: 'premium', icon: Gem, label: 'Premium', cost: 5, desc: 'Best quality' },
 ];
+
+interface CreditResponse {
+  balance: { totalAvailable: number };
+  costs?: {
+    campaignGenerate?: Partial<Record<Tier, number>>;
+    supportMessage?: string;
+  };
+}
 
 interface CampaignRow {
   id: string;
@@ -84,6 +92,7 @@ export default function CampaignsPage() {
   const [oocOpen, setOocOpen] = useState(false);
   const [oocReq, setOocReq] = useState<number | undefined>();
   const [oocAvail, setOocAvail] = useState<number | undefined>();
+  const queryClient = useQueryClient();
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['campaigns', companyId],
@@ -95,10 +104,32 @@ export default function CampaignsPage() {
 
   const campaignList = data?.data ?? [];
 
+  const { data: creditsData } = useQuery({
+    queryKey: ['credits', companyId],
+    queryFn: () => api.get<CreditResponse>(`/credits/${companyId}`, { token: token! }),
+    enabled: !!token && !!companyId,
+    staleTime: 30_000,
+  });
+
+  const selectedCreditCost =
+    creditsData?.costs?.campaignGenerate?.[tier]
+      ?? TIERS.find((item) => item.key === tier)?.cost
+      ?? 5;
+  const availableCredits = creditsData?.balance.totalAvailable;
+  const hasEnoughCredits =
+    typeof availableCredits !== 'number' || availableCredits >= selectedCreditCost;
+
   const onGenerate = async () => {
     if (!token) return;
     if (goal.trim().length < 3 || audience.trim().length < 3) {
       toast.error('Please describe your goal and who it is for.');
+      return;
+    }
+    if (!hasEnoughCredits) {
+      setOocReq(selectedCreditCost);
+      setOocAvail(availableCredits);
+      setDialogOpen(false);
+      setOocOpen(true);
       return;
     }
 
@@ -118,8 +149,9 @@ export default function CampaignsPage() {
       setGoal('');
       setAudience('');
       setSourceSelection({});
+      queryClient.invalidateQueries({ queryKey: ['credits', companyId] });
       toast.success(
-        `AI is building your campaign · ${res.estimatedCost} credits used`,
+        `AI is building your campaign · estimated ${res.estimatedCost} credits`,
       );
       router.push(`/${companyId}/campaigns/${res.campaignId}`);
     } catch (err) {
@@ -321,7 +353,9 @@ export default function CampaignsPage() {
                         </span>
                         {active && <span className="text-indigo-600 text-xs ml-auto">✓</span>}
                       </div>
-                      <div className="text-xs text-slate-600 mt-1">~{t.cost} credits</div>
+                      <div className="text-xs text-slate-600 mt-1">
+                        ~{creditsData?.costs?.campaignGenerate?.[t.key] ?? t.cost} credits
+                      </div>
                       <div className="text-[11px] text-slate-500">{t.desc}</div>
                     </button>
                   );
@@ -336,7 +370,8 @@ export default function CampaignsPage() {
             </Button>
             <Button
               onClick={onGenerate}
-              disabled={submitting}
+              disabled={submitting || !hasEnoughCredits}
+              title={!hasEnoughCredits ? 'Not enough credits. Contact support to add more.' : undefined}
               className="bg-indigo-600 hover:bg-indigo-700 text-white"
             >
               {submitting ? (
@@ -345,7 +380,7 @@ export default function CampaignsPage() {
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4 mr-2" /> Generate
+                  <Sparkles className="w-4 h-4 mr-2" /> Generate · {selectedCreditCost} credits
                 </>
               )}
             </Button>

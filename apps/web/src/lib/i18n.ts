@@ -1,15 +1,17 @@
-export type Locale = 'en' | 'ja' | 'ko';
+export type Locale = 'en' | 'vi' | 'ja' | 'ko';
 
-export const locales: Locale[] = ['en', 'ja', 'ko'];
+export const locales: Locale[] = ['en', 'vi', 'ja', 'ko'];
 
 export const localeNames: Record<Locale, string> = {
   en: 'English',
+  vi: 'Tiếng Việt',
   ja: '日本語',
   ko: '한국어',
 };
 
 export const localeFlags: Record<Locale, string> = {
   en: '🇺🇸',
+  vi: '🇻🇳',
   ja: '🇯🇵',
   ko: '🇰🇷',
 };

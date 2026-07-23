@@ -6,6 +6,7 @@
  */
 
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
@@ -26,10 +27,12 @@ import {
 } from '../services/brand-creative-kit';
 import { resolveImageProvider } from '../lib/config-resolver';
 import { ensureSufficientCredits, chargeFixedCredits } from '../lib/credits';
+import { FIXED_CREDIT_COSTS } from '../lib/credit-costs';
 import { getViralFrameworkPrompt, getAdCopySpecPrompt, AIDA_FRAMEWORK, AB_TEST_ANGLES, EMAIL_SEQUENCE_FRAMEWORK, EMAIL_SUBJECT_FORMULAS, KEYWORD_CLUSTER_PROMPT } from '../services/marketing-frameworks';
 import { adaptDesignForSize, AD_SIZES } from '../services/creative-adapter';
 import { validateBanner } from '../services/creative-quality';
 import { generateScript, breakIntoScenes } from '../services/video-engine';
+import { createCampaignVideoProject } from '../services/campaign-video-creative';
 import {
   applyLatestCampaignBannerMedia,
   bannerIdFromMediaUrl,
@@ -53,6 +56,8 @@ const marketingEngineRouter = new Hono();
 marketingEngineRouter.use('*', authMiddleware);
 
 const CUSTOM_BANNER_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const CAMPAIGN_VIDEO_MEDIA_PATTERN =
+  /\/videos\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\//i;
 
 function customBannerExtension(file: File): 'jpg' | 'png' | 'webp' {
   if (file.type === 'image/jpeg') return 'jpg';
@@ -74,6 +79,28 @@ function collectBannerAssetUrls(value: unknown, urls = new Set<string>()): Set<s
       .forEach((item) => collectBannerAssetUrls(item, urls));
   }
   return urls;
+}
+
+function videoIdFromMediaUrl(url: string): string | null {
+  const decoded = (() => {
+    try {
+      return decodeURIComponent(url);
+    } catch {
+      return url;
+    }
+  })();
+  const pathname = (() => {
+    try {
+      return new URL(decoded, 'http://localhost').pathname;
+    } catch {
+      return decoded.split('?')[0] ?? decoded;
+    }
+  })();
+  return pathname.match(CAMPAIGN_VIDEO_MEDIA_PATTERN)?.[1]?.toLowerCase() ?? null;
+}
+
+function uniqueMediaUrls(urls: string[]): string[] {
+  return [...new Set(urls.filter(Boolean))];
 }
 
 async function readImageSize(buffer: Buffer): Promise<{ width: number; height: number }> {
@@ -1185,6 +1212,11 @@ const applyCampaignBannerMediaSchema = z.object({
   platforms: z.array(z.enum(SOCIAL_PLATFORMS)).optional(),
 });
 
+const applyCampaignVideoMediaSchema = z.object({
+  videoId: z.string().uuid(),
+  platforms: z.array(z.enum(SOCIAL_PLATFORMS)).optional(),
+});
+
 marketingEngineRouter.patch(
   '/company/:companyId/campaigns/:campaignId/social-post-media',
   zValidator('json', applyCampaignBannerMediaSchema),
@@ -1333,6 +1365,105 @@ marketingEngineRouter.patch(
     return c.json({
       updated: updatedPosts.length,
       bannerIds,
+      platforms: selectedPlatforms,
+      posts: updatedPosts,
+    });
+  },
+);
+
+marketingEngineRouter.patch(
+  '/company/:companyId/campaigns/:campaignId/social-post-video',
+  zValidator('json', applyCampaignVideoMediaSchema),
+  async (c) => {
+    const companyId = c.req.param('companyId');
+    const campaignId = c.req.param('campaignId');
+    const { videoId, platforms } = c.req.valid('json');
+
+    const campaign = await db.query.campaigns.findFirst({
+      where: and(eq(campaigns.id, campaignId), eq(campaigns.companyId, companyId)),
+      columns: { id: true },
+    });
+    if (!campaign) return c.json({ error: 'Campaign not found' }, 404);
+
+    const campaignVideos = await db.select({
+      id: videoProjects.id,
+      status: videoProjects.status,
+      outputUrl: videoProjects.outputUrl,
+    }).from(videoProjects).where(and(
+      eq(videoProjects.campaignId, campaignId),
+      eq(videoProjects.companyId, companyId),
+    ));
+    const selectedVideo = campaignVideos.find((video) => video.id === videoId);
+    if (!selectedVideo) {
+      return c.json({ error: 'Selected video does not belong to this campaign.' }, 400);
+    }
+    if (selectedVideo.status !== 'ready' || !selectedVideo.outputUrl) {
+      return c.json({ error: 'Choose a ready video before applying it to social posts.' }, 409);
+    }
+
+    const campaignPosts = await db.select({
+      id: socialPosts.id,
+      platform: socialPosts.platform,
+      status: socialPosts.status,
+      mediaUrls: socialPosts.mediaUrls,
+    }).from(socialPosts).where(and(
+      eq(socialPosts.campaignId, campaignId),
+      eq(socialPosts.companyId, companyId),
+    ));
+
+    const editablePosts = campaignPosts.filter((post) => post.status !== 'published');
+    const availablePlatforms = Array.from(new Set<SocialPlatform>(
+      editablePosts
+        .map((post) => normalizeSocialPlatform(post.platform))
+        .filter((platform): platform is SocialPlatform => Boolean(platform)),
+    ));
+    const requestedPlatforms = platforms ?? availablePlatforms;
+    const selectedPlatforms = Array.from(new Set<SocialPlatform>(
+      requestedPlatforms.filter((platform) => availablePlatforms.includes(platform)),
+    ));
+    if (selectedPlatforms.length === 0) {
+      return c.json({
+        error: 'Published posts are read-only. Create or use a draft post to apply a campaign video.',
+      }, 409);
+    }
+
+    const selectedPlatformSet = new Set<SocialPlatform>(selectedPlatforms);
+    const campaignVideoIds = new Set(campaignVideos.map((video) => video.id.toLowerCase()));
+    const campaignVideoUrls = new Set(
+      campaignVideos
+        .map((video) => video.outputUrl)
+        .filter((url): url is string => Boolean(url)),
+    );
+
+    const postsToUpdate = editablePosts.filter((post) => {
+      const platform = normalizeSocialPlatform(post.platform);
+      return platform ? selectedPlatformSet.has(platform) : false;
+    });
+
+    const updatedPosts = await Promise.all(postsToUpdate.map(async (post) => {
+      // Keep banner images and unrelated media, but replace any older video
+      // generated by this campaign with the user's newly selected video.
+      const existingMedia = post.mediaUrls ?? [];
+      const nonCampaignVideoMedia = existingMedia.filter((url) => {
+        const embeddedVideoId = videoIdFromMediaUrl(url);
+        return !campaignVideoUrls.has(url)
+          && !(embeddedVideoId && campaignVideoIds.has(embeddedVideoId));
+      });
+      const mediaUrls = uniqueMediaUrls([selectedVideo.outputUrl!, ...nonCampaignVideoMedia]);
+      const [updatedPost] = await db.update(socialPosts)
+        .set({ mediaUrls })
+        .where(eq(socialPosts.id, post.id))
+        .returning({
+          id: socialPosts.id,
+          platform: socialPosts.platform,
+          mediaUrls: socialPosts.mediaUrls,
+        });
+      return updatedPost;
+    }));
+
+    return c.json({
+      updated: updatedPosts.length,
+      videoId,
       platforms: selectedPlatforms,
       posts: updatedPosts,
     });
@@ -1987,14 +2118,43 @@ marketingEngineRouter.post(
   '/company/:companyId/videos/generate',
   zValidator('json', z.object({
     campaignId: z.string().uuid().nullish(),
-    format: z.enum(['15s', '30s', '60s']).default('30s'),
+    format: z.enum(['15s', '30s', '60s']).default('15s'),
     aspectRatio: z.enum(['9:16', '16:9', '1:1']).default('9:16'),
+    render: z.boolean().optional().default(false),
+    creativeNotes: z.string().max(1200).optional(),
+    forceNew: z.boolean().optional().default(false),
   })),
   async (c) => {
     const companyId = c.req.param('companyId');
-    const { campaignId, format, aspectRatio } = c.req.valid('json');
+    const { campaignId, format, aspectRatio, render, creativeNotes, forceNew } = c.req.valid('json');
 
     try {
+      if (render) {
+        if (!campaignId) {
+          return c.json({ error: 'Campaign is required to render an AI video.' }, 400);
+        }
+        if (aspectRatio === '1:1') {
+          return c.json({ error: 'AI video rendering currently supports 9:16 and 16:9.' }, 400);
+        }
+        await ensureSufficientCredits(companyId, FIXED_CREDIT_COSTS.campaignVideo);
+        const project = await createCampaignVideoProject({
+          companyId,
+          campaignId,
+          format,
+          aspectRatio,
+          creativeNotes,
+          forceNew,
+        });
+        await chargeFixedCredits(companyId, FIXED_CREDIT_COSTS.campaignVideo, {
+          featureKey: 'campaign_video',
+          tier: 'premium',
+          refKind: 'video_project',
+          refId: project.id,
+          note: `AI campaign video (${format}, ${aspectRatio})`,
+        });
+        return c.json(project);
+      }
+
       // Step 1: Generate script
       const { title, script } = await generateScript(companyId, { format, aspectRatio });
 
@@ -2009,6 +2169,9 @@ marketingEngineRouter.post(
         script: script as any,
         scenes: [] as any,
       }).returning();
+      if (!project) {
+        throw new Error('Video project could not be created.');
+      }
 
       // Step 2: Auto-break into scenes
       const scenes = await breakIntoScenes(script, format);
@@ -2024,6 +2187,7 @@ marketingEngineRouter.post(
 
       return c.json(updated);
     } catch (err) {
+      if (err instanceof HTTPException) throw err;
       console.error('[Video] Script generation failed:', err);
       return c.json({
         error: 'Failed to generate video script. Please try again.',
@@ -2031,6 +2195,16 @@ marketingEngineRouter.post(
     }
   }
 );
+
+marketingEngineRouter.get('/company/:companyId/videos/:id', async (c) => {
+  const companyId = c.req.param('companyId');
+  const id = c.req.param('id');
+  const [project] = await db.select().from(videoProjects)
+    .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
+    .limit(1);
+  if (!project) return c.json({ error: 'Video project not found' }, 404);
+  return c.json(project);
+});
 
 // List video projects
 marketingEngineRouter.get('/company/:companyId/videos', async (c) => {
@@ -2064,6 +2238,55 @@ marketingEngineRouter.patch(
     return c.json(updated);
   }
 );
+
+marketingEngineRouter.post('/company/:companyId/videos/:id/imgly-export', async (c) => {
+  const companyId = c.req.param('companyId');
+  const id = c.req.param('id');
+  const formData = await c.req.formData();
+  const file = formData.get('file') as File | null;
+  const scene = formData.get('scene');
+  const duration = formData.get('duration');
+
+  if (!file) return c.json({ error: 'Missing exported video file.' }, 400);
+  if (!file.type.startsWith('video/')) return c.json({ error: 'Export must be a video file.' }, 400);
+  if (file.size > 200 * 1024 * 1024) return c.json({ error: 'Video is too large. Please export a file under 200MB.' }, 400);
+
+  const [existing] = await db.select().from(videoProjects)
+    .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
+    .limit(1);
+  if (!existing) return c.json({ error: 'Video project not found' }, 404);
+
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const extension = file.type.includes('webm') ? 'webm' : 'mp4';
+  const exportVersion = Date.now();
+  const savedVideo = await saveObject({
+    key: `campaigns/${companyId}/${existing.campaignId ?? 'standalone'}/videos/${id}/imgly-video-${id}-current.${extension}`,
+    body: bytes,
+    contentType: file.type || 'video/mp4',
+    cacheControl: 'public, max-age=60, must-revalidate',
+  });
+  const outputUrl = `${savedVideo.url}?v=${exportVersion}`;
+  const currentScript = (existing.script as Record<string, any> | null) ?? {};
+
+  const [updated] = await db.update(videoProjects)
+    .set({
+      status: 'ready',
+      outputUrl,
+      script: {
+        ...currentScript,
+        imglyScene: typeof scene === 'string' ? scene : currentScript.imglyScene,
+        imglySceneVideoUrl: outputUrl,
+        imglyDurationSeconds: typeof duration === 'string' ? Number(duration) || undefined : undefined,
+        imglyUpdatedAt: new Date().toISOString(),
+      } as any,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
+    .returning();
+
+  if (!updated) return c.json({ error: 'Video project could not be updated.' }, 500);
+  return c.json({ video: updated });
+});
 
 // ===============================================================
 // UTM TRACKING LINKS — Generate UTM-tagged links for campaigns

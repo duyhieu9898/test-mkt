@@ -11,20 +11,113 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useRegister } from '@/lib/api/hooks';
 import { Mail, Lock, User, ArrowRight, Check, Clock } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
-const registerSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters'),
-  email: z.string().email('Please enter a valid email'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-});
+type RegisterForm = {
+  name: string;
+  email: string;
+  password: string;
+};
 
-type RegisterForm = z.infer<typeof registerSchema>;
+const registerCopy = {
+  en: {
+    nameMin: 'Name must be at least 2 characters',
+    invalidEmail: 'Please enter a valid email',
+    passwordMin: 'Password must be at least 8 characters',
+    accountCreatedToast: 'Account created!',
+    failedToast: 'Registration failed',
+    pendingTitle: 'Account Created!',
+    pendingDesc: "Your registration is pending admin approval.\nYou'll be able to sign in once your account is approved.",
+    pendingTime: 'This usually takes less than 24 hours.',
+    goToSignIn: 'Go to Sign In',
+    createAccountTitle: 'Create your account',
+    createAccountDesc: 'Start building your AI-powered company',
+    fullName: 'Full Name',
+    namePlaceholder: 'John Doe',
+    email: 'Email',
+    password: 'Password',
+    passwordPlaceholder: 'Create a strong password',
+    reqLength: 'At least 8 characters',
+    reqNumber: 'Contains a number',
+    reqLetter: 'Contains a letter',
+    createAccount: 'Create Account',
+    termsPrefix: 'By creating an account, you agree to our',
+    terms: 'Terms of Service',
+    and: 'and',
+    privacy: 'Privacy Policy',
+    alreadyHave: 'Already have an account?',
+    signIn: 'Sign in',
+  },
+  vi: {
+    nameMin: 'Tên phải có ít nhất 2 ký tự',
+    invalidEmail: 'Vui lòng nhập email hợp lệ',
+    passwordMin: 'Mật khẩu phải có ít nhất 8 ký tự',
+    accountCreatedToast: 'Đã tạo tài khoản!',
+    failedToast: 'Đăng ký thất bại',
+    pendingTitle: 'Đã tạo tài khoản!',
+    pendingDesc: 'Tài khoản của bạn đang chờ admin phê duyệt.\nBạn có thể đăng nhập sau khi tài khoản được duyệt.',
+    pendingTime: 'Thông thường mất dưới 24 giờ.',
+    goToSignIn: 'Đi tới đăng nhập',
+    createAccountTitle: 'Tạo tài khoản',
+    createAccountDesc: 'Bắt đầu xây dựng công ty vận hành bằng AI',
+    fullName: 'Họ và tên',
+    namePlaceholder: 'Nguyễn Văn A',
+    email: 'Email',
+    password: 'Mật khẩu',
+    passwordPlaceholder: 'Tạo mật khẩu mạnh',
+    reqLength: 'Ít nhất 8 ký tự',
+    reqNumber: 'Có chứa số',
+    reqLetter: 'Có chứa chữ cái',
+    createAccount: 'Tạo tài khoản',
+    termsPrefix: 'Khi tạo tài khoản, bạn đồng ý với',
+    terms: 'Điều khoản sử dụng',
+    and: 'và',
+    privacy: 'Chính sách bảo mật',
+    alreadyHave: 'Đã có tài khoản?',
+    signIn: 'Đăng nhập',
+  },
+  ja: {
+    nameMin: '名前は2文字以上で入力してください',
+    invalidEmail: '有効なメールアドレスを入力してください',
+    passwordMin: 'パスワードは8文字以上で入力してください',
+    accountCreatedToast: 'アカウントを作成しました',
+    failedToast: '登録に失敗しました',
+    pendingTitle: 'アカウントを作成しました',
+    pendingDesc: '登録は管理者の承認待ちです。\n承認後にログインできるようになります。',
+    pendingTime: '通常24時間以内に完了します。',
+    goToSignIn: 'ログインへ',
+    createAccountTitle: 'アカウントを作成',
+    createAccountDesc: 'AIで動く会社づくりを始めましょう',
+    fullName: '氏名',
+    namePlaceholder: '山田 太郎',
+    email: 'メールアドレス',
+    password: 'パスワード',
+    passwordPlaceholder: '安全なパスワードを作成',
+    reqLength: '8文字以上',
+    reqNumber: '数字を含む',
+    reqLetter: '英字を含む',
+    createAccount: 'アカウント作成',
+    termsPrefix: 'アカウントを作成すると、以下に同意したものとみなされます。',
+    terms: '利用規約',
+    and: 'および',
+    privacy: 'プライバシーポリシー',
+    alreadyHave: 'すでにアカウントをお持ちですか？',
+    signIn: 'ログイン',
+  },
+};
 
 export default function RegisterPage() {
   const router = useRouter();
   const registerMutation = useRegister();
   const [pendingApproval, setPendingApproval] = useState(false);
+  const [language] = usePreferredAppLanguage('en');
+  const copy = registerCopy[language];
+  const registerSchema = useMemo(() => z.object({
+    name: z.string().min(2, copy.nameMin),
+    email: z.string().email(copy.invalidEmail),
+    password: z.string().min(8, copy.passwordMin),
+  }), [copy.invalidEmail, copy.nameMin, copy.passwordMin]);
 
   const {
     register,
@@ -38,9 +131,9 @@ export default function RegisterPage() {
   const password = watch('password', '');
 
   const passwordRequirements = [
-    { label: 'At least 8 characters', met: password.length >= 8 },
-    { label: 'Contains a number', met: /\d/.test(password) },
-    { label: 'Contains a letter', met: /[a-zA-Z]/.test(password) },
+    { label: copy.reqLength, met: password.length >= 8 },
+    { label: copy.reqNumber, met: /\d/.test(password) },
+    { label: copy.reqLetter, met: /[a-zA-Z]/.test(password) },
   ];
 
   const onSubmit = async (data: RegisterForm) => {
@@ -49,11 +142,11 @@ export default function RegisterPage() {
       if ((res as any)?.pendingApproval) {
         setPendingApproval(true);
       } else {
-        toast.success('Account created!');
+        toast.success(copy.accountCreatedToast);
         router.push('/welcome');
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Registration failed');
+      toast.error(error instanceof Error ? error.message : copy.failedToast);
     }
   };
 
@@ -67,17 +160,16 @@ export default function RegisterPage() {
             <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
               <Clock className="w-8 h-8 text-amber-600" />
             </div>
-            <h2 className="text-xl font-bold mb-2">Account Created!</h2>
-            <p className="text-muted-foreground mb-4">
-              Your registration is pending admin approval.<br />
-              You'll be able to sign in once your account is approved.
+            <h2 className="text-xl font-bold mb-2">{copy.pendingTitle}</h2>
+            <p className="whitespace-pre-line text-muted-foreground mb-4">
+              {copy.pendingDesc}
             </p>
             <p className="text-xs text-muted-foreground">
-              This usually takes less than 24 hours.
+              {copy.pendingTime}
             </p>
             <Link href="/login">
               <Button variant="outline" className="mt-6">
-                Go to Sign In
+                {copy.goToSignIn}
               </Button>
             </Link>
           </CardContent>
@@ -100,16 +192,16 @@ export default function RegisterPage() {
 
       <Card className="border-0 shadow-none lg:border lg:shadow-sm">
         <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-2xl font-bold">Create your account</CardTitle>
-          <CardDescription>Start building your AI-powered company</CardDescription>
+          <CardTitle className="text-2xl font-bold">{copy.createAccountTitle}</CardTitle>
+          <CardDescription>{copy.createAccountDesc}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Full Name</label>
+              <label className="text-sm font-medium">{copy.fullName}</label>
               <Input
                 {...register('name')}
-                placeholder="John Doe"
+                placeholder={copy.namePlaceholder}
                 icon={<User className="w-4 h-4" />}
                 disabled={isLoading}
               />
@@ -119,7 +211,7 @@ export default function RegisterPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">Email</label>
+              <label className="text-sm font-medium">{copy.email}</label>
               <Input
                 {...register('email')}
                 type="email"
@@ -133,11 +225,11 @@ export default function RegisterPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">Password</label>
+              <label className="text-sm font-medium">{copy.password}</label>
               <Input
                 {...register('password')}
                 type="password"
-                placeholder="Create a strong password"
+                placeholder={copy.passwordPlaceholder}
                 icon={<Lock className="w-4 h-4" />}
                 disabled={isLoading}
               />
@@ -168,26 +260,26 @@ export default function RegisterPage() {
             </div>
 
             <Button type="submit" className="w-full" size="lg" loading={isLoading}>
-              Create Account
+              {copy.createAccount}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </form>
 
           <p className="mt-6 text-center text-xs text-muted-foreground">
-            By creating an account, you agree to our{' '}
+            {copy.termsPrefix}{' '}
             <Link href="/terms" className="text-primary hover:underline">
-              Terms of Service
+              {copy.terms}
             </Link>{' '}
-            and{' '}
+            {copy.and}{' '}
             <Link href="/privacy" className="text-primary hover:underline">
-              Privacy Policy
+              {copy.privacy}
             </Link>
           </p>
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
-            Already have an account?{' '}
+            {copy.alreadyHave}{' '}
             <Link href="/login" className="text-primary hover:underline font-medium">
-              Sign in
+              {copy.signIn}
             </Link>
           </p>
         </CardContent>

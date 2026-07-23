@@ -45,8 +45,8 @@ export class IntelligenceTools {
     const result = {
       pages: pages.map((p) => ({
         name: p.name,
-        keyword: (p.businessContext as any)?.keyword || '',
-        status: p.status,
+        keyword: String((p.businessContext as any)?.keyword || ''),
+        status: p.status || 'draft',
         visitors: p.totalVisitors || 0,
         leads: p.totalLeads || 0,
       })),
@@ -121,7 +121,7 @@ export class IntelligenceTools {
       const ctx = p.businessContext as any;
       if (ctx?.keyword && ctx?.searchIntent) {
         if (!byIntent[ctx.searchIntent]) byIntent[ctx.searchIntent] = [];
-        byIntent[ctx.searchIntent].push(ctx.keyword);
+        byIntent[ctx.searchIntent]!.push(ctx.keyword);
       }
     }
 
@@ -238,7 +238,8 @@ export class IntelligenceTools {
    * Web search (using existing crawler for competitor pages)
    */
   async webSearch(query: string): Promise<{ results: string[] }> {
-    // Use LLM to generate search-like insights (real web search would need SerpAPI/Google API)
+    // Lightweight search-like helper. User-facing crawl flows use the free
+    // public discovery service instead of paid SERP providers.
     const { llmGenerate } = await import('../lib/llm');
     const { text } = await llmGenerate([{
       role: 'user',

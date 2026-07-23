@@ -217,7 +217,11 @@ export default function FTUXWelcomePage() {
         // Handle error
         if (status.status === 'error') {
           if (pollingRef.current) clearInterval(pollingRef.current);
-          setError(status.error || (language === 'ja' ? '処理に失敗しました' : 'Processing failed'));
+          setError(status.error || (language === 'ja'
+            ? '処理に失敗しました'
+            : language === 'vi'
+              ? 'Xử lý thất bại'
+              : 'Processing failed'));
           processingRef.current = false;
         }
       } catch (err) {
@@ -227,7 +231,9 @@ export default function FTUXWelcomePage() {
           if (pollingRef.current) clearInterval(pollingRef.current);
           setError(err instanceof Error ? err.message : language === 'ja'
             ? 'オンボーディング状況を読み取れませんでした'
-            : 'Could not read onboarding status');
+            : language === 'vi'
+              ? 'Không thể đọc trạng thái onboarding'
+              : 'Could not read onboarding status');
           processingRef.current = false;
         }
       }

@@ -24,6 +24,8 @@ import {
   replaceApprovedKnowledge,
 } from '../services/knowledge-lifecycle';
 import { discoverKnowledgeCrawlData } from '../services/knowledge-crawl-discovery';
+import { ensureSufficientCredits, chargeFixedCredits } from '../lib/credits';
+import { FIXED_CREDIT_COSTS } from '../lib/credit-costs';
 import {
   deleteObjectByStorageReference,
   isObjectStorageReference,
@@ -293,7 +295,17 @@ knowledgeRouter.post(
 // become Knowledge documents.
 knowledgeRouter.get('/company/:companyId/crawl/discover', async (c) => {
   const companyId = c.req.param('companyId');
-  const result = await discoverKnowledgeCrawlData(companyId);
+  await ensureSufficientCredits(companyId, FIXED_CREDIT_COSTS.knowledgeCrawlDiscover);
+  const result = await discoverKnowledgeCrawlData(companyId, {
+    query: c.req.query('q')?.trim() || null,
+    websiteUrl: c.req.query('websiteUrl')?.trim() || null,
+  });
+  await chargeFixedCredits(companyId, FIXED_CREDIT_COSTS.knowledgeCrawlDiscover, {
+    featureKey: 'knowledge_crawl_discover',
+    refKind: 'knowledge_crawl',
+    refId: companyId,
+    note: 'Discovered public crawl sources for Knowledge',
+  });
   return c.json(result);
 });
 

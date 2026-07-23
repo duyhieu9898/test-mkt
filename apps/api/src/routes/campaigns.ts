@@ -23,15 +23,15 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { campaigns, banners, socialPosts, companies, campaignLaunches, blogPosts } from '@1person/core/db';
+import { campaigns, banners, socialPosts, companies, campaignLaunches, blogPosts, videoProjects } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import type { CampaignStepEvent } from '../services/marketing-autonomous';
 import { eventBus, type Event as BusEvent } from '../services/event-bus';
 import { snapshotToPromptBlock } from '@1person/ai-tenant';
 import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
-import { ensureSufficientCredits, chargeForLLMCall } from '../lib/credits';
-import { resolveFeature } from '../lib/config-resolver';
+import { ensureSufficientCredits, chargeForLLMCall, chargeFixedCredits } from '../lib/credits';
+import { resolveFeature, resolveImageProvider } from '../lib/config-resolver';
 import {
   CAMPAIGN_BANNER_PALETTE,
   renderContextualCampaignBanner,
@@ -438,7 +438,9 @@ campaignsRouter.post(
       resolveFeature('campaign_banner_copy', input.tier),
       resolveFeature('campaign_social_post', input.tier),
     ]);
-    const estimatedCost = bannerFeature.creditCost + postFeature.creditCost;
+    const imageProvider = await resolveImageProvider('dalle');
+    const estimatedBannerImageCost = (imageProvider?.creditCost ?? 10) * 3;
+    const estimatedCost = bannerFeature.creditCost + postFeature.creditCost + estimatedBannerImageCost;
     await ensureSufficientCredits(companyId, estimatedCost);
 
     const sourceContext = await buildEffectiveSourceContext({
@@ -767,7 +769,9 @@ async function generateForExisting(
         headline: localizedDefault(language, 'betterWay'),
         subheadline: language === 'ja'
           ? `${input.audience}により良い成果を`
-          : `A better outcome for ${input.audience}`,
+          : language === 'vi'
+            ? `Kết quả tốt hơn cho ${input.audience}`
+            : `A better outcome for ${input.audience}`,
         cta: localizedDefault(language, 'exploreNow'),
         angle: 'aspiration',
         visualDirection: `An aspirational real-world scene focused on ${input.audience} achieving ${creativeBrief.angle}`,
@@ -876,6 +880,15 @@ async function generateForExisting(
           variantIndex: index,
           brandKit,
         });
+        if (creative.backgroundImageCreditCost && creative.backgroundImageCreditCost > 0) {
+          await chargeFixedCredits(companyId, creative.backgroundImageCreditCost, {
+            featureKey: 'campaign_banner_image',
+            tier: creative.backgroundImageProvider === 'dalle' ? 'premium' : 'balanced',
+            refKind: 'banner_bg',
+            refId: banner.id,
+            note: `Campaign banner background via ${creative.backgroundImageProvider ?? 'image provider'}`,
+          });
+        }
 
         await db.update(banners)
           .set({
@@ -1573,7 +1586,7 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
   const targetingBlogPostId = (
     campaign.targeting as { blogPostId?: string } | null | undefined
   )?.blogPostId;
-  const [bannerRows, postRows, targetingBlogPost] = await Promise.all([
+  const [bannerRows, postRows, videoRows, targetingBlogPost] = await Promise.all([
     db
       .select({
         id: banners.id,
@@ -1615,6 +1628,23 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
       .from(socialPosts)
       .where(eq(socialPosts.campaignId, id))
       .orderBy(desc(socialPosts.createdAt)),
+    db
+      .select({
+        id: videoProjects.id,
+        title: videoProjects.title,
+        format: videoProjects.format,
+        aspectRatio: videoProjects.aspectRatio,
+        status: videoProjects.status,
+        script: videoProjects.script,
+        scenes: videoProjects.scenes,
+        outputUrl: videoProjects.outputUrl,
+        thumbnailUrl: videoProjects.thumbnailUrl,
+        createdAt: videoProjects.createdAt,
+        updatedAt: videoProjects.updatedAt,
+      })
+      .from(videoProjects)
+      .where(and(eq(videoProjects.companyId, companyId), eq(videoProjects.campaignId, id)))
+      .orderBy(desc(videoProjects.createdAt)),
     targetingBlogPostId
       ? db.select({
         id: blogPosts.id,
@@ -1680,6 +1710,7 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
     campaign,
     banners: bannerRows,
     socialPosts: normalizedPostRows,
+    videos: videoRows,
     blogPost: blogPost ?? null,
     launch: linkedLaunch
       ? {

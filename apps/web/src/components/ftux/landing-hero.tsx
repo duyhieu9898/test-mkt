@@ -46,7 +46,9 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
     : trimmedLength >= MIN_BUSINESS_DESCRIPTION_LENGTH;
   const beginnerExamples = language === 'ja'
     ? ['AIコンテンツ制作会社', 'フィットネスコーチング', 'オンライン教育サービス']
-    : ['AI content agency', 'Fitness coaching platform', 'Online education startup'];
+    : language === 'vi'
+      ? ['Agency nội dung AI', 'Nền tảng coaching fitness', 'Startup giáo dục online']
+      : ['AI content agency', 'Fitness coaching platform', 'Online education startup'];
 
   const handleSubmit = useCallback(() => {
     const trimmed = prompt.trim();
@@ -277,7 +279,9 @@ export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
         >
           {language === 'ja'
             ? 'AIがページ作成、コンテンツ制作、集客を自動で支援します'
-            : 'AI creates pages, writes content, and drives traffic automatically'}
+            : language === 'vi'
+              ? 'AI tự tạo trang, viết nội dung và hỗ trợ tăng traffic'
+              : 'AI creates pages, writes content, and drives traffic automatically'}
         </motion.p>
       </motion.div>
     </div>

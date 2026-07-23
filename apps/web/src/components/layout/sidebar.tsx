@@ -283,7 +283,7 @@ export function Sidebar() {
         <span
           key={item.name}
           className="flex h-9 cursor-not-allowed items-center gap-2.5 rounded-lg px-2.5 text-sm text-slate-400"
-          title={locked ? `Unlocks at Level ${item.unlockLevel}` : 'Create a company first'}
+          title={locked ? `${appT(language, 'unlocksAtLevel')} ${item.unlockLevel}` : appT(language, 'createCompanyFirst')}
         >
           <item.icon className="h-4 w-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -422,7 +422,7 @@ export function Sidebar() {
     <>
       <button
         type="button"
-        aria-label="Open menu"
+        aria-label={appT(language, 'openMenu')}
         onClick={() => setMobileOpen(true)}
         className="fixed left-3 top-3 z-40 inline-flex h-11 w-11 items-center justify-center rounded-lg bg-card shadow-sm transition-colors hover:bg-muted lg:hidden"
       >
@@ -443,7 +443,7 @@ export function Sidebar() {
           <aside className="absolute inset-y-0 left-0 w-72 max-w-[85vw] border-r bg-white shadow-xl animate-in slide-in-from-left duration-200">
             <button
               type="button"
-              aria-label="Close menu"
+              aria-label={appT(language, 'closeMenu')}
               onClick={() => setMobileOpen(false)}
               className="absolute right-3 top-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-slate-100"
             >

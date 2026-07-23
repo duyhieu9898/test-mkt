@@ -20,6 +20,21 @@ import {
 } from './market-intelligence';
 import type { Signal } from './market-scan';
 
+function hasUsefulMarketSignal(signals: Signal[], aiSummary: string, recommendedAction: string): boolean {
+  if (signals.length > 0) return true;
+  const text = `${aiSummary} ${recommendedAction}`.toLowerCase();
+  if (!text.trim()) return false;
+  return ![
+    'no recent news',
+    'no significant updates',
+    'no current information',
+    'no competitor activity',
+    'monitor for future updates',
+    'không có tin mới',
+    'không có cập nhật',
+  ].some((phrase) => text.includes(phrase));
+}
+
 export async function saveScanToBrain(args: {
   companyId: string;
   tenantId: string;
@@ -31,6 +46,9 @@ export async function saveScanToBrain(args: {
   scanId: string;
 }): Promise<void> {
   const { companyId, tenantId, competitorId, competitorName, signals, aiSummary, recommendedAction, scanId } = args;
+  if (!hasUsefulMarketSignal(signals, aiSummary, recommendedAction)) {
+    return;
+  }
   const ai = getTenantAI();
   const snapshot = await ai.brain.getSnapshot(tenantId).catch(() => null);
   const businessContext = await buildBusinessContext(companyId).catch(() => null);

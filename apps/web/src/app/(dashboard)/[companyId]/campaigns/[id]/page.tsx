@@ -21,6 +21,7 @@ import {
   BarChart3,
   Brain,
   CheckCircle2,
+  Clapperboard,
   ExternalLink,
   Eye,
   FileEdit,
@@ -40,6 +41,7 @@ import {
   TrendingUp,
   UploadCloud,
   Users,
+  Wand2,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -120,6 +122,14 @@ interface CampaignPlan {
   generatedAt?: string;
 }
 
+interface CreditResponse {
+  balance: { totalAvailable: number };
+  costs?: {
+    campaignVideo?: number;
+    supportMessage?: string;
+  };
+}
+
 interface CampaignLearningSummary {
   status?: string;
   updatedAt?: string;
@@ -181,6 +191,83 @@ interface Banner {
     } | null;
   } | null;
   strategyTag?: string | null;
+}
+
+interface VideoProject {
+  id: string;
+  title: string;
+  format: '15s' | '30s' | '60s';
+  aspectRatio: '9:16' | '16:9' | '1:1';
+  status: 'script' | 'scenes' | 'rendering' | 'ready' | 'failed';
+  outputUrl?: string | null;
+  thumbnailUrl?: string | null;
+  script?: {
+    hook?: string;
+    body?: string[];
+    cta?: string;
+    voiceoverText?: string;
+    error?: string;
+    overlay?: {
+      headline?: string;
+      subheadline?: string;
+      cta?: string;
+    };
+    brandKit?: {
+      companyName?: string;
+      logoUrl?: string | null;
+      colors?: {
+        primary?: string;
+        secondary?: string;
+        text?: string;
+        ctaBg?: string;
+        ctaText?: string;
+      };
+    };
+    imglyScene?: string;
+    imglySceneVideoUrl?: string;
+  } | null;
+  scenes?: unknown[] | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+const VIDEO_GENERATION_PHASES = [
+  {
+    progress: 8,
+    label: 'Planning your video',
+    hint: 'Reading the campaign goal, audience, brand, and generated assets.',
+  },
+  {
+    progress: 24,
+    label: 'Writing the creative brief',
+    hint: 'Turning the campaign idea into a video prompt for the AI renderer.',
+  },
+  {
+    progress: 42,
+    label: 'Starting AI rendering',
+    hint: 'Sending the video job to Bedrock. This can take a little while.',
+  },
+  {
+    progress: 62,
+    label: 'Rendering video frames',
+    hint: 'The AI is creating the visual story. This is usually the longest step.',
+  },
+  {
+    progress: 82,
+    label: 'Saving the video',
+    hint: 'Storing the generated MP4 and preparing it for preview.',
+  },
+  {
+    progress: 94,
+    label: 'Finalizing preview',
+    hint: 'Refreshing the campaign with the new video.',
+  },
+] as const;
+
+function videoGenerationPhase(progress: number) {
+  return [...VIDEO_GENERATION_PHASES]
+    .reverse()
+    .find((phase) => progress >= phase.progress) ?? VIDEO_GENERATION_PHASES[0];
 }
 
 interface SocialPost {
@@ -415,6 +502,7 @@ interface DetailResponse {
   campaign: Campaign;
   banners: Banner[];
   socialPosts: SocialPost[];
+  videos?: VideoProject[];
   blogPost?: BlogPost | null;
   launch?: LaunchSummary | null;
 }
@@ -1078,6 +1166,15 @@ export default function CampaignDetailPage() {
   const [bannerToDelete, setBannerToDelete] = useState<Banner | null>(null);
   const [deletingBannerId, setDeletingBannerId] = useState<string | null>(null);
   const [selectedBannerIds, setSelectedBannerIds] = useState<string[]>([]);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<'9:16' | '16:9'>('9:16');
+  const [videoGenerating, setVideoGenerating] = useState(false);
+  const [videoProgress, setVideoProgress] = useState(0);
+  const [videoRegenerateDialogOpen, setVideoRegenerateDialogOpen] = useState(false);
+  const [videoCreativeNotes, setVideoCreativeNotes] = useState('');
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [videoApplyDialogOpen, setVideoApplyDialogOpen] = useState(false);
+  const [selectedVideoApplyPlatforms, setSelectedVideoApplyPlatforms] = useState<SocialImagePlatform[]>([]);
+  const [savingPostVideo, setSavingPostVideo] = useState(false);
   const [savingPostMedia, setSavingPostMedia] = useState(false);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
   const [selectedApplyPlatforms, setSelectedApplyPlatforms] = useState<SocialImagePlatform[]>([]);
@@ -1150,6 +1247,13 @@ export default function CampaignDetailPage() {
     refetchInterval: 2 * 60_000,
   });
 
+  const { data: creditsData } = useQuery({
+    queryKey: ['credits', companyId],
+    queryFn: () => api.get<CreditResponse>(`/credits/${companyId}`, { token: token! }),
+    enabled: !!token && !!companyId,
+    staleTime: 30_000,
+  });
+
   // When the SSE stream tells us the flow is done, force a refetch
   useEffect(() => {
     if (progressDone) refetch();
@@ -1160,7 +1264,24 @@ export default function CampaignDetailPage() {
     // Never carry it into another campaign or infer it from attached media.
     setSelectedBannerIds([]);
     setApplyDialogOpen(false);
+    setSelectedVideoId(null);
+    setVideoApplyDialogOpen(false);
+    setVideoRegenerateDialogOpen(false);
+    setVideoCreativeNotes('');
   }, [campaignId]);
+
+  useEffect(() => {
+    if (!videoGenerating) return;
+
+    const timer = window.setInterval(() => {
+      setVideoProgress((current) => {
+        const next = current < 45 ? current + 4 : current < 75 ? current + 2 : current + 1;
+        return Math.min(next, 92);
+      });
+    }, 1400);
+
+    return () => window.clearInterval(timer);
+  }, [videoGenerating]);
 
   useEffect(() => {
     const currentStatus = data?.campaign.status;
@@ -1251,6 +1372,15 @@ export default function CampaignDetailPage() {
   }
 
   const { campaign, banners, socialPosts, blogPost } = data;
+  const videos = data.videos ?? [];
+  const hasCampaignVideo = videos.length > 0;
+  const readyVideos = videos.filter((video) => video.status === 'ready' && Boolean(video.outputUrl));
+  const selectedVideo = readyVideos.find((video) => video.id === selectedVideoId) ?? null;
+  const currentVideoPhase = videoGenerationPhase(videoProgress);
+  const videoCreditCost = creditsData?.costs?.campaignVideo ?? 300;
+  const availableCredits = creditsData?.balance.totalAvailable;
+  const hasEnoughVideoCredits =
+    typeof availableCredits !== 'number' || availableCredits >= videoCreditCost;
   const displayTitle = campaignDisplayTitle(campaign);
   const accountNameForPlatform = (platformValue: string): string => {
     const platform = platformValue.toLowerCase();
@@ -1378,6 +1508,61 @@ export default function CampaignDetailPage() {
       toast.error(friendlyError(error, 'Facebook data could not be refreshed. Please try again.'));
     } finally {
       setPerformanceSyncing(false);
+    }
+  };
+
+  const generateCampaignVideo = async (options?: { forceNew?: boolean; creativeNotes?: string }) => {
+    if (!token || videoGenerating) return;
+    if (!hasEnoughVideoCredits) {
+      toast.error(
+        `This AI video needs ${videoCreditCost} credits, but you only have ${availableCredits ?? 0}. Please contact support to add more credits.`,
+      );
+      return;
+    }
+    if (hasCampaignVideo && !options?.forceNew) {
+      setVideoRegenerateDialogOpen(true);
+      return;
+    }
+    setVideoGenerating(true);
+    setVideoProgress(8);
+    setVideoRegenerateDialogOpen(false);
+    const toastId = toast.loading('Creating your AI video...');
+    try {
+      const project = await api.post<VideoProject>(
+        `/marketing/company/${companyId}/videos/generate`,
+        {
+          campaignId,
+          format: '15s',
+          aspectRatio: videoAspectRatio,
+          render: true,
+          forceNew: Boolean(options?.forceNew),
+          creativeNotes: options?.creativeNotes?.trim() || undefined,
+        },
+        { token },
+      );
+      queryClient.setQueryData<DetailResponse>(
+        ['campaign', companyId, campaignId],
+        (current) => current
+          ? {
+            ...current,
+            videos: [
+              project,
+              ...(current.videos ?? []).filter((item) => item.id !== project.id),
+            ],
+          }
+          : current,
+      );
+      setVideoProgress(100);
+      if (project.status === 'ready' && project.outputUrl) setSelectedVideoId(project.id);
+      setVideoCreativeNotes('');
+      toast.success('AI video is ready to review.', { id: toastId });
+      queryClient.invalidateQueries({ queryKey: ['credits', companyId] });
+      await queryClient.invalidateQueries({ queryKey: ['campaign', companyId, campaignId] });
+    } catch (error) {
+      setVideoProgress(0);
+      toast.error(friendlyError(error, "We couldn't create this video. Please try again."), { id: toastId });
+    } finally {
+      setVideoGenerating(false);
     }
   };
 
@@ -1657,6 +1842,63 @@ export default function CampaignDetailPage() {
       setApplyDialogOpen(true);
     } finally {
       setSavingPostMedia(false);
+    }
+  };
+
+  const openVideoApplyDialog = () => {
+    if (!selectedVideo || !hasEditableSocialPosts) return;
+    setSelectedVideoApplyPlatforms(availableApplyPlatforms);
+    setVideoApplyDialogOpen(true);
+  };
+
+  const toggleVideoApplyPlatform = (platform: SocialImagePlatform) => {
+    setSelectedVideoApplyPlatforms((current) =>
+      current.includes(platform)
+        ? current.filter((item) => item !== platform)
+        : [...current, platform],
+    );
+  };
+
+  const applySelectedVideoToPosts = async () => {
+    if (!token || !selectedVideo || !hasEditableSocialPosts || selectedVideoApplyPlatforms.length === 0) return;
+
+    const platformNames = selectedVideoApplyPlatforms
+      .map((platform) => SOCIAL_IMAGE_PRESETS[platform].label)
+      .join(', ');
+    setSavingPostVideo(true);
+    setVideoApplyDialogOpen(false);
+    const toastId = toast.loading('Adding video to social posts...');
+    try {
+      const response = await api.patch<ApplySocialMediaResponse>(
+        `/marketing/company/${companyId}/campaigns/${campaignId}/social-post-video`,
+        {
+          videoId: selectedVideo.id,
+          platforms: selectedVideoApplyPlatforms,
+        },
+        { token },
+      );
+      const updatedById = new Map(response.posts.map((post) => [post.id, post]));
+      queryClient.setQueryData<DetailResponse>(
+        ['campaign', companyId, campaignId],
+        (current) => current
+          ? {
+            ...current,
+            socialPosts: current.socialPosts.map((post) => {
+              const updated = updatedById.get(post.id);
+              return updated ? { ...post, mediaUrls: updated.mediaUrls } : post;
+            }),
+          }
+          : current,
+      );
+      toast.success(`Video was applied to ${platformNames}.`, { id: toastId });
+    } catch (err) {
+      toast.error(
+        friendlyError(err, "We couldn't update social post videos. Please try again."),
+        { id: toastId },
+      );
+      setVideoApplyDialogOpen(true);
+    } finally {
+      setSavingPostVideo(false);
     }
   };
 
@@ -2138,6 +2380,246 @@ export default function CampaignDetailPage() {
         )}
       </div>
 
+      {/* Videos */}
+      <div>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+            <Clapperboard className="w-5 h-5 text-indigo-500" /> Videos ({videos.length})
+          </h2>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="grid grid-cols-2 rounded-lg border border-slate-200 bg-white p-1 text-xs">
+              {([
+                { value: '9:16' as const, label: 'Vertical' },
+                { value: '16:9' as const, label: 'Wide' },
+              ]).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={cn(
+                    'rounded-md px-3 py-1.5 font-medium transition',
+                    videoAspectRatio === option.value
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-50',
+                  )}
+                  onClick={() => setVideoAspectRatio(option.value)}
+                  disabled={videoGenerating}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-2"
+              onClick={() => void generateCampaignVideo()}
+              disabled={!token || videoGenerating || isGenerating || isLaunching || !hasEnoughVideoCredits}
+              title={!hasEnoughVideoCredits ? 'Not enough credits. Contact support to add more.' : undefined}
+            >
+              {videoGenerating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Wand2 className="h-4 w-4" />
+              )}
+              {videoGenerating
+                ? 'Creating video...'
+                : `${hasCampaignVideo ? 'Create another video' : 'Create AI video'} · ${videoCreditCost} credits`}
+            </Button>
+          </div>
+        </div>
+        <Card className="border-indigo-100 bg-indigo-50/35">
+          <CardContent className="p-4">
+            <div className="mb-4 flex items-start gap-3 rounded-lg bg-white/70 p-3 text-sm text-slate-600">
+              <Clapperboard className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+              <p>
+                Create AI video options from this campaign, then choose one to add to draft social posts.
+                Published posts stay unchanged and must be edited on their social platform.
+              </p>
+            </div>
+            {readyVideos.length > 0 && (
+              <div className="mb-4 flex flex-col gap-3 rounded-lg border border-indigo-100 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-slate-900">
+                    Choose one campaign video
+                  </div>
+                  <p className="mt-0.5 text-sm text-slate-600">
+                    {selectedVideo
+                      ? `"${selectedVideo.title}" is selected for draft social posts.`
+                      : 'Select a ready video below before applying it to social posts.'}
+                  </p>
+                  {publishedSocialPostCount > 0 && (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Published posts are read-only. Videos can only be applied to {editableSocialPostCount}{' '}
+                      {editableSocialPostCount === 1 ? 'draft post' : 'draft posts'}.
+                    </p>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="w-full gap-1.5 sm:w-auto sm:min-w-[180px]"
+                  disabled={!selectedVideo || !hasEditableSocialPosts || savingPostVideo}
+                  title={!hasEditableSocialPosts
+                    ? 'Published posts are read-only. Create a new draft post to apply videos.'
+                    : undefined}
+                  onClick={openVideoApplyDialog}
+                >
+                  {savingPostVideo ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <MessageSquare className="h-4 w-4" />
+                  )}
+                  {savingPostVideo ? 'Adding video...' : 'Apply video to social posts'}
+                </Button>
+              </div>
+            )}
+            {videoGenerating && (
+              <div className="mb-4 rounded-xl border border-indigo-100 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-950">
+                        {currentVideoPhase.label}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {currentVideoPhase.hint}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700">
+                    {Math.round(videoProgress)}%
+                  </span>
+                </div>
+                <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-indigo-600 transition-all duration-700 ease-out"
+                    style={{ width: `${Math.max(6, Math.min(100, videoProgress))}%` }}
+                  />
+                </div>
+                <p className="mt-3 text-xs text-slate-500">
+                  You can stay on this page. The video preview will appear automatically when rendering finishes.
+                </p>
+              </div>
+            )}
+            {videos.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-indigo-200 bg-white py-8 text-center">
+                <Clapperboard className="mx-auto h-8 w-8 text-indigo-300" />
+                <p className="mt-2 text-sm font-medium text-slate-900">
+                  {videoGenerating ? 'Creating your first campaign video' : 'No campaign video yet'}
+                </p>
+                <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
+                  {videoGenerating
+                    ? 'AI video rendering can take a few minutes. Keep this page open while the preview is prepared.'
+                    : 'Start with one short video for Reels, TikTok, Facebook, or LinkedIn. Review the generated video before publishing.'}
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {videos.map((video) => {
+                  const isReadyVideo = video.status === 'ready' && Boolean(video.outputUrl);
+                  const isRenderingVideo = video.status === 'rendering';
+                  const isFailedVideo = video.status === 'failed';
+                  const isSelectedVideo = selectedVideoId === video.id;
+                  return (
+                    <Card
+                      key={video.id}
+                      className={cn(
+                        'overflow-hidden border-slate-200 bg-white shadow-sm',
+                        isSelectedVideo ? 'ring-2 ring-indigo-500 ring-offset-2' : '',
+                      )}
+                    >
+                      <div className={cn(
+                        'relative bg-slate-950',
+                        video.aspectRatio === '16:9' ? 'aspect-video' : video.aspectRatio === '1:1' ? 'aspect-square' : 'aspect-[9/16]',
+                      )}>
+                        {isReadyVideo ? (
+                          <video
+                            className="h-full w-full object-contain"
+                            src={campaignImageSrc(video.outputUrl)}
+                            controls
+                            playsInline
+                            preload="metadata"
+                          />
+                        ) : (
+                          <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-white">
+                            {isRenderingVideo ? (
+                              <Loader2 className="h-6 w-6 animate-spin text-indigo-200" />
+                            ) : (
+                              <AlertCircle className="h-6 w-6 text-rose-200" />
+                            )}
+                            <p className="text-sm font-medium">
+                              {isRenderingVideo ? 'AI is rendering this video' : 'Video failed to render'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      <CardContent className="space-y-3 p-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900" title={video.title}>
+                              {video.title}
+                            </p>
+                            <Badge
+                              variant="secondary"
+                              className={cn('shrink-0 text-[10px]', statusVariant[video.status] || 'bg-slate-100 text-slate-700')}
+                            >
+                              {video.status}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            {video.aspectRatio} · {video.format}
+                          </p>
+                          {isFailedVideo && video.script?.error && (
+                            <p className="line-clamp-2 text-xs text-rose-600" title={video.script.error}>
+                              {video.script.error}
+                            </p>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <Button
+                            type="button"
+                            variant={isSelectedVideo ? 'default' : 'outline'}
+                            size="sm"
+                            className="w-full gap-2"
+                            disabled={!isReadyVideo || savingPostVideo}
+                            onClick={() => setSelectedVideoId(video.id)}
+                          >
+                            {isSelectedVideo ? (
+                              <CheckCircle2 className="h-4 w-4" />
+                            ) : (
+                              <Clapperboard className="h-4 w-4" />
+                            )}
+                            {isSelectedVideo ? 'Selected' : 'Select'}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="w-full gap-2"
+                            disabled={!isReadyVideo}
+                            onClick={() => {
+                              if (video.outputUrl) {
+                                window.open(campaignImageSrc(video.outputUrl), '_blank', 'noopener,noreferrer');
+                              }
+                            }}
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                            Open
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
       {/* Social posts */}
       <div>
         <h2 className="mb-3 text-lg font-semibold text-slate-900 flex items-center gap-2">
@@ -2508,6 +2990,146 @@ export default function CampaignDetailPage() {
                 <Trash2 className="h-4 w-4" />
               )}
               Delete banner
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={videoRegenerateDialogOpen} onOpenChange={setVideoRegenerateDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Create another video</DialogTitle>
+            <DialogDescription>
+              Tell AI what should be different this time. The new video will be added next to the existing videos.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <label htmlFor="video-creative-notes" className="text-sm font-medium text-slate-900">
+              What should this version focus on?
+            </label>
+            <Textarea
+              id="video-creative-notes"
+              value={videoCreativeNotes}
+              onChange={(event) => setVideoCreativeNotes(event.target.value)}
+              placeholder="Example: Make it more emotional, show parents watching kids build robots, use a brighter classroom mood..."
+              className="min-h-32 resize-y"
+              maxLength={1200}
+            />
+            <p className="text-xs text-slate-500">
+              Optional, but a clear note helps AI create a video that feels different from the current one.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={videoGenerating}
+              onClick={() => setVideoRegenerateDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="gap-1.5"
+              disabled={videoGenerating || !hasEnoughVideoCredits}
+              title={!hasEnoughVideoCredits ? 'Not enough credits. Contact support to add more.' : undefined}
+              onClick={() => void generateCampaignVideo({
+                forceNew: true,
+                creativeNotes: videoCreativeNotes,
+              })}
+            >
+              {videoGenerating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Wand2 className="h-4 w-4" />
+              )}
+              Create video · {videoCreditCost} credits
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={videoApplyDialogOpen} onOpenChange={setVideoApplyDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Apply video to social posts</DialogTitle>
+            <DialogDescription>
+              Choose which draft posts should use this video. The video keeps its current size.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 p-3">
+            <div className="text-sm font-semibold text-slate-950">
+              {selectedVideo?.title || 'Selected video'}
+            </div>
+            <p className="mt-1 text-xs text-slate-600">
+              Applying a new campaign video replaces older campaign videos in the selected draft posts.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            {availableApplyPlatforms.map((platform) => {
+              const preset = SOCIAL_IMAGE_PRESETS[platform];
+              const postCount = socialPosts.filter(
+                (post) => !isPublishedPost(post)
+                  && normalizeSocialImagePlatform(post.platform) === platform,
+              ).length;
+              const checked = selectedVideoApplyPlatforms.includes(platform);
+              return (
+                <button
+                  key={platform}
+                  type="button"
+                  className={`flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
+                    checked
+                      ? 'border-indigo-300 bg-indigo-50'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                  onClick={() => toggleVideoApplyPlatform(platform)}
+                >
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={() => toggleVideoApplyPlatform(platform)}
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label={`Apply video to ${preset.label}`}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-slate-900">{preset.label}</div>
+                    <div className="text-sm text-slate-500">
+                      {postCount} {postCount === 1 ? 'draft post' : 'draft posts'}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={savingPostVideo}
+              onClick={() => setVideoApplyDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="gap-1.5"
+              disabled={
+                savingPostVideo
+                || !selectedVideo
+                || selectedVideoApplyPlatforms.length === 0
+              }
+              onClick={applySelectedVideoToPosts}
+            >
+              {savingPostVideo ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Clapperboard className="h-4 w-4" />
+              )}
+              Apply video
             </Button>
           </DialogFooter>
         </DialogContent>

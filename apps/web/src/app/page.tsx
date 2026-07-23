@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
@@ -32,11 +32,17 @@ import {
   Star as StarIcon,
 } from 'lucide-react';
 import { type Locale, locales, localeNames, localeFlags, getTranslations } from '@/lib/i18n';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 export default function LandingPage() {
   const [locale, setLocale] = useState<Locale>('en');
+  const [preferredLanguage, setPreferredLanguage] = usePreferredAppLanguage('en');
   const [langOpen, setLangOpen] = useState(false);
   const tx = getTranslations(locale);
+
+  useEffect(() => {
+    setLocale(preferredLanguage === 'ja' ? 'ja' : 'en');
+  }, [preferredLanguage]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background via-background to-primary/5">
@@ -84,7 +90,11 @@ export default function LandingPage() {
                   {locales.map((l) => (
                     <button
                       key={l}
-                      onClick={() => { setLocale(l); setLangOpen(false); }}
+                      onClick={() => {
+                        setLocale(l);
+                        setPreferredLanguage(l === 'ja' ? 'ja' : 'en');
+                        setLangOpen(false);
+                      }}
                       className={`w-full text-left px-3 py-2 text-sm hover:bg-muted transition flex items-center gap-2 ${
                         locale === l ? 'bg-primary/5 text-primary font-medium' : ''
                       }`}

@@ -7,6 +7,7 @@ import {
   knowledgeBase,
   landingPages,
   socialPosts,
+  videoProjects,
   agents,
   departments,
 } from '@1person/core/db';
@@ -36,7 +37,7 @@ export interface AdvisorSourceHealth {
 
 export interface AdvisorEvidence {
   id: string;
-  sourceType: 'business' | 'brain' | 'campaign' | 'blog' | 'landing_page' | 'learning' | 'market' | 'sales' | 'coverage';
+  sourceType: 'business' | 'brain' | 'campaign' | 'blog' | 'landing_page' | 'learning' | 'market' | 'sales' | 'coverage' | 'knowledge';
   sourceId?: string;
   label: string;
   detail: string;
@@ -59,6 +60,7 @@ export interface AdvisorContext {
   campaigns: Array<Record<string, unknown>>;
   blogs: Array<Record<string, unknown>>;
   landingPages: Array<Record<string, unknown>>;
+  knowledge: Array<Record<string, unknown>>;
   sales: Record<string, unknown>;
   team: AdvisorTeamMember[];
   marketSignals: AdvisorMarketSignal[];
@@ -74,6 +76,7 @@ export interface AdvisorContext {
     marketScans: number;
     learnings: number;
     brainEvents: number;
+    videos: number;
   };
 }
 
@@ -89,11 +92,12 @@ export interface AdvisorTeamMember {
 const DAY = 86_400_000;
 
 function plainText(value: unknown, maxLength = 400): string {
-  return String(value ?? '')
+  const text = String(value ?? '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, maxLength);
+    .trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
 function iso(value: unknown): string | undefined {
@@ -165,6 +169,24 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function isLowValueMarketLearning(learning: Record<string, unknown>): boolean {
+  const lesson = plainText(learning.lesson, 900).toLowerCase();
+  const metricSnapshot = asRecord(learning.metricSnapshot);
+  const isMarketScan = metricSnapshot?.source === 'market-scan';
+  const signalCount = Number(metricSnapshot?.signalCount ?? 0);
+  if (!isMarketScan) return false;
+  if (signalCount > 0) return false;
+  return [
+    'no recent news',
+    'no significant updates',
+    'no current information',
+    'no competitor activity',
+    'monitor for future updates',
+    'không có tin mới',
+    'không có cập nhật',
+  ].some((phrase) => lesson.includes(phrase));
+}
+
 function campaignPlanSummary(targeting: Record<string, unknown> | null): string {
   const plan = asRecord(targeting?.campaignPlan);
   if (!plan) return '';
@@ -206,6 +228,7 @@ export async function buildAdvisorContext(args: {
     socialRows,
     brainSources,
     knowledgeEntries,
+    videoRows,
     brainSnapshot,
     dealsResult,
     competitorsResult,
@@ -258,11 +281,27 @@ export async function buildAdvisorContext(args: {
         id: knowledgeBase.id,
         title: knowledgeBase.title,
         category: knowledgeBase.category,
+        content: knowledgeBase.content,
+        tags: knowledgeBase.tags,
         updatedAt: knowledgeBase.updatedAt,
       }).from(knowledgeBase)
         .where(eq(knowledgeBase.companyId, companyId))
         .orderBy(desc(knowledgeBase.updatedAt))
         .limit(20), (rows) => rows.length),
+    optionalSource('videos', () =>
+      db.select({
+        id: videoProjects.id,
+        campaignId: videoProjects.campaignId,
+        title: videoProjects.title,
+        status: videoProjects.status,
+        format: videoProjects.format,
+        aspectRatio: videoProjects.aspectRatio,
+        outputUrl: videoProjects.outputUrl,
+        updatedAt: videoProjects.updatedAt,
+      }).from(videoProjects)
+        .where(eq(videoProjects.companyId, companyId))
+        .orderBy(desc(videoProjects.updatedAt))
+        .limit(30), (rows) => rows.length),
     optionalSource('businessBrain', () => ai.brain.getSnapshot(tenantId), (snapshot) => {
       return snapshot
         ? Number(Boolean(snapshot.brandVoice))
@@ -297,6 +336,7 @@ export async function buildAdvisorContext(args: {
   const landingData = landingRows.value ?? [];
   const bannerData = bannerRows.value ?? [];
   const socialData = socialRows.value ?? [];
+  const videoData = videoRows.value ?? [];
   const snapshot = brainSnapshot.value;
   const deals = dealsResult.value ?? [];
   const competitors = competitorsResult.value ?? [];
@@ -437,6 +477,7 @@ export async function buildAdvisorContext(args: {
   const campaignFacts = campaignData.map((campaign) => {
     const campaignBanners = bannerData.filter((item) => item.campaignId === campaign.id);
     const campaignPosts = socialData.filter((item) => item.campaignId === campaign.id);
+    const campaignVideos = videoData.filter((item) => item.campaignId === campaign.id);
     const targeting = campaign.targeting as Record<string, unknown> | null;
     const source = targeting?.source;
     const sourceRecord = source && typeof source === 'object'
@@ -451,6 +492,7 @@ export async function buildAdvisorContext(args: {
       audience ? `audience ${audience}` : '',
       `${campaignBanners.length} banners`,
       `${campaignPosts.length} social posts`,
+      `${campaignVideos.length} videos`,
       planSummary ? `plan ${planSummary}` : '',
       learningSummary ? `learning ${learningSummary}` : '',
     ].filter(Boolean).join('; ');
@@ -483,6 +525,8 @@ export async function buildAdvisorContext(args: {
       landingPageUrl: campaign.landingPageUrl,
       metrics: campaign.metrics ?? {},
       bannerCount: campaignBanners.length,
+      videoCount: campaignVideos.length,
+      videoStatuses: campaignVideos.map((video) => video.status),
       socialPlatforms: [...new Set(campaignPosts.map((post) => post.platform))],
       socialStatuses: campaignPosts.map((post) => post.status),
       campaignPlan: planSummary || null,
@@ -547,7 +591,9 @@ export async function buildAdvisorContext(args: {
     };
   });
 
-  for (const learning of learnings.slice(0, 12)) {
+  for (const learning of learnings
+    .filter((item) => !isLowValueMarketLearning(item as unknown as Record<string, unknown>))
+    .slice(0, 12)) {
     evidence.push({
       id: `learning:${learning.id}`,
       sourceType: 'learning',
@@ -584,15 +630,24 @@ export async function buildAdvisorContext(args: {
     });
   }
 
-  for (const entry of (knowledgeEntries.value ?? []).slice(0, 10)) {
+  const knowledgeFacts = (knowledgeEntries.value ?? []).slice(0, 20).map((entry) => ({
+    id: entry.id,
+    title: entry.title,
+    category: entry.category,
+    content: plainText(entry.content, 700),
+    tags: entry.tags ?? [],
+    updatedAt: iso(entry.updatedAt),
+  }));
+
+  for (const entry of knowledgeFacts.slice(0, 12)) {
     evidence.push({
       id: `knowledge:${entry.id}`,
-      sourceType: 'brain',
+      sourceType: 'knowledge',
       sourceId: entry.id,
       label: `Knowledge updated: ${entry.title}`,
-      detail: `${entry.category} business knowledge was added or updated`,
+      detail: plainText(`${entry.category}: ${entry.content}`, 500),
       link: `/${companyId}/knowledge`,
-      occurredAt: iso(entry.updatedAt),
+      occurredAt: entry.updatedAt,
     });
   }
 
@@ -615,14 +670,15 @@ export async function buildAdvisorContext(args: {
       enrichedSignals.forEach((signal, signalIndex) => {
         const evidenceId = `market:${scan.id}:${signalIndex + 1}`;
         const detail = plainText([
-          `Competitor ${signal.competitorName}`,
-          `threat ${signal.threatLevel}`,
-          `category ${signal.competitorCategory}`,
-          signal.affectedProducts.length ? `affected products ${signal.affectedProducts.join(', ')}` : '',
-          signal.affectedAudiences.length ? `affected audiences ${signal.affectedAudiences.join(', ')}` : '',
-          `signal ${signal.text}`,
-          `counter-move ${signal.counterMove}`,
-        ].filter(Boolean).join('; '), 600);
+          `Signal: ${signal.text}`,
+          signal.url ? `Source: ${signal.url}` : '',
+          `Competitor: ${signal.competitorName}`,
+          `Threat: ${signal.threatLevel}`,
+          `Category: ${signal.competitorCategory.replace(/_/g, ' ')}`,
+          signal.affectedProducts.length ? `Affected products: ${signal.affectedProducts.join(', ')}` : '',
+          signal.affectedAudiences.length ? `Affected audiences: ${signal.affectedAudiences.join(', ')}` : '',
+          `Recommended counter-move: ${signal.counterMove}`,
+        ].filter(Boolean).join('; '), 1400);
 
         evidence.push({
           id: evidenceId,
@@ -726,6 +782,9 @@ export async function buildAdvisorContext(args: {
     && campaignsWithMetrics === 0) {
     coverageGaps.push('Campaigns are live, but no measurable campaign performance has been collected.');
   }
+  if (scansResult.health.status !== 'unavailable' && completedScans.length === 0) {
+    coverageGaps.push('No recent Market & Competitors scan has been completed for this company.');
+  }
   if (brainSnapshot.health.status !== 'unavailable' && (snapshot?.products.length ?? 0) === 0) {
     coverageGaps.push('Business Brain has no products or services.');
   }
@@ -765,6 +824,7 @@ export async function buildAdvisorContext(args: {
     landingRows.health,
     bannerRows.health,
     socialRows.health,
+    videoRows.health,
     brainSources.health,
     knowledgeEntries.health,
     brainSnapshot.health,
@@ -794,6 +854,7 @@ export async function buildAdvisorContext(args: {
     campaigns: campaignFacts,
     blogs: blogFacts,
     landingPages: landingFacts,
+    knowledge: knowledgeFacts,
     sales: {
       stalledDeals,
       hotDeals,
@@ -812,6 +873,7 @@ export async function buildAdvisorContext(args: {
       marketScans: completedScans.length,
       learnings: learnings.length,
       brainEvents: brainEvents.length,
+      videos: videoData.length,
     },
   };
 }

@@ -1,11 +1,39 @@
+'use client';
+
 import Link from 'next/link';
 import { Sparkles } from 'lucide-react';
+import { LanguageSwitcher } from '@/components/layout/language-switcher';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
+
+const authCopy = {
+  en: {
+    title: 'Run Your Entire Company with AI Agents',
+    description: 'Launch a business, hire AI employees, and watch them work while you focus on what matters most.',
+    launched: '1,000+ AI companies launched',
+    trusted: 'Trusted by founders, creators, and entrepreneurs worldwide',
+  },
+  vi: {
+    title: 'Vận hành cả công ty bằng AI Agents',
+    description: 'Khởi tạo doanh nghiệp, xây dựng đội AI và để họ làm việc trong khi bạn tập trung vào điều quan trọng nhất.',
+    launched: 'Hơn 1.000 AI companies đã được tạo',
+    trusted: 'Được tin dùng bởi founders, creators và entrepreneurs trên toàn cầu',
+  },
+  ja: {
+    title: 'AIエージェントで会社全体を運営',
+    description: 'ビジネスを立ち上げ、AIチームを構築し、重要な意思決定に集中できます。',
+    launched: '1,000社以上のAIカンパニーが開始',
+    trusted: '世界中の創業者、クリエイター、起業家に信頼されています',
+  },
+};
 
 export default function AuthLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const [language] = usePreferredAppLanguage('en');
+  const copy = authCopy[language];
+
   return (
     <div className="min-h-screen flex">
       {/* Left side - Branding */}
@@ -19,11 +47,10 @@ export default function AuthLayout({
 
         <div className="space-y-6">
           <h1 className="text-4xl font-bold leading-tight">
-            Run Your Entire Company with AI Agents
+            {copy.title}
           </h1>
           <p className="text-lg text-white/80">
-            Launch a business, hire AI employees, and watch them work while you focus on what
-            matters most.
+            {copy.description}
           </p>
 
           <div className="flex items-center gap-4 pt-4">
@@ -38,18 +65,21 @@ export default function AuthLayout({
               ))}
             </div>
             <span className="text-sm text-white/70">
-              1,000+ AI companies launched
+              {copy.launched}
             </span>
           </div>
         </div>
 
         <p className="text-sm text-white/60">
-          Trusted by founders, creators, and entrepreneurs worldwide
+          {copy.trusted}
         </p>
       </div>
 
       {/* Right side - Auth form */}
-      <div className="flex-1 flex items-center justify-center p-6 bg-background">
+      <div className="relative flex flex-1 items-center justify-center bg-background p-6">
+        <div className="absolute right-6 top-6">
+          <LanguageSwitcher />
+        </div>
         <div className="w-full max-w-md">{children}</div>
       </div>
     </div>

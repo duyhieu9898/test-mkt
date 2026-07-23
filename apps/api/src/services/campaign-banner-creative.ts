@@ -298,6 +298,7 @@ export interface ContextualBannerRenderResult {
   backgroundImageUrl?: string;
   backgroundImageProvider?: string;
   backgroundImageModel?: string;
+  backgroundImageCreditCost?: number;
   backgroundQuality?: BannerQualityAssessment;
   generationAttempts: number;
   rendered: BannerRenderResult;
@@ -317,6 +318,7 @@ export async function renderContextualCampaignBanner(
   let backgroundImage: Awaited<ReturnType<typeof generateImage>> | null = null;
   let backgroundQuality: BannerQualityAssessment | null = null;
   let generationAttempts = 0;
+  let backgroundImageCreditCost = 0;
   try {
     backgroundImage = await generateImage({
       prompt: backgroundPrompt,
@@ -327,6 +329,7 @@ export async function renderContextualCampaignBanner(
       allowFallback: false,
     });
     generationAttempts = 1;
+    backgroundImageCreditCost += backgroundImage.creditCost ?? 0;
     backgroundQuality = await assessCampaignBannerBackground({
       imageUrl: backgroundImage.url,
       goal: input.goal,
@@ -354,6 +357,7 @@ export async function renderContextualCampaignBanner(
         allowFallback: false,
       });
       generationAttempts = 2;
+      backgroundImageCreditCost += retryImage.creditCost ?? 0;
       const retryQuality = await assessCampaignBannerBackground({
         imageUrl: retryImage.url,
         goal: input.goal,
@@ -394,6 +398,7 @@ export async function renderContextualCampaignBanner(
     backgroundImageUrl: backgroundImage?.url,
     backgroundImageProvider: backgroundImage?.providerKey,
     backgroundImageModel: backgroundImage?.model,
+    backgroundImageCreditCost,
     backgroundQuality: backgroundQuality ?? undefined,
     generationAttempts,
     rendered,

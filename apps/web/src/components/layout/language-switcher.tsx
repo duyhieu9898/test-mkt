@@ -16,6 +16,7 @@ import { useCompany } from '@/lib/api/hooks';
 import {
   APP_LANGUAGES,
   APP_LANGUAGE_LABELS,
+  APP_LANGUAGE_STORAGE_KEY,
   appT,
   normalizeAppLanguage,
   type AppLanguage,
@@ -26,27 +27,55 @@ export function LanguageSwitcher({ companyId }: { companyId?: string }) {
   const token = useAuthStore((state) => state.token);
   const queryClient = useQueryClient();
   const { data: company } = useCompany(companyId ?? '');
-  const language = useMemo(
+  const [localLanguage, setLocalLanguage] = useState<AppLanguage>('en');
+  const companyLanguage = useMemo(
     () => normalizeAppLanguage(company?.settings?.language),
     [company?.settings?.language],
   );
+  const language = companyId ? companyLanguage : localLanguage;
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (companyId) return;
+    try {
+      setLocalLanguage(normalizeAppLanguage(window.localStorage.getItem(APP_LANGUAGE_STORAGE_KEY)));
+    } catch {
+      setLocalLanguage('en');
+    }
+  }, [companyId]);
 
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
 
-  if (!companyId) return null;
-
   const updateLanguage = async (next: string) => {
-    if (!token) return;
     const nextLanguage = normalizeAppLanguage(next);
     if (nextLanguage === language) return;
+
+    if (!companyId) {
+      setLocalLanguage(nextLanguage);
+      try {
+        window.localStorage.setItem(APP_LANGUAGE_STORAGE_KEY, nextLanguage);
+        window.dispatchEvent(new CustomEvent('app-language:changed', { detail: nextLanguage }));
+      } catch {
+        // Ignore storage errors in private browsing modes.
+      }
+      toast.success(appT(nextLanguage, 'languageSaved'));
+      return;
+    }
+
+    if (!token) return;
     setSaving(true);
     try {
       await api.patch(`/companies/${companyId}`, {
         settings: { language: nextLanguage },
       }, { token });
+      try {
+        window.localStorage.setItem(APP_LANGUAGE_STORAGE_KEY, nextLanguage);
+        window.dispatchEvent(new CustomEvent('app-language:changed', { detail: nextLanguage }));
+      } catch {
+        // Ignore storage errors in private browsing modes.
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['company', companyId] }),
         queryClient.invalidateQueries({ queryKey: ['companies'] }),

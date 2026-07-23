@@ -186,12 +186,15 @@ app.get('/images/*', async (c) => {
   return serveDeployFile(filePath, 'images');
 });
 
-function inferImageContentType(url: string): string {
+function inferAssetContentType(url: string): string {
   const value = url.toLowerCase().split('?')[0] ?? '';
   if (value.endsWith('.jpg') || value.endsWith('.jpeg')) return 'image/jpeg';
   if (value.endsWith('.webp')) return 'image/webp';
   if (value.endsWith('.gif')) return 'image/gif';
   if (value.endsWith('.svg')) return 'image/svg+xml';
+  if (value.endsWith('.mp4')) return 'video/mp4';
+  if (value.endsWith('.webm')) return 'video/webm';
+  if (value.endsWith('.mov')) return 'video/quicktime';
   if (value.endsWith('.zip') || value.endsWith('.cesdk')) return 'application/zip';
   return 'image/png';
 }
@@ -218,7 +221,7 @@ async function handleAssetProxy(c: Context) {
 
   return new Response(new Uint8Array(buffer), {
     headers: {
-      'Content-Type': inferImageContentType(url),
+      'Content-Type': inferAssetContentType(url),
       'Cache-Control': 'public, max-age=86400',
       'Access-Control-Allow-Origin': '*',
     },

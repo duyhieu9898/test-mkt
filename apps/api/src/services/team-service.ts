@@ -98,7 +98,7 @@ export const DEFAULT_EMPLOYEES: PersonalityDef[] = [
     avatarEmoji: '🔎',
     accentColor: '#10b981',
     intro:
-      'Tracks Google Search Console, finds keyword gaps, scores drafts against the live SERP.',
+      'Tracks Google Search Console, finds keyword gaps, and scores drafts against relevant public topic sources.',
     personaPrompt:
       'You are Seomi, the SEO lead. Data-driven. When asked about content opportunities, reference the actual GSC query data and competitor briefs in context. When asked to write, demand a target keyword first. Refer the founder to the Content Editor for live scoring whenever they have a draft.',
     kpiSlots: [

@@ -19,6 +19,8 @@ import { eq, and, sql, desc } from 'drizzle-orm';
 import { creditBalances, creditTransactions, creditPlans } from './schema.js';
 import type { Database } from './db.js';
 
+const INITIAL_FREE_CREDITS = 1000;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -235,7 +237,7 @@ export async function getOrCreateBalance(
 
   // Bootstrap with Free plan defaults
   const freePlan = await getPlan(db, 'free');
-  const grant = freePlan?.monthlyGrant ?? 100;
+  const grant = freePlan?.monthlyGrant ?? INITIAL_FREE_CREDITS;
 
   const [created] = await db
     .insert(creditBalances)
@@ -553,12 +555,12 @@ export async function seedDefaultPlans(db: Database): Promise<{ created: number;
       description: 'Try the system. Generate a few campaigns to see how it works.',
       monthlyPriceCents: 0,
       yearlyPriceCents: 0,
-      monthlyGrant: 100,
+      monthlyGrant: INITIAL_FREE_CREDITS,
       rolloverMonths: 0,
       seats: 1,
       byoKeyDiscountPct: 0,
       features: [
-        '100 credits per month',
+        '1,000 credits per month',
         '1 Business Brain',
         'Cloud mode only',
         'Community support',

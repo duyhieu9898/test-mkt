@@ -21,6 +21,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Rocket,
   Loader2,
@@ -39,6 +40,7 @@ import {
   ImagePlus,
   Trash2,
   UploadCloud,
+  Video,
 } from 'lucide-react';
 import {
   useLaunches,
@@ -61,8 +63,18 @@ import {
   driveSourceRequestBody,
   type DriveSourceSelection,
 } from '@/components/marketing/drive-source-picker';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 const CAMPAIGN_FOCUS_MAX_LENGTH = 1200;
+
+interface CreditResponse {
+  balance: { totalAvailable: number };
+  costs?: {
+    launchCampaignBase?: number;
+    launchCampaignUploadedImages?: number;
+    campaignVideo?: number;
+  };
+}
 
 const STATUS_ICON: Record<LaunchStepStatus, { icon: typeof CheckCircle2; color: string }> = {
   pending: { icon: Circle, color: 'text-slate-300' },
@@ -481,6 +493,7 @@ export default function LaunchPage() {
     facebook: false,
     linkedin: true,
     instagram: false,
+    video: false,
   });
   const [activeLaunchId, setActiveLaunchId] = useState<string | null>(null);
   const [optimisticRunningLaunchId, setOptimisticRunningLaunchId] = useState<string | null>(null);
@@ -491,6 +504,13 @@ export default function LaunchPage() {
   const suggestions = useLaunchSuggestions(companyId);
   const brandIq = useBrandIq(companyId);
   const company = useCompany(companyId);
+  const queryClient = useQueryClient();
+  const credits = useQuery({
+    queryKey: ['credits', companyId],
+    queryFn: () => api.get<CreditResponse>(`/credits/${companyId}`, { token: token! }),
+    enabled: !!token && !!companyId,
+    staleTime: 30_000,
+  });
   const companyLanguage = normalizeAppLanguage(company.data?.settings?.language);
   const growthPlanPrefillKey = searchParams.toString();
 
@@ -622,6 +642,12 @@ export default function LaunchPage() {
       toast.error('Upload at least one image or switch back to AI-generated images.');
       return;
     }
+    if (!hasEnoughLaunchCredits) {
+      toast.error(
+        `This launch needs ${launchCreditCost} credits, but you only have ${availableCredits ?? 0}. Please contact support to add more credits.`,
+      );
+      return;
+    }
     const launchTargets = { ...targets, wordpress: false };
     try {
       const res = await start.mutateAsync({
@@ -641,6 +667,8 @@ export default function LaunchPage() {
       setSourceSelection({});
       setImageMode('ai');
       setCampaignImages([]);
+      setTargets((current) => ({ ...current, video: false }));
+      queryClient.invalidateQueries({ queryKey: ['credits', companyId] });
       toast.success('Launch queued. Watch the progress below.');
     } catch (e) {
       toast.error((e as Error).message || 'Failed to start launch');
@@ -654,6 +682,13 @@ export default function LaunchPage() {
     { key: 'instagram' as const, label: 'Instagram draft' },
   ];
   const selectedSocialCount = outputOptions.filter((option) => targets[option.key]).length;
+  const baseLaunchCost = imageMode === 'uploaded'
+    ? credits.data?.costs?.launchCampaignUploadedImages ?? 90
+    : credits.data?.costs?.launchCampaignBase ?? 120;
+  const launchCreditCost = baseLaunchCost + (targets.video ? credits.data?.costs?.campaignVideo ?? 300 : 0);
+  const availableCredits = credits.data?.balance.totalAvailable;
+  const hasEnoughLaunchCredits =
+    typeof availableCredits !== 'number' || availableCredits >= launchCreditCost;
 
   const applySuggestion = (suggestion: LaunchSuggestion) => {
     setKeyword(suggestion.keyword);
@@ -970,13 +1005,51 @@ export default function LaunchPage() {
             </p>
           </div>
 
+          <label
+            className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+              targets.video
+                ? 'border-indigo-300 bg-indigo-50'
+                : 'border-slate-200 bg-white hover:bg-slate-50'
+            }`}
+          >
+            <Checkbox
+              checked={targets.video}
+              onCheckedChange={(checked) => setTargets((current) => ({
+                ...current,
+                video: checked === true,
+              }))}
+              className="mt-0.5"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <Video className="h-4 w-4 text-indigo-500" />
+                Create one AI video
+                <Badge variant="secondary" className="bg-indigo-50 text-[10px] text-indigo-700">
+                  {credits.data?.costs?.campaignVideo ?? 300} credits
+                </Badge>
+              </span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                AI will create one short campaign video only, no matter how many social channels you choose.
+              </span>
+            </span>
+          </label>
+
           <p className="text-[11px] text-muted-foreground">
             Each launch creates a blog draft and 3 editable advertising banners. Only selected social outputs are saved as campaign drafts.
           </p>
 
-          <Button onClick={submit} disabled={launchInProgress || uploadingImages} className="w-full gap-2">
+          <Button
+            onClick={submit}
+            disabled={launchInProgress || uploadingImages || !hasEnoughLaunchCredits}
+            title={!hasEnoughLaunchCredits ? 'Not enough credits. Contact support to add more.' : undefined}
+            className="w-full gap-2"
+          >
             {launchInProgress ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
-            {uploadingImages ? 'Uploading images' : launchInProgress ? 'Launch in progress' : 'Launch campaign'}
+            {uploadingImages
+              ? 'Uploading images'
+              : launchInProgress
+                ? 'Launch in progress'
+                : `Launch campaign · ${launchCreditCost} credits`}
           </Button>
         </CardContent>
       </Card>

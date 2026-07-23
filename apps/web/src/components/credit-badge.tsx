@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { Gem, Zap, ArrowUpCircle } from 'lucide-react';
+import { Gem, Mail, Wallet } from 'lucide-react';
 import { api } from '@/lib/api/client';
 import { useAuthStore } from '@/stores/auth-store';
 import { Button } from '@/components/ui/button';
@@ -179,20 +179,20 @@ export function CreditBadge() {
               variant="outline"
               onClick={() => {
                 setOpen(false);
-                router.push('/pricing');
+                router.push(`/${companyId}/settings/credits`);
               }}
             >
-              <Zap className="w-3.5 h-3.5 mr-1" /> Top up
+              <Wallet className="w-3.5 h-3.5 mr-1" /> Usage
             </Button>
             <Button
               size="sm"
               className="bg-indigo-600 hover:bg-indigo-700 text-white"
               onClick={() => {
                 setOpen(false);
-                router.push('/pricing');
+                window.location.href = 'mailto:support@1person.ai?subject=Add credits to my 1Person account';
               }}
             >
-              <ArrowUpCircle className="w-3.5 h-3.5 mr-1" /> Upgrade
+              <Mail className="w-3.5 h-3.5 mr-1" /> Support
             </Button>
           </div>
         </div>
