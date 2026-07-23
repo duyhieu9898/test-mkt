@@ -1432,6 +1432,24 @@ export default function CampaignDetailPage() {
   const hasEditableSocialPosts = availableApplyPlatforms.length > 0;
   const editableSocialPostCount = socialPosts.filter((post) => !isPublishedPost(post)).length;
   const publishedSocialPostCount = socialPosts.length - editableSocialPostCount;
+  const campaignVideoUrls = readyVideos
+    .map((video) => video.outputUrl)
+    .filter((url): url is string => Boolean(url));
+  const campaignVideoIds = readyVideos.map((video) => video.id.toLowerCase());
+  const hasAppliedCampaignVideo = socialPosts.some((post) => {
+    if (isPublishedPost(post)) return false;
+    return (post.mediaUrls ?? []).some((url) => {
+      const decodedUrl = (() => {
+        try {
+          return decodeURIComponent(url).toLowerCase();
+        } catch {
+          return url.toLowerCase();
+        }
+      })();
+      return campaignVideoUrls.includes(url)
+        || campaignVideoIds.some((videoId) => decodedUrl.includes(videoId));
+    });
+  });
   const launchBannerIds = selectedBannerIds;
   const selectedLaunchBannerCount = launchActivateBanners ? launchBannerIds.length : 0;
   const shouldActivateBanners = launchActivateBanners && launchBannerIds.length > 0;
@@ -1906,6 +1924,44 @@ export default function CampaignDetailPage() {
         { id: toastId },
       );
       setVideoApplyDialogOpen(true);
+    } finally {
+      setSavingPostVideo(false);
+    }
+  };
+
+  const removeCampaignVideoFromPosts = async () => {
+    if (!token || !hasEditableSocialPosts || !hasAppliedCampaignVideo) return;
+
+    setSavingPostVideo(true);
+    const toastId = toast.loading('Removing video from draft social posts...');
+    try {
+      const response = await api.patch<ApplySocialMediaResponse>(
+        `/marketing/company/${companyId}/campaigns/${campaignId}/social-post-video`,
+        {
+          remove: true,
+          platforms: availableApplyPlatforms,
+        },
+        { token },
+      );
+      const updatedById = new Map(response.posts.map((post) => [post.id, post]));
+      queryClient.setQueryData<DetailResponse>(
+        ['campaign', companyId, campaignId],
+        (current) => current
+          ? {
+            ...current,
+            socialPosts: current.socialPosts.map((post) => {
+              const updated = updatedById.get(post.id);
+              return updated ? { ...post, mediaUrls: updated.mediaUrls } : post;
+            }),
+          }
+          : current,
+      );
+      toast.success('Video was removed from draft social posts.', { id: toastId });
+    } catch (err) {
+      toast.error(
+        friendlyError(err, "We couldn't remove the video from social posts. Please try again."),
+        { id: toastId },
+      );
     } finally {
       setSavingPostVideo(false);
     }
@@ -2463,23 +2519,43 @@ export default function CampaignDetailPage() {
                     </p>
                   )}
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="w-full gap-1.5 sm:w-auto sm:min-w-[180px]"
-                  disabled={!selectedVideo || !hasEditableSocialPosts || savingPostVideo}
-                  title={!hasEditableSocialPosts
-                    ? 'Published posts are read-only. Create a new draft post to apply videos.'
-                    : undefined}
-                  onClick={openVideoApplyDialog}
-                >
-                  {savingPostVideo ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <MessageSquare className="h-4 w-4" />
-                  )}
-                  {savingPostVideo ? 'Adding video...' : 'Apply video to social posts'}
-                </Button>
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="w-full gap-1.5 sm:min-w-[180px]"
+                    disabled={!selectedVideo || !hasEditableSocialPosts || savingPostVideo}
+                    title={!hasEditableSocialPosts
+                      ? 'Published posts are read-only. Create a new draft post to apply videos.'
+                      : undefined}
+                    onClick={openVideoApplyDialog}
+                  >
+                    {savingPostVideo ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MessageSquare className="h-4 w-4" />
+                    )}
+                    {savingPostVideo ? 'Updating...' : 'Apply video'}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="w-full gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800 sm:min-w-[150px]"
+                    disabled={!hasAppliedCampaignVideo || !hasEditableSocialPosts || savingPostVideo}
+                    title={!hasAppliedCampaignVideo
+                      ? 'No campaign video is applied to draft posts yet.'
+                      : undefined}
+                    onClick={removeCampaignVideoFromPosts}
+                  >
+                    {savingPostVideo ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                    Remove video
+                  </Button>
+                </div>
               </div>
             )}
             {isVideoWorking && (

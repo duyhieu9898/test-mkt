@@ -152,6 +152,7 @@ function buildFacebookPostMessage(
 
 function getFacebookReadyMediaUrls(mediaUrls: string[] | null | undefined): {
   valid: string[];
+  mediaType?: 'image' | 'video';
   invalidReason?: string;
 } {
   const urls = (mediaUrls ?? []).filter(Boolean);
@@ -163,7 +164,7 @@ function getFacebookReadyMediaUrls(mediaUrls: string[] | null | undefined): {
   const valid: string[] = [];
   for (const rawUrl of urls) {
     if (rawUrl.startsWith('data:')) {
-      return { valid, invalidReason: 'Facebook cannot publish data: image URLs. Save the banner as a hosted image first.' };
+      return { valid, invalidReason: 'Facebook cannot publish data: media URLs. Save the media as a hosted file first.' };
     }
     let parsed: URL;
     try {
@@ -183,7 +184,35 @@ function getFacebookReadyMediaUrls(mediaUrls: string[] | null | undefined): {
     valid.push(parsed.toString());
   }
 
-  return { valid };
+  const videos = valid.filter((url) => {
+    const decoded = (() => {
+      try {
+        return decodeURIComponent(url);
+      } catch {
+        return url;
+      }
+    })().toLowerCase();
+    const pathname = (() => {
+      try {
+        return new URL(decoded).pathname;
+      } catch {
+        return decoded.split('?')[0] ?? decoded;
+      }
+    })();
+    return /\.(mp4|mov|m4v|webm)$/i.test(pathname)
+      || /\.(mp4|mov|m4v|webm)(?:$|[?#&])/i.test(decoded)
+      || decoded.includes('/videos/');
+  });
+
+  // Facebook's simple Page publish flow uses either a video upload or photo
+  // upload. If a campaign post has both, publish the campaign video first and
+  // leave additional images for future multi-media support.
+  const firstVideo = videos[0];
+  if (firstVideo) {
+    return { valid: [firstVideo], mediaType: 'video' };
+  }
+
+  return { valid, mediaType: valid.length > 0 ? 'image' : undefined };
 }
 
 function normalizeCampaignSocialPlatform(value: unknown): CampaignSocialPlatform | null {
@@ -1432,7 +1461,7 @@ campaignsRouter.post('/:companyId/:id/launch', async (c) => {
               const published = await publishPagePost(
                 facebookConnection,
                 buildFacebookPostMessage(post, campaign),
-                { mediaUrls: media.valid },
+                { mediaUrls: media.valid, mediaType: media.mediaType },
               );
               const publishedAt = new Date();
               await db
@@ -1448,6 +1477,7 @@ campaignsRouter.post('/:companyId/:id/launch', async (c) => {
                       externalUrl: published.externalUrl,
                       publishedAt: publishedAt.toISOString(),
                       mediaCount: media.valid.length,
+                      mediaType: media.mediaType,
                     },
                   } as any,
                 })
@@ -1644,13 +1674,14 @@ campaignsRouter.post('/:companyId/:id/publish-facebook', async (c) => {
     try {
       const media = includeImages
         ? getFacebookReadyMediaUrls(post.mediaUrls as string[] | null | undefined)
-        : { valid: [] as string[] };
+        : { valid: [] as string[], mediaType: undefined };
       if (media.invalidReason) {
         throw new Error(media.invalidReason);
       }
 
       const published = await publishPagePost(conn, buildFacebookPostMessage(post, campaign), {
         mediaUrls: media.valid,
+        mediaType: media.mediaType,
       });
       const publishedAt = new Date();
       const metrics = (post.metrics ?? {}) as Record<string, unknown>;
@@ -1666,6 +1697,7 @@ campaignsRouter.post('/:companyId/:id/publish-facebook', async (c) => {
               externalUrl: published.externalUrl,
               publishedAt: publishedAt.toISOString(),
               mediaCount: media.valid.length,
+              mediaType: media.mediaType,
             },
           } as any,
         })

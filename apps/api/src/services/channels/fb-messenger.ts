@@ -277,7 +277,7 @@ export async function resolveActiveFacebookAccess(
 export async function publishPagePost(
   connection: FacebookPublishConnection,
   text: string,
-  options?: string | { link?: string; mediaUrls?: string[] },
+  options?: string | { link?: string; mediaUrls?: string[]; mediaType?: 'image' | 'video' },
 ): Promise<{ externalId: string; externalUrl?: string }> {
   const { pageId, accessToken } = await resolveFacebookPublishAccess(connection);
 
@@ -285,14 +285,22 @@ export async function publishPagePost(
   const mediaUrl = typeof options === 'object'
     ? options.mediaUrls?.find((url) => typeof url === 'string' && url.trim().length > 0)
     : undefined;
+  const mediaType = typeof options === 'object' ? options.mediaType : undefined;
   const body: Record<string, string> = {
     message: text.slice(0, 5000),
     access_token: accessToken,
   };
-  if (mediaUrl) body.url = mediaUrl;
-  else if (link) body.link = link;
+  if (mediaUrl && mediaType === 'video') {
+    body.description = text.slice(0, 5000);
+    body.file_url = mediaUrl;
+    delete body.message;
+  } else if (mediaUrl) {
+    body.url = mediaUrl;
+  } else if (link) {
+    body.link = link;
+  }
 
-  const endpoint = mediaUrl ? 'photos' : 'feed';
+  const endpoint = mediaUrl ? (mediaType === 'video' ? 'videos' : 'photos') : 'feed';
   const res = await fetch(`${GRAPH_API_BASE}/${encodeURIComponent(pageId)}/${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
