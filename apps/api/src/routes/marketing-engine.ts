@@ -1213,8 +1213,9 @@ const applyCampaignBannerMediaSchema = z.object({
 });
 
 const applyCampaignVideoMediaSchema = z.object({
-  videoId: z.string().uuid(),
+  videoId: z.string().uuid().optional(),
   platforms: z.array(z.enum(SOCIAL_PLATFORMS)).optional(),
+  remove: z.boolean().optional().default(false),
 });
 
 marketingEngineRouter.patch(
@@ -1377,7 +1378,7 @@ marketingEngineRouter.patch(
   async (c) => {
     const companyId = c.req.param('companyId');
     const campaignId = c.req.param('campaignId');
-    const { videoId, platforms } = c.req.valid('json');
+    const { videoId, platforms, remove } = c.req.valid('json');
 
     const campaign = await db.query.campaigns.findFirst({
       where: and(eq(campaigns.id, campaignId), eq(campaigns.companyId, companyId)),
@@ -1393,12 +1394,14 @@ marketingEngineRouter.patch(
       eq(videoProjects.campaignId, campaignId),
       eq(videoProjects.companyId, companyId),
     ));
-    const selectedVideo = campaignVideos.find((video) => video.id === videoId);
-    if (!selectedVideo) {
-      return c.json({ error: 'Selected video does not belong to this campaign.' }, 400);
-    }
-    if (selectedVideo.status !== 'ready' || !selectedVideo.outputUrl) {
-      return c.json({ error: 'Choose a ready video before applying it to social posts.' }, 409);
+    const selectedVideo = videoId ? campaignVideos.find((video) => video.id === videoId) : undefined;
+    if (!remove) {
+      if (!videoId || !selectedVideo) {
+        return c.json({ error: 'Selected video does not belong to this campaign.' }, 400);
+      }
+      if (selectedVideo.status !== 'ready' || !selectedVideo.outputUrl) {
+        return c.json({ error: 'Choose a ready video before applying it to social posts.' }, 409);
+      }
     }
 
     const campaignPosts = await db.select({
@@ -1449,7 +1452,9 @@ marketingEngineRouter.patch(
         return !campaignVideoUrls.has(url)
           && !(embeddedVideoId && campaignVideoIds.has(embeddedVideoId));
       });
-      const mediaUrls = uniqueMediaUrls([selectedVideo.outputUrl!, ...nonCampaignVideoMedia]);
+      const mediaUrls = remove
+        ? nonCampaignVideoMedia
+        : uniqueMediaUrls([selectedVideo!.outputUrl!, ...nonCampaignVideoMedia]);
       const [updatedPost] = await db.update(socialPosts)
         .set({ mediaUrls })
         .where(eq(socialPosts.id, post.id))
@@ -1463,7 +1468,8 @@ marketingEngineRouter.patch(
 
     return c.json({
       updated: updatedPosts.length,
-      videoId,
+      videoId: remove ? null : videoId,
+      remove,
       platforms: selectedPlatforms,
       posts: updatedPosts,
     });
