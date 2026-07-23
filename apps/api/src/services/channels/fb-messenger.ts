@@ -328,7 +328,7 @@ export async function publishPagePost(
         permalink_url?: string;
       };
       if (permalinkResponse.ok && permalinkPayload.permalink_url) {
-        externalUrl = permalinkPayload.permalink_url;
+        externalUrl = normalizeFacebookExternalUrl(permalinkPayload.permalink_url);
       }
     } catch (error) {
       console.warn('[facebook] Could not resolve published post permalink:', error);
@@ -338,6 +338,18 @@ export async function publishPagePost(
     externalId,
     externalUrl,
   };
+}
+
+function normalizeFacebookExternalUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  try {
+    return new URL(trimmed, 'https://www.facebook.com').toString();
+  } catch {
+    return trimmed.startsWith('/')
+      ? `https://www.facebook.com${trimmed}`
+      : trimmed;
+  }
 }
 
 /** Persist inbound + (optionally) generate & send an AI reply. */

@@ -428,7 +428,15 @@ function formatPublishedAt(value?: string | null): string {
 
 function facebookPostUrl(post: SocialPost): string | null {
   const facebook = post.metrics?.facebook;
-  if (facebook?.externalUrl) return facebook.externalUrl;
+  if (facebook?.externalUrl) {
+    try {
+      return new URL(facebook.externalUrl, 'https://www.facebook.com').toString();
+    } catch {
+      return facebook.externalUrl.startsWith('/')
+        ? `https://www.facebook.com${facebook.externalUrl}`
+        : facebook.externalUrl;
+    }
+  }
   return facebook?.externalId
     ? `https://www.facebook.com/${facebook.externalId}`
     : null;
