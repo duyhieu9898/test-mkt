@@ -120,7 +120,7 @@ function EmptyState() {
         <p className="text-sm font-medium text-slate-700">No grade yet</p>
         <p className="text-xs text-muted-foreground max-w-sm mx-auto">
           Paste your blog post or article on the left and enter a target keyword. Get an instant
-          score against the top 10 SERP results plus ranked suggestions.
+          score against relevant public topic sources plus ranked suggestions.
         </p>
       </CardContent>
     </Card>
@@ -169,7 +169,7 @@ export default function ContentEditorPage() {
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Content Editor</h1>
           <p className="text-sm text-slate-600 mt-1 max-w-2xl">
             Real-time semantic grader. Paste any draft, pick a target keyword, and get a 0-100
-            score against the top 10 SERP results with concrete fixes.
+            score against relevant public topic sources with concrete fixes.
           </p>
         </div>
       </div>
@@ -280,7 +280,7 @@ export default function ContentEditorPage() {
               {result.serpEntities.length > 0 && (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Top-SERP entities</CardTitle>
+                    <CardTitle className="text-base">Public topic entities</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="flex flex-wrap gap-1.5">

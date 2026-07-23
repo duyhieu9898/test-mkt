@@ -1,3 +1,13 @@
+import {
+  BedrockRuntimeClient,
+  GetAsyncInvokeCommand,
+  StartAsyncInvokeCommand,
+} from '@aws-sdk/client-bedrock-runtime';
+import {
+  GetObjectCommand,
+  ListObjectsV2Command,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { and, desc, eq } from 'drizzle-orm';
 import { banners, campaigns, socialPosts, videoProjects } from '@1person/core/db';
 import { db } from '../lib/db';
@@ -20,30 +30,159 @@ interface CampaignVideoBrief {
   overlaySubheadline: string;
   cta: string;
   voiceoverText: string;
-  veoPrompt: string;
+  videoPrompt: string;
 }
 
-interface VeoVideoResult {
+interface GeneratedVideoResult {
   url: string;
   storageKey: string;
+  provider: 'aws_bedrock_luma';
   model: string;
+  jobId: string;
+  sourceStorageKey?: string;
 }
 
-const VEO_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
-const VEO_DEFAULT_MODEL = 'veo-3.1-generate-preview';
-const VEO_POLL_INTERVAL_MS = 10_000;
-const VEO_MAX_POLL_ATTEMPTS = 24;
+const BEDROCK_DEFAULT_REGION = 'us-west-2';
+const BEDROCK_LUMA_DEFAULT_MODEL = 'luma.ray-v2:0';
+const BEDROCK_LUMA_POLL_INTERVAL_MS = 10_000;
+const BEDROCK_LUMA_MAX_POLL_ATTEMPTS = 72;
+const BEDROCK_LUMA_DURATION = '9s';
+const BEDROCK_LUMA_RESOLUTION = '720p';
 
-function getVeoModel(): string {
-  return (process.env.VEO_MODEL || VEO_DEFAULT_MODEL).trim();
+interface AwsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
 }
 
-function getVeoApiKey(): string {
-  const key = process.env.GEMINI_API_KEY?.trim();
-  if (!key) {
-    throw new Error('GEMINI_API_KEY is not configured. Add it before generating AI videos.');
+interface S3UriParts {
+  bucket: string;
+  prefix: string;
+}
+
+function optionalEnv(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
   }
-  return key;
+  return undefined;
+}
+
+function requiredEnv(name: string, label: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`Missing ${name}. Configure ${label} before generating AI videos.`);
+  return value;
+}
+
+function getAwsCredentials(): AwsCredentials | undefined {
+  const accessKeyId = optionalEnv('AWS_S3_ACCESS_KEY_ID');
+  const secretAccessKey = optionalEnv('AWS_S3_SECRET_ACCESS_KEY');
+  return accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : undefined;
+}
+
+function getBedrockRegion(): string {
+  return optionalEnv('AWS_BEDROCK_REGION', 'AWS_REGION') || BEDROCK_DEFAULT_REGION;
+}
+
+function getBedrockLumaModel(): string {
+  const model = optionalEnv('AWS_BEDROCK_LUMA_MODEL_ID') || BEDROCK_LUMA_DEFAULT_MODEL;
+  if (model !== BEDROCK_LUMA_DEFAULT_MODEL) {
+    throw new Error(`AWS_BEDROCK_LUMA_MODEL_ID must be "${BEDROCK_LUMA_DEFAULT_MODEL}" for Luma Ray 2.`);
+  }
+  return model;
+}
+
+function getBedrockLumaDuration(): '5s' | '9s' {
+  const duration = optionalEnv('AWS_BEDROCK_LUMA_DURATION') || BEDROCK_LUMA_DURATION;
+  if (duration === '5s' || duration === '9s') return duration;
+  throw new Error('AWS_BEDROCK_LUMA_DURATION must be either "5s" or "9s" for Luma Ray 2.');
+}
+
+function getBedrockLumaResolution(): '540p' | '720p' {
+  const resolution = optionalEnv('AWS_BEDROCK_LUMA_RESOLUTION') || BEDROCK_LUMA_RESOLUTION;
+  if (resolution === '540p' || resolution === '720p') return resolution;
+  throw new Error('AWS_BEDROCK_LUMA_RESOLUTION must be either "540p" or "720p" for Luma Ray 2.');
+}
+
+function trimSlashes(value: string) {
+  return value.replace(/^\/+|\/+$/g, '');
+}
+
+function parseS3Uri(uri: string): S3UriParts {
+  const match = uri.trim().match(/^s3:\/\/([^/]+)(?:\/(.*))?$/);
+  if (!match?.[1]) {
+    throw new Error('AWS_BEDROCK_VIDEO_OUTPUT_S3_URI must look like s3://bucket-name/optional-prefix.');
+  }
+  return {
+    bucket: match[1],
+    prefix: trimSlashes(match[2] || ''),
+  };
+}
+
+function joinS3Prefix(...parts: Array<string | undefined | null>) {
+  return parts.map((part) => trimSlashes(String(part || ''))).filter(Boolean).join('/');
+}
+
+function formatS3Uri(parts: S3UriParts) {
+  return `s3://${parts.bucket}${parts.prefix ? `/${parts.prefix}` : ''}`;
+}
+
+function getBedrockOutputBase(): S3UriParts {
+  return parseS3Uri(requiredEnv('AWS_BEDROCK_VIDEO_OUTPUT_S3_URI', 'AWS Bedrock Luma video output'));
+}
+
+function getBedrockOutputBucketOwner(): string | undefined {
+  const owner = optionalEnv('AWS_BEDROCK_VIDEO_OUTPUT_BUCKET_OWNER');
+  if (!owner) return undefined;
+  if (!/^\d{12}$/.test(owner)) {
+    throw new Error('AWS_BEDROCK_VIDEO_OUTPUT_BUCKET_OWNER must be the 12-digit AWS account ID that owns the Bedrock output bucket.');
+  }
+  return owner;
+}
+
+function bedrockS3OutputHelpMessage(output: S3UriParts): string {
+  return [
+    'AWS Bedrock rejected the S3 output location for Luma video generation.',
+    `Current Bedrock region: ${getBedrockRegion()}.`,
+    `Current output bucket: s3://${output.bucket}${output.prefix ? `/${output.prefix}` : ''}.`,
+    'Check that this bucket exists in the same region as AWS_BEDROCK_REGION, that the AWS_S3_ACCESS_KEY_ID/AWS_S3_SECRET_ACCESS_KEY user can write to the configured prefix, and that the account has Bedrock model access enabled.',
+    'If the bucket belongs to another AWS account, set AWS_BEDROCK_VIDEO_OUTPUT_BUCKET_OWNER to that bucket owner account ID.',
+  ].join(' ');
+}
+
+function isInvalidBedrockS3Credentials(error: unknown): boolean {
+  const record = error as { name?: string; message?: string };
+  return record?.name === 'ValidationException'
+    && /invalid s3 credentials/i.test(record.message ?? '');
+}
+
+function createBedrockClient() {
+  return new BedrockRuntimeClient({
+    region: getBedrockRegion(),
+    credentials: getAwsCredentials(),
+  });
+}
+
+function createBedrockOutputS3Client() {
+  return new S3Client({
+    region: getBedrockRegion(),
+    credentials: getAwsCredentials(),
+  });
+}
+
+async function s3BodyToBuffer(responseBody: unknown): Promise<Buffer> {
+  const body = responseBody as {
+    transformToByteArray?: () => Promise<Uint8Array>;
+    [Symbol.asyncIterator]?: () => AsyncIterableIterator<Buffer | Uint8Array | string>;
+  };
+  if (typeof body.transformToByteArray === 'function') {
+    return Buffer.from(await body.transformToByteArray());
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of body as AsyncIterable<Buffer | Uint8Array | string>) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
 }
 
 function delay(ms: number) {
@@ -58,30 +197,11 @@ function summarizePostText(post: typeof socialPosts.$inferSelect): string {
     .slice(0, 700);
 }
 
-function parseVeoError(status: number, text: string): Error {
-  try {
-    const parsed = JSON.parse(text) as { error?: { message?: string } };
-    return new Error(parsed.error?.message || `Veo request failed (${status}).`);
-  } catch {
-    return new Error(text || `Veo request failed (${status}).`);
-  }
-}
-
-function pickGeneratedVideoUri(operation: Record<string, any>): string | null {
-  const response = operation.response ?? {};
-  const samples = response.generateVideoResponse?.generatedSamples;
-  const videos = response.generatedVideos;
-  return samples?.[0]?.video?.uri
-    ?? samples?.[0]?.video?.downloadUri
-    ?? videos?.[0]?.video?.uri
-    ?? videos?.[0]?.video?.downloadUri
-    ?? null;
-}
-
 async function buildCampaignVideoBrief(args: {
   campaign: typeof campaigns.$inferSelect;
   format: VideoFormat;
   aspectRatio: CampaignVideoAspectRatio;
+  creativeNotes?: string;
 }): Promise<CampaignVideoBrief> {
   const [ctx, brandKit, campaignPosts, campaignBanners] = await Promise.all([
     buildBusinessContext(args.campaign.companyId),
@@ -120,8 +240,8 @@ async function buildCampaignVideoBrief(args: {
       role: 'system',
       content: [
         'You are a senior video creative director for performance marketing.',
-        'Create a campaign video brief that is suitable for Google Veo 3.1.',
-        'The generated video itself must be a clean background video. Editable text/logo/CTA will be added later in IMG.LY.',
+        'Create a campaign video brief that is suitable for an AI text-to-video model.',
+        'The generated video itself must be a clean background video. Editable text/logo/CTA can be added later.',
       ].join(' '),
     },
     {
@@ -151,15 +271,21 @@ ${renderBrandCreativeKitPrompt(brandKit)}
 VIDEO FORMAT:
 - Duration target: ${args.format}
 - Aspect ratio: ${args.aspectRatio}
+${args.creativeNotes?.trim()
+        ? `
+USER DIRECTION FOR THIS VERSION:
+${args.creativeNotes.trim().slice(0, 1200)}
+`
+        : ''}
 
-RULES FOR VEO PROMPT:
-- The Veo video must contain ZERO text, letters, numbers, captions, logos, watermarks, UI labels, signs, posters, or subtitles.
+RULES FOR VIDEO PROMPT:
+- The generated video must contain ZERO text, letters, numbers, captions, logos, watermarks, UI labels, signs, posters, or subtitles.
 - Do not create an ad layout. Do not render buttons or badges.
 - Show realistic motion that supports the campaign idea and audience.
 - Use brand colors only through lighting, environment, wardrobe, props, and mood.
-- Keep composition clean so editable IMG.LY text can sit on top.
+- Keep composition clean so editable overlay text can sit on top.
 - Avoid unrealistic anatomy, artifacts, distorted faces, and busy clutter.
-- Include camera motion, scene progression, atmosphere, and what happens over 8 seconds.
+- Include camera motion, scene progression, atmosphere, and what happens over ${getBedrockLumaDuration()}.
 
 Return ONLY JSON:
 {
@@ -169,7 +295,7 @@ Return ONLY JSON:
   "overlaySubheadline": "editable supporting line",
   "cta": "editable CTA",
   "voiceoverText": "optional voiceover script, natural language",
-  "veoPrompt": "complete text-free video generation prompt for Veo"
+  "videoPrompt": "complete text-free video generation prompt"
 }`,
     },
   ], { maxTokens: 1800 });
@@ -179,7 +305,7 @@ Return ONLY JSON:
   const overlayHeadline = String(parsed.overlayHeadline || parsed.hook || args.campaign.name).slice(0, 120);
   const overlaySubheadline = String(parsed.overlaySubheadline || campaignPlan?.coreMessage || '').slice(0, 180);
   const cta = String(parsed.cta || 'Learn more').slice(0, 60);
-  const veoPrompt = String(parsed.veoPrompt || '').trim();
+  const videoPrompt = String(parsed.videoPrompt || parsed.veoPrompt || '').trim();
 
   return {
     title,
@@ -188,8 +314,8 @@ Return ONLY JSON:
     overlaySubheadline,
     cta,
     voiceoverText: String(parsed.voiceoverText || '').slice(0, 700),
-    veoPrompt: veoPrompt || [
-      `Create an 8-second realistic brand-safe marketing background video for: ${args.campaign.name}.`,
+    videoPrompt: videoPrompt || [
+      `Create a ${getBedrockLumaDuration()} realistic brand-safe marketing background video for: ${args.campaign.name}.`,
       `Audience: ${targeting?.audience || campaignPlan?.audience || 'target customers'}.`,
       `Goal: ${args.campaign.goal}.`,
       'Text-free video only. No typography, logos, signs, labels, captions, watermarks, or UI.',
@@ -198,76 +324,109 @@ Return ONLY JSON:
   };
 }
 
-async function generateVeoVideo(args: {
+async function findBedrockGeneratedMp4(args: {
+  bucket: string;
+  prefix: string;
+}): Promise<{ key: string; bytes: Buffer }> {
+  const client = createBedrockOutputS3Client();
+  const listed = await client.send(new ListObjectsV2Command({
+    Bucket: args.bucket,
+    Prefix: args.prefix ? `${args.prefix.replace(/\/+$/, '')}/` : undefined,
+  }));
+  const mp4 = (listed.Contents ?? [])
+    .filter((object) => object.Key?.toLowerCase().endsWith('.mp4'))
+    .sort((a, b) => (b.LastModified?.getTime() ?? 0) - (a.LastModified?.getTime() ?? 0))[0];
+
+  if (!mp4?.Key) {
+    throw new Error('Luma finished but no MP4 was found in the configured Bedrock S3 output prefix.');
+  }
+
+  const object = await client.send(new GetObjectCommand({
+    Bucket: args.bucket,
+    Key: mp4.Key,
+  }));
+  if (!object.Body) {
+    throw new Error('Luma generated an MP4 object, but it could not be read from S3.');
+  }
+
+  return {
+    key: mp4.Key,
+    bytes: await s3BodyToBuffer(object.Body),
+  };
+}
+
+async function generateBedrockLumaVideo(args: {
   companyId: string;
   campaignId: string;
   projectId: string;
   prompt: string;
   aspectRatio: CampaignVideoAspectRatio;
-}): Promise<VeoVideoResult> {
-  const apiKey = getVeoApiKey();
-  const model = getVeoModel();
-  const startUrl = `${VEO_API_BASE_URL}/models/${model}:predictLongRunning`;
-  const startResponse = await fetch(startUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey,
-    },
-    body: JSON.stringify({
-      instances: [{ prompt: args.prompt }],
-      parameters: {
-        aspectRatio: args.aspectRatio,
-        durationSeconds: 8,
-        resolution: '720p',
+}): Promise<GeneratedVideoResult> {
+  const model = getBedrockLumaModel();
+  const outputBase = getBedrockOutputBase();
+  const outputPrefix = joinS3Prefix(
+    outputBase.prefix,
+    'campaign-videos',
+    args.companyId,
+    args.campaignId,
+    args.projectId,
+  );
+  const output = { bucket: outputBase.bucket, prefix: outputPrefix };
+  const bedrock = createBedrockClient();
+  const bucketOwner = getBedrockOutputBucketOwner();
+
+  let started: { invocationArn?: string };
+  try {
+    started = await bedrock.send(new StartAsyncInvokeCommand({
+      modelId: model,
+      modelInput: {
+        prompt: args.prompt.slice(0, 5000),
+        aspect_ratio: args.aspectRatio,
+        loop: false,
+        duration: getBedrockLumaDuration(),
+        resolution: getBedrockLumaResolution(),
       },
-    }),
-  });
-
-  if (!startResponse.ok) {
-    throw parseVeoError(startResponse.status, await startResponse.text());
-  }
-
-  const started = await startResponse.json() as { name?: string };
-  if (!started.name) throw new Error('Veo did not return an operation id.');
-
-  let operation: Record<string, any> | null = null;
-  for (let attempt = 0; attempt < VEO_MAX_POLL_ATTEMPTS; attempt += 1) {
-    await delay(VEO_POLL_INTERVAL_MS);
-    const pollResponse = await fetch(`${VEO_API_BASE_URL}/${started.name}`, {
-      headers: { 'x-goog-api-key': apiKey },
-    });
-    if (!pollResponse.ok) {
-      throw parseVeoError(pollResponse.status, await pollResponse.text());
+      outputDataConfig: {
+        s3OutputDataConfig: {
+          s3Uri: formatS3Uri(output),
+          ...(bucketOwner ? { bucketOwner } : {}),
+        },
+      },
+      clientRequestToken: args.projectId.replace(/-/g, ''),
+    }));
+  } catch (error) {
+    if (isInvalidBedrockS3Credentials(error)) {
+      throw new Error(bedrockS3OutputHelpMessage(output));
     }
-    operation = await pollResponse.json() as Record<string, any>;
-    if (operation.error) {
-      throw new Error(operation.error.message || 'Veo video generation failed.');
+    throw error;
+  }
+
+  const invocationArn = started.invocationArn;
+  if (!invocationArn) throw new Error('AWS Bedrock did not return a Luma invocation ARN.');
+
+  let status: string | undefined = 'InProgress';
+  let failureMessage: string | undefined;
+  for (let attempt = 0; attempt < BEDROCK_LUMA_MAX_POLL_ATTEMPTS; attempt += 1) {
+    await delay(BEDROCK_LUMA_POLL_INTERVAL_MS);
+    const job = await bedrock.send(new GetAsyncInvokeCommand({ invocationArn }));
+    status = job.status;
+    failureMessage = job.failureMessage;
+    if (status === 'Completed' || status === 'Failed') {
+      break;
     }
-    if (operation.done) break;
   }
 
-  if (!operation?.done) {
-    throw new Error('Veo video generation timed out. Please try again in a few minutes.');
+  if (status === 'Failed') {
+    throw new Error(failureMessage || 'AWS Bedrock Luma video generation failed.');
+  }
+  if (status !== 'Completed') {
+    throw new Error('AWS Bedrock Luma video generation timed out. Please try again in a few minutes.');
   }
 
-  const videoUri = pickGeneratedVideoUri(operation);
-  if (!videoUri) throw new Error('Veo finished but did not return a downloadable video URL.');
-
-  // Veo file URLs are temporary, so persist the MP4 immediately in our object
-  // storage before returning it to the UI or editor.
-  const downloadResponse = await fetch(videoUri, {
-    headers: { 'x-goog-api-key': apiKey },
-    signal: AbortSignal.timeout(120_000),
-  });
-  if (!downloadResponse.ok) {
-    throw parseVeoError(downloadResponse.status, await downloadResponse.text());
-  }
-
-  const bytes = Buffer.from(await downloadResponse.arrayBuffer());
+  const source = await findBedrockGeneratedMp4(output);
   const saved = await saveObject({
-    key: `campaigns/${args.companyId}/${args.campaignId}/videos/${args.projectId}/veo-${args.projectId}-current.mp4`,
-    body: bytes,
+    key: `campaigns/${args.companyId}/${args.campaignId}/videos/${args.projectId}/bedrock-luma-${args.projectId}-current.mp4`,
+    body: source.bytes,
     contentType: 'video/mp4',
     cacheControl: 'public, max-age=60, must-revalidate',
   });
@@ -275,7 +434,10 @@ async function generateVeoVideo(args: {
   return {
     url: saved.url,
     storageKey: saved.key,
+    provider: 'aws_bedrock_luma',
     model,
+    jobId: invocationArn,
+    sourceStorageKey: source.key,
   };
 }
 
@@ -284,12 +446,15 @@ export async function createCampaignVideoProject(args: {
   campaignId: string;
   format: VideoFormat;
   aspectRatio: CampaignVideoAspectRatio;
+  creativeNotes?: string;
+  forceNew?: boolean;
 }) {
   const [existingVideo] = await db.select().from(videoProjects)
     .where(and(eq(videoProjects.companyId, args.companyId), eq(videoProjects.campaignId, args.campaignId)))
     .orderBy(desc(videoProjects.createdAt))
     .limit(1);
-  if (existingVideo && existingVideo.status !== 'failed') {
+  const shouldReuseExisting = !args.forceNew && !args.creativeNotes?.trim();
+  if (shouldReuseExisting && existingVideo && existingVideo.status !== 'failed') {
     return existingVideo;
   }
 
@@ -304,6 +469,7 @@ export async function createCampaignVideoProject(args: {
       campaign,
       format: args.format,
       aspectRatio: args.aspectRatio,
+      creativeNotes: args.creativeNotes,
     }),
     buildBrandCreativeKit(args.companyId),
   ]);
@@ -326,15 +492,16 @@ export async function createCampaignVideoProject(args: {
       },
       creativeBrief,
       brandKit: brandCreativeKitSnapshot(brandKit),
-      provider: 'google_veo',
+      provider: 'aws_bedrock_luma',
       retryFromFailedVideoId: existingVideo?.id,
+      userDirection: args.creativeNotes?.trim() || undefined,
     } as any,
     scenes: scenes as any,
     outputUrl: null,
     updatedAt: new Date(),
   };
 
-  const [project] = existingVideo
+  const [project] = existingVideo && !args.forceNew
     ? await db.update(videoProjects)
       .set(projectValues)
       .where(and(eq(videoProjects.id, existingVideo.id), eq(videoProjects.companyId, args.companyId)))
@@ -349,11 +516,11 @@ export async function createCampaignVideoProject(args: {
   }
 
   try {
-    const rendered = await generateVeoVideo({
+    const rendered = await generateBedrockLumaVideo({
       companyId: args.companyId,
       campaignId: args.campaignId,
       projectId: project.id,
-      prompt: creativeBrief.veoPrompt,
+      prompt: creativeBrief.videoPrompt,
       aspectRatio: args.aspectRatio,
     });
 
@@ -363,10 +530,13 @@ export async function createCampaignVideoProject(args: {
         outputUrl: rendered.url,
         script: {
           ...(project.script as Record<string, any> | null),
-          veo: {
+          videoGeneration: {
+            provider: rendered.provider,
+            jobId: rendered.jobId,
             model: rendered.model,
-            prompt: creativeBrief.veoPrompt,
+            prompt: creativeBrief.videoPrompt,
             storageKey: rendered.storageKey,
+            sourceStorageKey: rendered.sourceStorageKey,
             generatedAt: new Date().toISOString(),
           },
         } as any,

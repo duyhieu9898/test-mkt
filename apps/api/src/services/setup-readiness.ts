@@ -1,7 +1,7 @@
 /**
  * Setup Readiness — admin-facing checklist of what config is missing so
  * the platform can actually fulfil its features. Each item is scoped to
- * one capability (LLM, image gen, SerpAPI, Stripe, etc.), produces a
+ * one capability (LLM, image gen, Stripe, etc.), produces a
  * concrete CTA (admin link) and a brief why.
  *
  * The list is the single source of truth surfaced by:
@@ -85,22 +85,6 @@ async function checkLLMAnthropic(): Promise<ReadinessItem> {
   };
 }
 
-async function checkSerpAPI(): Promise<ReadinessItem> {
-  const hasKey = !!process.env.SERPAPI_KEY;
-  return {
-    id: 'search.serpapi',
-    category: 'search',
-    label: 'SerpAPI key (Google SERP)',
-    status: hasKey ? 'ok' : 'warn',
-    detail: hasKey
-      ? 'Configured. Content Grader scores against real Google top-10 SERPs.'
-      : 'Not configured. Content Grader falls back to LLM-simulated SERP — works but less accurate. Add a key for production quality.',
-    fixHref: '/admin/llm-config',
-    helpUrl: 'https://serpapi.com/manage-api-key',
-    enables: ['Content Grader (real SERP)', 'SERP analysis'],
-  };
-}
-
 async function checkImageProvider(): Promise<ReadinessItem> {
   // OpenAI key is the same one used for DALL·E 3 — if OpenAI is configured,
   // image generation works out of the box. Banana key is optional upgrade.
@@ -123,17 +107,25 @@ async function checkImageProvider(): Promise<ReadinessItem> {
 }
 
 async function checkVideoProvider(): Promise<ReadinessItem> {
-  // Block 8 territory — Runway/Veo3/Pika. Until then, video generation only
-  // produces scripts + storyboards.
+  const hasOutputBucket = !!process.env.AWS_BEDROCK_VIDEO_OUTPUT_S3_URI;
+  const region = process.env.AWS_BEDROCK_REGION || process.env.AWS_REGION;
+  const model = process.env.AWS_BEDROCK_LUMA_MODEL_ID || 'luma.ray-v2:0';
+  const hasRegion = !!region;
+  const hasSupportedRegion = !region || region === 'us-west-2';
+  const hasSupportedModel = model === 'luma.ray-v2:0';
+  const hasAccessKey = !!(process.env.AWS_S3_ACCESS_KEY_ID && process.env.AWS_S3_SECRET_ACCESS_KEY);
+  const configured = hasOutputBucket && hasRegion && hasAccessKey && hasSupportedRegion && hasSupportedModel;
   return {
     id: 'video.provider',
     category: 'video',
-    label: 'Video generation provider (Runway / Pika / Veo)',
-    status: 'warn',
+    label: 'Video generation provider',
+    status: configured ? 'ok' : 'warn',
     detail:
-      'No video provider configured. The Video Engine can produce scripts + storyboards but cannot render actual video yet. Block 8 of the build plan.',
+      configured
+        ? `AWS Bedrock Luma video generation configured (${model}).`
+        : 'AWS Bedrock Luma is not fully configured. Use AWS_BEDROCK_REGION=us-west-2, AWS_BEDROCK_LUMA_MODEL_ID=luma.ray-v2:0, AWS_S3_ACCESS_KEY_ID/AWS_S3_SECRET_ACCESS_KEY, and AWS_BEDROCK_VIDEO_OUTPUT_S3_URI before rendering campaign videos.',
     fixHref: '/admin/llm-config',
-    enables: ['Auto YouTube/TikTok video', 'Animated banner backgrounds'],
+    enables: ['Campaign AI video generation', 'Social video drafts'],
   };
 }
 
@@ -299,7 +291,6 @@ async function checkJwtSecret(): Promise<ReadinessItem> {
 const RUN_CHECKS = [
   checkLLMOpenAI,
   checkLLMAnthropic,
-  checkSerpAPI,
   checkImageProvider,
   checkVideoProvider,
   checkStripe,

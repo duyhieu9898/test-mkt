@@ -30,8 +30,8 @@ import type { CampaignStepEvent } from '../services/marketing-autonomous';
 import { eventBus, type Event as BusEvent } from '../services/event-bus';
 import { snapshotToPromptBlock } from '@1person/ai-tenant';
 import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
-import { ensureSufficientCredits, chargeForLLMCall } from '../lib/credits';
-import { resolveFeature } from '../lib/config-resolver';
+import { ensureSufficientCredits, chargeForLLMCall, chargeFixedCredits } from '../lib/credits';
+import { resolveFeature, resolveImageProvider } from '../lib/config-resolver';
 import {
   CAMPAIGN_BANNER_PALETTE,
   renderContextualCampaignBanner,
@@ -438,7 +438,9 @@ campaignsRouter.post(
       resolveFeature('campaign_banner_copy', input.tier),
       resolveFeature('campaign_social_post', input.tier),
     ]);
-    const estimatedCost = bannerFeature.creditCost + postFeature.creditCost;
+    const imageProvider = await resolveImageProvider('dalle');
+    const estimatedBannerImageCost = (imageProvider?.creditCost ?? 10) * 3;
+    const estimatedCost = bannerFeature.creditCost + postFeature.creditCost + estimatedBannerImageCost;
     await ensureSufficientCredits(companyId, estimatedCost);
 
     const sourceContext = await buildEffectiveSourceContext({
@@ -767,7 +769,9 @@ async function generateForExisting(
         headline: localizedDefault(language, 'betterWay'),
         subheadline: language === 'ja'
           ? `${input.audience}により良い成果を`
-          : `A better outcome for ${input.audience}`,
+          : language === 'vi'
+            ? `Kết quả tốt hơn cho ${input.audience}`
+            : `A better outcome for ${input.audience}`,
         cta: localizedDefault(language, 'exploreNow'),
         angle: 'aspiration',
         visualDirection: `An aspirational real-world scene focused on ${input.audience} achieving ${creativeBrief.angle}`,
@@ -876,6 +880,15 @@ async function generateForExisting(
           variantIndex: index,
           brandKit,
         });
+        if (creative.backgroundImageCreditCost && creative.backgroundImageCreditCost > 0) {
+          await chargeFixedCredits(companyId, creative.backgroundImageCreditCost, {
+            featureKey: 'campaign_banner_image',
+            tier: creative.backgroundImageProvider === 'dalle' ? 'premium' : 'balanced',
+            refKind: 'banner_bg',
+            refId: banner.id,
+            note: `Campaign banner background via ${creative.backgroundImageProvider ?? 'image provider'}`,
+          });
+        }
 
         await db.update(banners)
           .set({
@@ -1631,8 +1644,7 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
       })
       .from(videoProjects)
       .where(and(eq(videoProjects.companyId, companyId), eq(videoProjects.campaignId, id)))
-      .orderBy(desc(videoProjects.createdAt))
-      .limit(1),
+      .orderBy(desc(videoProjects.createdAt)),
     targetingBlogPostId
       ? db.select({
         id: blogPosts.id,

@@ -64,6 +64,13 @@
       "when": 1784310074689,
       "tag": "0008_sloppy_imperial_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784768400000,
+      "tag": "0009_free_initial_credits_1000",
+      "breakpoints": true
     }
   ]
 }

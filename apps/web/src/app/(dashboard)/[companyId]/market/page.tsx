@@ -195,7 +195,7 @@ export default function MarketPage() {
       } catch (e: any) {
         failed++;
         if (e?.message?.includes('credits')) {
-          toast.error('Ran out of credits — stopping.');
+          toast.error('You do not have enough credits for this action. Please contact support to add more credits.');
           break;
         }
       }
@@ -306,7 +306,7 @@ export default function MarketPage() {
                   <div className="flex gap-1.5">
                     <Button size="sm" onClick={() => scan(c)} disabled={scanningId === c.id} className="gap-1.5">
                       {scanningId === c.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                      Scan now<span className="text-[10px] opacity-70">5cr</span>
+                      Scan now<span className="text-[10px] opacity-70"> 5 credits</span>
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => openEdit(c)}><Pencil className="w-3.5 h-3.5" /></Button>
                     <Button size="sm" variant="outline" onClick={() => { if (confirm(`Delete ${c.name}?`)) deleteMutation.mutate(c.id); }}>

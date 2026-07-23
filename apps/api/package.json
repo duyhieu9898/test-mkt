@@ -18,6 +18,7 @@
     "@1person/core": "workspace:*",
     "@1person/workflow": "workspace:*",
     "@anthropic-ai/sdk": "^0.20.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1019.0",
     "@aws-sdk/client-s3": "^3.1019.0",
     "@cesdk/node": "1.76.0",
     "@hono/node-server": "^1.8.0",

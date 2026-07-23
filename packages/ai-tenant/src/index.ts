@@ -817,6 +817,8 @@ export type {
   AdvisorBrief,
   AdvisorBriefInput,
   BriefAction,
+  AdvisorStrategicGap,
+  AdvisorResponsibleDepartment,
   AdvisorTeamTask,
   BriefEvidence,
   CampaignProposal,

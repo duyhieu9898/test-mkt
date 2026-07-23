@@ -14,6 +14,7 @@ import { companies } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
+import { getUsageCreditCosts } from '../lib/credit-costs';
 
 const creditsRouter = new Hono();
 creditsRouter.use('*', authMiddleware);
@@ -44,7 +45,8 @@ creditsRouter.get('/:companyId', async (c) => {
   const ai = getTenantAI();
   const balance = await ai.credits.getBalance(tenantId);
   const plan = await ai.credits.getPlan(balance.plan);
-  return c.json({ balance, plan });
+  const costs = await getUsageCreditCosts();
+  return c.json({ balance, plan, costs });
 });
 
 // ─── GET /credits/:companyId/transactions — history ─────────────────

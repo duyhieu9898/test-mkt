@@ -23,6 +23,9 @@ interface OrgChartViewProps {
 
 export function OrgChartView({ agents, companyId, companyName, onContinue, onAgentsUpdated, language = 'en' }: OrgChartViewProps) {
   const t = (key: Parameters<typeof appT>[1]) => appT(language, key);
+  const copy = (en: string, ja: string, vi: string) => (
+    language === 'ja' ? ja : language === 'vi' ? vi : en
+  );
   const [currentAgents, setCurrentAgents] = useState(agents);
   const [editInput, setEditInput] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
@@ -53,18 +56,18 @@ export function OrgChartView({ agents, companyId, companyName, onContinue, onAge
       });
 
       if (!res.ok) {
-        throw new Error(language === 'ja' ? 'AIチームを更新できませんでした' : 'Your team could not be updated');
+        throw new Error(copy('Your team could not be updated', 'AIチームを更新できませんでした', 'Không thể cập nhật đội AI'));
       }
       const data = await res.json();
       if (data.agents && data.agents.length > 0) {
         setCurrentAgents(data.agents);
         onAgentsUpdated?.(data.agents);
-        toast.success(language === 'ja' ? 'AIチームを更新しました' : 'Your AI team has been updated');
+        toast.success(copy('Your AI team has been updated', 'AIチームを更新しました', 'Đã cập nhật đội AI'));
       }
 
       setEditInput('');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : language === 'ja' ? 'AIチームを更新できませんでした' : 'Your team could not be updated');
+      toast.error(error instanceof Error ? error.message : copy('Your team could not be updated', 'AIチームを更新できませんでした', 'Không thể cập nhật đội AI'));
     } finally {
       setIsUpdating(false);
     }

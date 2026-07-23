@@ -3,12 +3,14 @@
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { UserAvatar } from '@/components/ui/avatar';
 import { LanguageSwitcher } from '@/components/layout/language-switcher';
 import { useCompany } from '@/lib/api/hooks';
+import { api } from '@/lib/api/client';
 import { APP_LANGUAGE_STORAGE_KEY, appT, normalizeAppLanguage, type AppLanguage } from '@/lib/app-language';
 import {
   Bell,
@@ -19,6 +21,7 @@ import {
   User,
   ChevronDown,
   HelpCircle,
+  Gem,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -32,14 +35,25 @@ import {
 export function Header() {
   const router = useRouter();
   const params = useParams<{ companyId?: string }>();
-  const { user, logout } = useAuthStore();
+  const { user, logout, token } = useAuthStore();
   const companyId = typeof params?.companyId === 'string' ? params.companyId : undefined;
   const settingsHref = companyId ? `/${companyId}/settings` : '/companies';
   const { data: company } = useCompany(companyId ?? '');
   const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage>('en');
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const language = companyId
     ? normalizeAppLanguage(company?.settings?.language)
     : preferredLanguage;
+  const { data: creditsData, refetch: refetchCredits, isFetching: isFetchingCredits } = useQuery({
+    queryKey: ['credits', companyId],
+    queryFn: () =>
+      api.get<{ balance: { totalAvailable: number } }>(`/credits/${companyId}`, {
+        token: token!,
+      }),
+    enabled: !!token && !!companyId,
+    staleTime: 5_000,
+    refetchOnWindowFocus: true,
+  });
 
   useEffect(() => {
     if (companyId) return;
@@ -58,6 +72,13 @@ export function Header() {
   const handleLogout = () => {
     logout();
     router.push('/login');
+  };
+
+  const handleUserMenuOpenChange = (open: boolean) => {
+    setUserMenuOpen(open);
+    if (open && token && companyId) {
+      void refetchCredits();
+    }
   };
 
   return (
@@ -115,7 +136,7 @@ export function Header() {
           </Button>
 
           {/* User menu */}
-          <DropdownMenu>
+          <DropdownMenu open={userMenuOpen} onOpenChange={handleUserMenuOpenChange}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="flex items-center gap-2 pl-2 pr-3">
                 <UserAvatar src={user?.avatarUrl} name={user?.name || 'User'} size="sm" />
@@ -128,6 +149,16 @@ export function Header() {
                 <div className="flex min-w-0 flex-col">
                   <span className="truncate">{user?.name}</span>
                   <span className="truncate text-xs font-normal text-muted-foreground">{user?.email}</span>
+                  {companyId && (
+                    <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+                      <Gem className="h-3 w-3" />
+                      {typeof creditsData?.balance.totalAvailable === 'number'
+                        ? `${creditsData.balance.totalAvailable.toLocaleString()} credits left`
+                        : isFetchingCredits
+                          ? 'Checking credits...'
+                          : 'Credits unavailable'}
+                    </span>
+                  )}
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />

@@ -5,6 +5,7 @@
  */
 
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and, desc } from 'drizzle-orm';
@@ -14,6 +15,8 @@ import { CMSIntegration } from '../services/cms-integration';
 import { encryptSecret, decryptMaybe } from '../lib/crypto';
 import { authMiddleware } from '../middleware/auth';
 import { getWebsitePublishingSettings, isPlaceholderEndpointUrl, publishWebsitePost } from '../services/website-publisher';
+import { ensureSufficientCredits, chargeFixedCredits } from '../lib/credits';
+import { FIXED_CREDIT_COSTS } from '../lib/credit-costs';
 
 const seoEngineRouter = new Hono();
 seoEngineRouter.use('*', authMiddleware);
@@ -803,8 +806,17 @@ seoEngineRouter.post(
     const companyId = c.req.param('companyId');
     const body = c.req.valid('json');
     const language = body.language;
+    const requestedTopicCount = (body.suggestions?.length ?? 0) + (body.keywords?.length ?? 0);
 
     try {
+      if (requestedTopicCount === 0) {
+        return c.json({ error: 'Provide at least one suggestion or keyword.' }, 400);
+      }
+      await ensureSufficientCredits(
+        companyId,
+        requestedTopicCount * FIXED_CREDIT_COSTS.contentHubGenerateAllTopic,
+      );
+
       const { BlogGenerator } = await import('../services/blog-generator');
       const { blogPosts: blogPostsTable } = await import('@1person/core/db');
       const { llmGenerate } = await import('../lib/llm');
@@ -949,6 +961,15 @@ seoEngineRouter.post(
         }
       }
 
+      if (results.length > 0) {
+        await chargeFixedCredits(companyId, results.length * FIXED_CREDIT_COSTS.contentHubGenerateAllTopic, {
+          featureKey: 'content_hub_generate_all',
+          refKind: 'content_hub',
+          refId: companyId,
+          note: `Generated Content Hub assets for ${results.length} topics`,
+        });
+      }
+
       return c.json({
         generated: results.length,
         posts: results,
@@ -961,6 +982,7 @@ seoEngineRouter.post(
         message: `Created ${results.length} blog posts, ${results.length} landing pages, ${results.length * 3} banners, ${results.length * 2} social posts`,
       });
     } catch (err: any) {
+      if (err instanceof HTTPException) throw err;
       console.error('[SEO Engine] Generate from suggestion failed:', err);
       return c.json({ error: 'Could not generate content. Please try again.' }, 500);
     }

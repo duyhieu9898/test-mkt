@@ -12,7 +12,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Sparkles, RefreshCw, Loader2, ArrowRight, Trophy, AlertTriangle, Coins, Target, Database, Users, CheckCircle2, ChevronDown } from 'lucide-react';
+import { Sparkles, RefreshCw, Loader2, ArrowRight, Trophy, AlertTriangle, Coins, Target, Database, Users } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api/client';
 import { friendlyError } from '@/lib/friendly-errors';
@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { FirstVisitTip } from '@/components/first-visit-tip';
 
 type Severity = 'critical' | 'high' | 'medium' | 'low';
+type Priority = 'urgent' | 'high' | 'medium' | 'low';
 type Confidence = 'high' | 'medium' | 'low';
 interface BriefEvidence {
   id: string;
@@ -39,17 +40,43 @@ interface CampaignProposal {
   assets: string[];
   expectedOutcome?: string;
 }
+interface StrategicGap {
+  type: 'market_gap' | 'content_gap' | 'creative_gap' | 'channel_gap' | 'conversion_gap' | 'knowledge_gap';
+  marketSignal?: string;
+  internalMissingPiece?: string;
+  suggestedAssets?: Array<'blog' | 'landing_page' | 'social_posts' | 'banner_images' | 'video' | 'market_scan' | 'sales_enablement'>;
+  supportingKnowledge?: string[];
+}
 interface BriefAction {
   title: string;
   why: string;
   impact?: string;
   link?: string;
   severity?: Severity;
+  priority?: Priority;
   confidence?: Confidence;
+  issue?: string;
+  evidenceSummary?: string;
+  recommendation?: string;
+  expectedImpact?: string;
+  marketContext?: string;
+  todayMove?: string;
+  sevenDayMove?: string;
+  strategicGap?: StrategicGap;
   evidence?: BriefEvidence[];
   actionKind?: 'campaign' | 'content' | 'sales' | 'market' | 'operations';
   campaignProposal?: CampaignProposal;
+  responsibleDepartments?: AdvisorResponsibleDepartment[];
   teamTasks?: AdvisorTeamTask[];
+}
+interface AdvisorResponsibleDepartment {
+  department: string;
+  ownerAgentId?: string;
+  ownerName?: string;
+  role?: string;
+  title?: string;
+  responsibility: string;
+  expectedOutcome?: string;
 }
 interface AdvisorTeamTask {
   agentId: string;
@@ -74,10 +101,12 @@ interface AdvisorBrief {
     campaignsCount?: number;
     blogsCount?: number;
     landingPagesCount?: number;
+    knowledgeCount?: number;
     dealsCount?: number;
     marketScansCount?: number;
     learningsCount?: number;
     brainEventsCount?: number;
+    videosCount?: number;
     sourceHealth?: SourceHealth[];
   };
 }
@@ -92,8 +121,8 @@ function relativeTime(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-const severityStyles: Record<Severity, string> = {
-  critical: 'bg-red-100 text-red-700 border-red-200',
+const priorityStyles: Record<Priority, string> = {
+  urgent: 'bg-red-100 text-red-700 border-red-200',
   high: 'bg-amber-100 text-amber-700 border-amber-200',
   medium: 'bg-indigo-100 text-indigo-700 border-indigo-200',
   low: 'bg-slate-100 text-slate-600 border-slate-200',
@@ -105,25 +134,11 @@ const confidenceStyles: Record<Confidence, string> = {
   low: 'bg-slate-50 text-slate-600 border-slate-200',
 };
 
-interface TeamWorkItem extends AdvisorTeamTask {
-  actionIndex: number;
-  actionTitle: string;
-}
-
-interface TeamWorkGroup {
-  agentId: string;
-  agentName: string;
-  role: string;
-  title?: string;
-  department: string;
-  tasks: TeamWorkItem[];
-}
-
 function readableRole(value: string): string {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function departmentName(task: AdvisorTeamTask): string {
+function departmentFromTask(task: AdvisorTeamTask): string {
   if (task.department?.trim()) return task.department.trim();
   if (task.role === 'ceo') return 'Executive';
   if (task.role === 'sales_manager') return 'Sales';
@@ -132,28 +147,83 @@ function departmentName(task: AdvisorTeamTask): string {
   return 'Marketing';
 }
 
-function buildTeamWorkGroups(actions: BriefAction[]): TeamWorkGroup[] {
-  const groups = new Map<string, TeamWorkGroup>();
-  actions.forEach((action, actionIndex) => {
-    (action.teamTasks ?? []).forEach((task) => {
-      const existing = groups.get(task.agentId) ?? {
-        agentId: task.agentId,
-        agentName: task.agentName,
-        role: task.role,
-        title: task.title,
-        department: departmentName(task),
-        tasks: [],
-      };
-      existing.tasks.push({ ...task, actionIndex, actionTitle: action.title });
-      groups.set(task.agentId, existing);
-    });
-  });
-  const roleOrder = ['ceo', 'marketing_manager', 'sales_manager', 'content_creator', 'ads_specialist', 'analyst'];
-  return Array.from(groups.values()).sort((left, right) => {
-    const leftRank = roleOrder.indexOf(left.role);
-    const rightRank = roleOrder.indexOf(right.role);
-    return (leftRank < 0 ? 99 : leftRank) - (rightRank < 0 ? 99 : rightRank);
-  });
+function priorityFromAction(action: BriefAction): Priority {
+  if (action.priority) return action.priority;
+  if (action.severity === 'critical') return 'urgent';
+  if (action.severity === 'high') return 'high';
+  if (action.severity === 'low') return 'low';
+  return 'medium';
+}
+
+const priorityRank: Record<Priority, number> = {
+  urgent: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+};
+
+function actionSortScore(action: BriefAction): number {
+  const priority = priorityRank[priorityFromAction(action)];
+  const confidence = { high: 3, medium: 2, low: 1 }[action.confidence ?? 'medium'];
+  const evidence = Math.min(3, action.evidence?.length ?? 0);
+  const campaignReady = action.campaignProposal ? 1 : 0;
+  return priority * 10 + confidence * 2 + evidence + campaignReady;
+}
+
+function assetLabel(value: string): string {
+  const labels: Record<string, string> = {
+    blog: 'Blog',
+    landing_page: 'Landing page',
+    social_posts: 'Social posts',
+    banner_images: 'Banners',
+    video: 'Video',
+    market_scan: 'Market scan',
+    sales_enablement: 'Sales support',
+  };
+  return labels[value] ?? value.replaceAll('_', ' ');
+}
+
+function responsibleDepartments(action: BriefAction): AdvisorResponsibleDepartment[] {
+  if (action.responsibleDepartments?.length) return action.responsibleDepartments;
+  return (action.teamTasks ?? []).map((task) => ({
+    department: departmentFromTask(task),
+    ownerAgentId: task.agentId,
+    ownerName: task.agentName,
+    role: task.role,
+    title: task.title,
+    responsibility: task.task,
+    expectedOutcome: task.expectedOutcome,
+  }));
+}
+
+function actionIssue(action: BriefAction): string {
+  return action.issue || action.title;
+}
+
+function actionEvidenceSummary(action: BriefAction): string {
+  return action.evidenceSummary
+    || action.evidence?.map((evidence) => `${evidence.label}: ${evidence.detail}`).join(' ')
+    || action.why;
+}
+
+function actionRecommendation(action: BriefAction): string {
+  return action.recommendation || action.why;
+}
+
+function actionExpectedImpact(action: BriefAction): string | undefined {
+  return action.expectedImpact || action.impact;
+}
+
+function actionMarketContext(action: BriefAction): string | undefined {
+  return action.marketContext || action.strategicGap?.marketSignal;
+}
+
+function actionTodayMove(action: BriefAction): string {
+  return action.todayMove || actionRecommendation(action);
+}
+
+function actionSevenDayMove(action: BriefAction): string {
+  return action.sevenDayMove || actionExpectedImpact(action) || 'Review progress within 7 days and refresh CEO Advisor with the latest evidence.';
 }
 
 export default function CeoAdvisorPage() {
@@ -164,16 +234,6 @@ export default function CeoAdvisorPage() {
   const qc = useQueryClient();
   const autoGenerateAttemptedFor = useRef<string | null>(null);
   const [creatingActionIndex, setCreatingActionIndex] = useState<number | null>(null);
-  const [collapsedDepartments, setCollapsedDepartments] = useState<Set<string>>(() => new Set());
-
-  const toggleDepartment = (department: string) => {
-    setCollapsedDepartments((current) => {
-      const next = new Set(current);
-      if (next.has(department)) next.delete(department);
-      else next.add(department);
-      return next;
-    });
-  };
 
   const latestQ = useQuery({
     queryKey: ['ceo-advisor', 'latest', companyId],
@@ -183,16 +243,6 @@ export default function CeoAdvisorPage() {
 
   const brief = latestQ.data?.brief ?? null;
   const hasAdvice = Boolean(brief);
-  const teamWorkGroups = brief ? buildTeamWorkGroups(brief.actions) : [];
-  const teamDepartments = teamWorkGroups.reduce<Array<{
-    name: string;
-    members: TeamWorkGroup[];
-  }>>((groups, member) => {
-    const existing = groups.find((group) => group.name === member.department);
-    if (existing) existing.members.push(member);
-    else groups.push({ name: member.department, members: [member] });
-    return groups;
-  }, []);
 
   const refreshM = useMutation({
     mutationFn: () => api.post<{ brief: AdvisorBrief }>(`/insights/${companyId}/advisor/refresh`, {}, { token: token! }),
@@ -213,8 +263,13 @@ export default function CeoAdvisorPage() {
         .map((evidence) => `${evidence.label}: ${evidence.detail}`)
         .join('\n');
       const reason = [
-        action.why,
-        action.impact ? `Impact: ${action.impact}` : '',
+        `Issue: ${actionIssue(action)}`,
+        actionMarketContext(action) ? `Market context today: ${actionMarketContext(action)}` : '',
+        `Evidence: ${actionEvidenceSummary(action)}`,
+        `Recommendation: ${actionRecommendation(action)}`,
+        `Do today: ${actionTodayMove(action)}`,
+        `Next 7 days: ${actionSevenDayMove(action)}`,
+        actionExpectedImpact(action) ? `Expected impact: ${actionExpectedImpact(action)}` : '',
         proposal.expectedOutcome ? `Expected outcome: ${proposal.expectedOutcome}` : '',
         evidenceSummary ? `Evidence:\n${evidenceSummary}` : '',
       ].filter(Boolean).join('\n\n');
@@ -239,7 +294,7 @@ export default function CeoAdvisorPage() {
           tier: 'balanced',
           advisorBriefId: brief?.id,
           advisorActionIndex: index,
-          advisorActionTitle: action.title,
+          advisorActionTitle: actionIssue(action),
           advisorEvidenceIds: (action.evidence ?? []).map((evidence) => evidence.id),
         },
         { token: token! },
@@ -255,6 +310,20 @@ export default function CeoAdvisorPage() {
   });
 
   const refreshing = refreshM.isPending;
+  const sortedActions = brief
+    ? brief.actions
+      .map((action, originalIndex) => ({ action, originalIndex }))
+      .sort((left, right) => actionSortScore(right.action) - actionSortScore(left.action))
+    : [];
+  const marketPulse = sortedActions
+    .map(({ action, originalIndex }) => ({
+      originalIndex,
+      priority: priorityFromAction(action),
+      context: actionMarketContext(action),
+      issue: actionIssue(action),
+    }))
+    .filter((item) => Boolean(item.context))
+    .slice(0, 3);
 
   useEffect(() => {
     if (
@@ -375,14 +444,43 @@ export default function CeoAdvisorPage() {
             </Card>
           )}
 
+          {marketPulse.length > 0 && (
+            <section>
+              <div className="mb-3">
+                <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
+                  <Target className="h-4 w-4 text-indigo-600" /> Today's market pulse
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  The newest market or competitor signals the CEO should understand before choosing today’s work.
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                {marketPulse.map((item) => (
+                  <Card key={`${item.originalIndex}-${item.issue}`} className="border-indigo-100 bg-indigo-50/40">
+                    <CardContent className="p-4">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <Badge className={cn('border capitalize', priorityStyles[item.priority])}>
+                          {item.priority}
+                        </Badge>
+                        <span className="text-[11px] font-medium text-slate-500">Today</span>
+                      </div>
+                      <p className="break-words text-sm font-semibold leading-snug text-slate-950">{item.issue}</p>
+                      <p className="mt-2 break-words text-sm leading-relaxed text-slate-700">{item.context}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </section>
+          )}
+
           <section>
             <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
-                  <Users className="h-4 w-4 text-indigo-600" /> Team action plan
+                  <Sparkles className="h-4 w-4 text-indigo-600" /> CEO strategic priorities
                 </h2>
                 <p className="mt-1 text-sm text-slate-600">
-                  See what each department and role should do next, in priority order.
+                  Each recommendation explains the issue, evidence, CEO decision, expected impact, and execution owners.
                 </p>
               </div>
               <Button type="button" size="sm" variant="outline" className="w-fit" onClick={() => router.push(`/${companyId}/team`)}>
@@ -390,155 +488,182 @@ export default function CeoAdvisorPage() {
               </Button>
             </div>
 
-            {brief.actions.length === 0 ? (
-              <Card><CardContent className="p-6 text-center text-sm text-slate-500">No urgent actions right now. Keep shipping.</CardContent></Card>
-            ) : teamDepartments.length === 0 ? (
-              <Card className="border-dashed">
-                <CardContent className="p-6 text-center">
-                  <p className="text-sm font-medium text-slate-800">Your actions are ready, but no team role is available yet.</p>
-                  <p className="mt-1 text-xs text-slate-500">Open Your AI Team to finish assigning responsibilities.</p>
-                </CardContent>
-              </Card>
+            {sortedActions.length === 0 ? (
+              <Card><CardContent className="p-6 text-center text-sm text-slate-500">No urgent CEO decisions right now. Keep tracking the business.</CardContent></Card>
             ) : (
-              <div className="space-y-5">
-                {teamDepartments.map((department, departmentIndex) => {
-                  const isCollapsed = collapsedDepartments.has(department.name);
-                  const sectionId = `advisor-department-${departmentIndex}`;
+              <div className="space-y-4">
+                {sortedActions.map(({ action, originalIndex }, index) => {
+                  const priority = priorityFromAction(action);
+                  const owners = responsibleDepartments(action);
+                  const expectedImpact = actionExpectedImpact(action);
                   return (
-                  <div key={department.name} className="rounded-xl bg-slate-50/80 p-3 sm:p-4">
-                    <button
-                      type="button"
-                      className={cn(
-                        'flex w-full items-center justify-between gap-3 rounded-lg px-1 text-left',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2',
-                        !isCollapsed && 'mb-4',
-                      )}
-                      onClick={() => toggleDepartment(department.name)}
-                      aria-expanded={!isCollapsed}
-                      aria-controls={sectionId}
-                    >
-                      <h3 className="text-base font-semibold text-slate-900">{department.name}</h3>
-                      <span className="flex shrink-0 items-center gap-2">
-                        <Badge variant="outline" className="bg-white text-slate-600">
-                          {department.members.reduce((count, member) => count + member.tasks.length, 0)} action(s)
-                        </Badge>
-                        <ChevronDown className={cn('h-4 w-4 text-slate-500 transition-transform', isCollapsed && '-rotate-90')} />
-                      </span>
-                    </button>
-
-                    {!isCollapsed && <div id={sectionId} className="space-y-5">
-                      {department.members.map((member) => (
-                        <div key={member.agentId}>
-                          <div className="mb-2 flex items-center gap-3">
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-700">
-                              {member.agentName.trim().charAt(0).toUpperCase() || '?'}
+                    <Card key={`${action.title}-${index}`} className="border-0 shadow-sm ring-1 ring-slate-200 transition-shadow hover:shadow-md">
+                      <CardContent className="p-5">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge className={cn('border capitalize', priorityStyles[priority])}>
+                                {priority} priority
+                              </Badge>
+                              <Badge variant="outline" className={cn('border', confidenceStyles[action.confidence ?? 'medium'])}>
+                                {action.confidence ?? 'medium'} confidence
+                              </Badge>
+                              {action.actionKind === 'campaign' && (
+                                <Badge variant="outline" className="gap-1 border-violet-200 bg-violet-50 text-violet-700">
+                                  <Target className="h-3 w-3" /> Campaign opportunity
+                                </Badge>
+                              )}
                             </div>
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold text-slate-900">{member.agentName}</p>
-                              <p className="truncate text-xs text-slate-500">{member.title || readableRole(member.role)}</p>
+
+                            <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Issue detected</p>
+                              <h3 className="mt-1 break-words text-base font-semibold leading-snug text-slate-950">{actionIssue(action)}</h3>
                             </div>
-                          </div>
 
-                          <div className="space-y-3 sm:pl-12">
-                            {member.tasks.map((task, taskIndex) => {
-                              const action = brief.actions[task.actionIndex];
-                              if (!action) return null;
-                              const isPrimaryOwner = action.teamTasks?.[0]?.agentId === member.agentId;
-                              return (
-                                <Card key={`${task.actionIndex}-${taskIndex}`} className="border-0 shadow-sm ring-1 ring-slate-200 transition-shadow hover:shadow-md">
-                                  <CardContent className="p-4">
-                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <Badge className={cn('border', severityStyles[action.severity ?? 'medium'])}>{action.severity ?? 'medium'}</Badge>
-                                          <Badge variant="outline" className={cn('border', confidenceStyles[action.confidence ?? 'medium'])}>
-                                            {action.confidence ?? 'medium'} confidence
-                                          </Badge>
-                                          {action.actionKind === 'campaign' && (
-                                            <Badge variant="outline" className="gap-1 border-violet-200 bg-violet-50 text-violet-700">
-                                              <Target className="h-3 w-3" /> Campaign idea
-                                            </Badge>
-                                          )}
-                                        </div>
+                            <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                              <div className="rounded-lg bg-slate-50 p-3">
+                                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  <Database className="h-3.5 w-3.5" /> Evidence
+                                </p>
+                                <p className="mt-1.5 break-words text-sm leading-relaxed text-slate-700">{actionEvidenceSummary(action)}</p>
+                              </div>
+                              <div className="rounded-lg bg-indigo-50 p-3">
+                                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                                  <Sparkles className="h-3.5 w-3.5" /> Recommendation
+                                </p>
+                                <p className="mt-1.5 break-words text-sm font-medium leading-relaxed text-indigo-950">{actionRecommendation(action)}</p>
+                              </div>
+                              <div className="rounded-lg bg-emerald-50 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Expected impact</p>
+                                <p className="mt-1.5 text-sm leading-relaxed text-emerald-900">
+                                  {expectedImpact || 'AI did not estimate a measurable company impact yet.'}
+                                </p>
+                              </div>
+                            </div>
 
-                                        <div className="mt-3 flex items-start gap-2.5 rounded-lg bg-indigo-50 px-3 py-2.5">
-                                          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
-                                          <div>
-                                            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
-                                              Task for {member.title || readableRole(member.role)}
-                                            </p>
-                                            <p className="mt-0.5 text-sm font-medium leading-relaxed text-indigo-950">{task.task}</p>
-                                          </div>
-                                        </div>
+                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                              <div className="rounded-lg border border-amber-100 bg-amber-50 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">What to do today</p>
+                                <p className="mt-1.5 break-words text-sm leading-relaxed text-amber-950">{actionTodayMove(action)}</p>
+                              </div>
+                              <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Next 7 days</p>
+                                <p className="mt-1.5 break-words text-sm leading-relaxed text-blue-950">{actionSevenDayMove(action)}</p>
+                              </div>
+                            </div>
 
-                                        <h4 className="mt-3 font-semibold text-slate-900">{action.title}</h4>
-                                        <p className="mt-1 text-sm leading-relaxed text-slate-600">{action.why}</p>
-                                        {(task.expectedOutcome || action.impact) && (
-                                          <p className="mt-1 text-xs text-emerald-700">
-                                            Expected: {task.expectedOutcome || action.impact}
-                                          </p>
-                                        )}
+                            {action.strategicGap && (
+                              <div className="mt-4 rounded-lg border border-violet-100 bg-violet-50/70 p-3">
+                                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-700">
+                                  <Target className="h-3.5 w-3.5" /> Strategic gap
+                                </p>
+                                <div className="mt-2 grid gap-2 text-sm text-slate-700 md:grid-cols-2">
+                                  {action.strategicGap.marketSignal && (
+                                    <div>
+                                      <p className="text-xs font-medium text-slate-500">Market signal</p>
+                                      <p className="mt-0.5 leading-relaxed">{action.strategicGap.marketSignal}</p>
+                                    </div>
+                                  )}
+                                  {action.strategicGap.internalMissingPiece && (
+                                    <div>
+                                      <p className="text-xs font-medium text-slate-500">What is missing</p>
+                                      <p className="mt-0.5 leading-relaxed">{action.strategicGap.internalMissingPiece}</p>
+                                    </div>
+                                  )}
+                                </div>
+                                {((action.strategicGap.suggestedAssets?.length ?? 0) > 0 || (action.strategicGap.supportingKnowledge?.length ?? 0) > 0) && (
+                                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                                    {action.strategicGap.suggestedAssets?.map((asset) => (
+                                      <Badge key={asset} variant="outline" className="border-violet-200 bg-white text-violet-700">
+                                        {assetLabel(asset)}
+                                      </Badge>
+                                    ))}
+                                    {action.strategicGap.supportingKnowledge?.map((item) => (
+                                      <Badge key={item} variant="outline" className="max-w-full truncate border-slate-200 bg-white text-slate-600">
+                                        Knowledge: {item}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
 
-                                        {action.campaignProposal && (
-                                          <div className="mt-3 border-l-2 border-violet-300 pl-3 text-sm">
-                                            <p className="font-medium text-slate-800">{action.campaignProposal.goal}</p>
-                                            <p className="mt-0.5 text-slate-600">Audience: {action.campaignProposal.audience}</p>
-                                            {action.campaignProposal.offer && <p className="text-slate-600">Offer: {action.campaignProposal.offer}</p>}
-                                            {(action.campaignProposal.channels.length > 0 || action.campaignProposal.assets.length > 0) && (
-                                              <p className="mt-1 text-xs text-slate-500">
-                                                {[...action.campaignProposal.channels, ...action.campaignProposal.assets].join(' / ')}
-                                              </p>
-                                            )}
-                                          </div>
-                                        )}
-
-                                        {(action.evidence?.length ?? 0) > 0 && (
-                                          <details className="mt-3 border-t border-slate-100 pt-3">
-                                            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-slate-500 hover:text-indigo-700">
-                                              <Database className="h-3 w-3" /> Why AI recommends this
-                                            </summary>
-                                            <div className="mt-2 space-y-1.5">
-                                              {action.evidence!.map((evidence) => (
-                                                <button
-                                                  key={evidence.id}
-                                                  type="button"
-                                                  disabled={!evidence.link}
-                                                  onClick={() => evidence.link && router.push(evidence.link)}
-                                                  className={cn('block w-full text-left text-xs text-slate-600', evidence.link && 'hover:text-indigo-700')}
-                                                >
-                                                  <span className="font-medium text-slate-700">{evidence.label}:</span>{' '}{evidence.detail}
-                                                </button>
-                                              ))}
-                                            </div>
-                                          </details>
+                            {owners.length > 0 && (
+                              <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
+                                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  <Users className="h-3.5 w-3.5" /> Responsible departments
+                                </p>
+                                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                  {owners.map((owner, ownerIndex) => (
+                                    <div key={`${owner.department}-${ownerIndex}`} className="rounded-md bg-slate-50 px-3 py-2">
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span className="text-sm font-semibold text-slate-900">{owner.department}</span>
+                                        {(owner.title || owner.role) && (
+                                          <span className="text-xs text-slate-500">
+                                            {owner.title || readableRole(owner.role || '')}
+                                          </span>
                                         )}
                                       </div>
-
-                                      {action.campaignProposal && isPrimaryOwner ? (
-                                        <Button
-                                          size="sm"
-                                          className="shrink-0 gap-1.5 bg-indigo-600 hover:bg-indigo-700"
-                                          disabled={createCampaignM.isPending || !token}
-                                          onClick={() => createCampaignM.mutate({ action, index: task.actionIndex })}
-                                        >
-                                          {creatingActionIndex === task.actionIndex ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                                          {creatingActionIndex === task.actionIndex ? 'Creating...' : 'Create campaign'}
-                                        </Button>
-                                      ) : !action.campaignProposal && action.link ? (
-                                        <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => router.push(action.link!)}>
-                                          Start task <ArrowRight className="h-3 w-3" />
-                                        </Button>
-                                      ) : null}
+                                      <p className="mt-1 text-xs leading-relaxed text-slate-600">{owner.responsibility}</p>
                                     </div>
-                                  </CardContent>
-                                </Card>
-                              );
-                            })}
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {action.campaignProposal && (
+                              <div className="mt-4 border-l-2 border-violet-300 pl-3 text-sm">
+                                <p className="font-medium text-slate-800">{action.campaignProposal.goal}</p>
+                                <p className="mt-0.5 text-slate-600">Audience: {action.campaignProposal.audience}</p>
+                                {action.campaignProposal.offer && <p className="text-slate-600">Offer: {action.campaignProposal.offer}</p>}
+                                {(action.campaignProposal.channels.length > 0 || action.campaignProposal.assets.length > 0) && (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {[...action.campaignProposal.channels, ...action.campaignProposal.assets].join(' / ')}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {(action.evidence?.length ?? 0) > 0 && (
+                              <details className="mt-4 border-t border-slate-100 pt-3">
+                                <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-slate-500 hover:text-indigo-700">
+                                  <Database className="h-3 w-3" /> View source evidence
+                                </summary>
+                                <div className="mt-2 space-y-1.5">
+                                  {action.evidence!.map((evidence) => (
+                                    <button
+                                      key={evidence.id}
+                                      type="button"
+                                      disabled={!evidence.link}
+                                      onClick={() => evidence.link && router.push(evidence.link)}
+                                      className={cn('block w-full text-left text-xs text-slate-600', evidence.link && 'hover:text-indigo-700')}
+                                    >
+                                      <span className="font-medium text-slate-700">{evidence.label}:</span>{' '}{evidence.detail}
+                                    </button>
+                                  ))}
+                                </div>
+                              </details>
+                            )}
                           </div>
+
+                          {action.campaignProposal ? (
+                            <Button
+                              size="sm"
+                              className="shrink-0 gap-1.5 bg-indigo-600 hover:bg-indigo-700"
+                              disabled={createCampaignM.isPending || !token}
+                              onClick={() => createCampaignM.mutate({ action, index: originalIndex })}
+                            >
+                              {creatingActionIndex === originalIndex ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                              {creatingActionIndex === originalIndex ? 'Creating...' : 'Create campaign'}
+                            </Button>
+                          ) : action.link ? (
+                            <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => router.push(action.link!)}>
+                              Review <ArrowRight className="h-3 w-3" />
+                            </Button>
+                          ) : null}
                         </div>
-                      ))}
-                    </div>}
-                  </div>
+                      </CardContent>
+                    </Card>
                   );
                 })}
               </div>
@@ -588,7 +713,7 @@ export default function CeoAdvisorPage() {
 
           <div className="text-xs text-slate-400 text-center pt-3 border-t space-y-1">
             <p>
-              Based on {brief.sourcesUsed.campaignsCount ?? 0} campaigns · {brief.sourcesUsed.blogsCount ?? 0} blogs · {brief.sourcesUsed.brainEventsCount ?? 0} Brain Hub signals · {brief.sourcesUsed.dealsCount ?? 0} deals · {brief.sourcesUsed.marketScansCount ?? 0} market scans
+              Based on {brief.sourcesUsed.campaignsCount ?? 0} campaigns · {brief.sourcesUsed.blogsCount ?? 0} blogs · {brief.sourcesUsed.knowledgeCount ?? 0} Knowledge items · {brief.sourcesUsed.brainEventsCount ?? 0} Brain Hub signals · {brief.sourcesUsed.dealsCount ?? 0} deals · {brief.sourcesUsed.marketScansCount ?? 0} market scans · {brief.sourcesUsed.videosCount ?? 0} videos
             </p>
             {(brief.sourcesUsed.sourceHealth ?? []).some((source) => source.status === 'unavailable') && (
               <p className="text-amber-600">

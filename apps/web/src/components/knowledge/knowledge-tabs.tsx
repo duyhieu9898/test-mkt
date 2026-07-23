@@ -15,50 +15,71 @@ import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { FileText, Globe2, Mic, Search } from 'lucide-react';
+import { useCompany } from '@/lib/api/hooks';
+import { normalizeAppLanguage, type AppLanguage } from '@/lib/app-language';
 
 type TabKey = 'documents' | 'meetings' | 'search' | 'crawl';
 
 const TABS: Array<{
   key: TabKey;
-  label: string;
   icon: typeof FileText;
   href: (companyId: string) => string;
   match: (pathname: string) => boolean;
 }> = [
   {
     key: 'documents',
-    label: 'Documents',
     icon: FileText,
     href: (id) => `/${id}/knowledge`,
     match: (p) => p.endsWith('/knowledge'),
   },
   {
     key: 'meetings',
-    label: 'Meetings',
     icon: Mic,
     href: (id) => `/${id}/meetings`,
     match: (p) => p.endsWith('/meetings'),
   },
   {
     key: 'search',
-    label: 'Search',
     icon: Search,
     href: (id) => `/${id}/knowledge/search`,
     match: (p) => p.endsWith('/knowledge/search'),
   },
   {
     key: 'crawl',
-    label: 'Crawl Data',
     icon: Globe2,
     href: (id) => `/${id}/knowledge/crawl`,
     match: (p) => p.endsWith('/knowledge/crawl'),
   },
 ];
 
+const tabLabels: Record<AppLanguage, Record<TabKey, string>> = {
+  en: {
+    documents: 'Documents',
+    meetings: 'Meetings',
+    search: 'Search',
+    crawl: 'Crawl Data',
+  },
+  vi: {
+    documents: 'Tài liệu',
+    meetings: 'Cuộc họp',
+    search: 'Tìm kiếm',
+    crawl: 'Crawl Data',
+  },
+  ja: {
+    documents: 'ドキュメント',
+    meetings: 'ミーティング',
+    search: '検索',
+    crawl: 'データをクロール',
+  },
+};
+
 export function KnowledgeTabs() {
   const params = useParams();
   const pathname = usePathname();
   const companyId = params.companyId as string;
+  const { data: company } = useCompany(companyId);
+  const language = normalizeAppLanguage(company?.settings?.language);
+  const labels = tabLabels[language] || tabLabels.en;
 
   return (
     <div className="border-b border-slate-200 -mx-4 px-4 sm:mx-0 sm:px-0 mb-6">
@@ -78,7 +99,7 @@ export function KnowledgeTabs() {
               )}
             >
               <Icon className="w-4 h-4" />
-              {tab.label}
+              {labels[tab.key]}
             </Link>
           );
         })}

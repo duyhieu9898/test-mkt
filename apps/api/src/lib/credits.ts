@@ -24,6 +24,7 @@ import { getTenantAI, ensureTenantForCompany } from './tenant-ai';
 import { db } from './db';
 import { companies } from '@1person/core/db';
 import { eq } from 'drizzle-orm';
+import { CREDIT_SUPPORT_MESSAGE } from './credit-costs';
 
 async function getTenantIdFromCompanyId(companyId: string): Promise<string | null> {
   try {
@@ -55,7 +56,7 @@ export async function ensureSufficientCredits(
   const balance = await ai.credits.getOrCreateBalance(tenantId);
   if (balance.totalAvailable < required) {
     throw new HTTPException(402, {
-      message: `You need ${required} credits but only have ${balance.totalAvailable}. Top up or upgrade your plan.`,
+      message: `You need ${required} credits but only have ${balance.totalAvailable}. ${CREDIT_SUPPORT_MESSAGE}`,
     });
   }
 }
@@ -147,7 +148,9 @@ export async function chargeFixedCredits(
     return { totalAvailable: balance.totalAvailable, charged: amount };
   } catch (err) {
     if (err instanceof OutOfCreditsError) {
-      throw new HTTPException(402, { message: (err as Error).message });
+      throw new HTTPException(402, {
+        message: `You need ${err.required} credits but only have ${err.available}. ${CREDIT_SUPPORT_MESSAGE}`,
+      });
     }
     throw err;
   }

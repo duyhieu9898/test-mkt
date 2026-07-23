@@ -36,6 +36,11 @@ function handleFrom(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 20) || 'brand';
 }
 
+function isVideoMedia(url: string): boolean {
+  const cleanUrl = url.split('?')[0]?.toLowerCase() ?? url.toLowerCase();
+  return /\.(mp4|webm|mov|m4v)$/.test(cleanUrl);
+}
+
 export function InstagramPostPreview({
   content,
   hashtags,
@@ -51,6 +56,7 @@ export function InstagramPostPreview({
   const handle = handleFrom(brandName);
   const images = mediaUrls?.length ? mediaUrls : imageUrl ? [imageUrl] : [];
   const primaryImage = images[0];
+  const primaryIsVideo = Boolean(primaryImage && isVideoMedia(primaryImage));
   const publishedTime = formatPostTimestamp(timestamp);
   const showMetrics = isPublished && hasPostMetrics(metrics);
 
@@ -94,8 +100,19 @@ export function InstagramPostPreview({
         )}
       </div>
 
-      <div className="relative aspect-square w-full bg-white flex items-center justify-center">
-        {primaryImage ? (
+      <div className={primaryIsVideo
+        ? 'relative flex w-full items-center justify-center bg-black'
+        : 'relative aspect-square w-full bg-white flex items-center justify-center'}
+      >
+        {primaryImage && primaryIsVideo ? (
+          <video
+            src={primaryImage}
+            className="h-auto w-full bg-black object-contain"
+            controls
+            playsInline
+            preload="metadata"
+          />
+        ) : primaryImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={primaryImage} alt="" className="w-full h-full object-contain" />
         ) : (

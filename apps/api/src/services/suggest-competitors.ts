@@ -14,6 +14,7 @@ import { getTenantAI } from '../lib/tenant-ai';
 import { db } from '../lib/db';
 import { companies, type BusinessPlan } from '@1person/core/db';
 import { eq } from 'drizzle-orm';
+import { resolveCompetitorWebsite } from './market-scan';
 
 export interface CompetitorSuggestion {
   name: string;
@@ -277,7 +278,15 @@ Return ONLY a valid JSON array with this exact shape:
     if (excludeSet.has(lowerName) || seen.has(lowerName)) continue;
     seen.add(lowerName);
 
-    const url = sanitizeUrl(typeof item.url === 'string' ? item.url : null);
+    const rawUrl = sanitizeUrl(typeof item.url === 'string' ? item.url : null);
+    const resolved = await resolveCompetitorWebsite({
+      name,
+      url: rawUrl,
+      industry: ctx.industry,
+      companyName: ctx.companyName,
+      language: ctx.language,
+    }).catch(() => null);
+    const url = resolved?.url ?? rawUrl;
     const keywords = normalizeKeywords(item.keywords);
     const why = typeof item.why === 'string' ? item.why.trim().slice(0, 500) : '';
 

@@ -234,6 +234,183 @@ const STATIC_JA_TEXT: Record<string, string> = {
   'Not connected': '未接続',
 };
 
+const STATIC_VI_TEXT: Record<string, string> = {
+  Dashboard: 'Dashboard',
+  'Your Companies': 'Công ty của bạn',
+  'Manage your AI-powered businesses': 'Quản lý các doanh nghiệp được hỗ trợ bởi AI',
+  'New Company': 'Công ty mới',
+  'No companies yet': 'Chưa có công ty nào',
+  'Create your first AI-powered company to get started': 'Tạo công ty đầu tiên để bắt đầu dùng AI',
+  'Create Company': 'Tạo công ty',
+  'Complete Setup': 'Hoàn tất thiết lập',
+  'No industry set': 'Chưa có ngành nghề',
+  'Here\'s what your AI thinks you should focus on today.': 'Đây là những việc AI nghĩ bạn nên tập trung hôm nay.',
+  Campaigns: 'Campaigns',
+  Deals: 'Deals',
+  Competitors: 'Đối thủ',
+  'Last meeting': 'Cuộc họp gần nhất',
+  View: 'Xem',
+  today: 'hôm nay',
+  yesterday: 'hôm qua',
+  'Ask AI for personalized advice': 'Nhờ AI tư vấn riêng',
+  'AI tip — recent win': 'Gợi ý AI - kết quả gần đây',
+  'AI tip â€” recent win': 'Gợi ý AI - kết quả gần đây',
+  'Getting started with': 'Bắt đầu với',
+  'Checking your company setup': 'Đang kiểm tra thiết lập công ty',
+  'Reading the latest Knowledge, Brand IQ, market, and landing-page status.': 'Đang đọc dữ liệu Knowledge, Brand IQ, thị trường và landing page mới nhất.',
+  'Confirm company understanding': 'Xác nhận AI hiểu doanh nghiệp',
+  'Check what AI knows about your business and customers.': 'Kiểm tra AI đang biết gì về doanh nghiệp và khách hàng của bạn.',
+  'Add trusted business knowledge': 'Thêm kiến thức kinh doanh đáng tin cậy',
+  'Give AI facts about products, pricing, FAQs, and policies.': 'Cung cấp cho AI thông tin về sản phẩm, giá, FAQ và chính sách.',
+  'Review Brand IQ': 'Xem Brand IQ',
+  'Confirm your audience, positioning, tone, and brand rules.': 'Xác nhận khách hàng mục tiêu, định vị, giọng thương hiệu và quy tắc thương hiệu.',
+  'Review your first CEO advice': 'Xem tư vấn CEO đầu tiên',
+  'See the highest-value actions AI recommends next.': 'Xem các hành động có giá trị cao nhất mà AI đề xuất.',
+  'Analyze your market': 'Phân tích thị trường',
+  'Track competitors and discover positioning opportunities.': 'Theo dõi đối thủ và tìm cơ hội định vị.',
+  'Create a marketing landing page': 'Tạo landing page marketing',
+  'Turn an offer or campaign idea into a page that can capture leads.': 'Biến ưu đãi hoặc ý tưởng campaign thành trang có thể thu lead.',
+  'Setup priority': 'Ưu tiên thiết lập',
+  'Recommended by CEO Advisor': 'CEO Advisor đề xuất',
+  'Suggested next step': 'Bước tiếp theo được đề xuất',
+  Strong: 'Tốt',
+  Growing: 'Đang phát triển',
+  'Getting started': 'Mới bắt đầu',
+  'Some setup status could not be checked.': 'Một số trạng thái thiết lập chưa kiểm tra được.',
+  'Your next best step': 'Bước tốt nhất tiếp theo',
+  'Review recommendation': 'Xem đề xuất',
+  'Show my recommendations': 'Xem đề xuất của tôi',
+  'AI currently understands': 'AI hiện đang hiểu',
+  offerings: 'dịch vụ/sản phẩm',
+  'knowledge facts': 'thông tin kiến thức',
+  'Brand voice ready': 'Brand voice đã sẵn sàng',
+  'Setup checklist': 'Checklist thiết lập',
+  Optional: 'Không bắt buộc',
+  essentials: 'mục cần thiết',
+  'AI readiness': 'Mức sẵn sàng AI',
+  'Growth Score': 'Điểm tăng trưởng',
+  Marketing: 'Marketing',
+  SEO: 'SEO',
+  Automation: 'Tự động hóa',
+  Revenue: 'Doanh thu',
+  Foundation: 'Nền tảng',
+  Growth: 'Tăng trưởng',
+  Scale: 'Mở rộng',
+  'System Progress': 'Tiến độ hệ thống',
+  'Marketing Engine': 'Cỗ máy marketing',
+  'SEO & Content': 'SEO & Nội dung',
+  'AI Automation': 'Tự động hóa AI',
+  'Revenue Engine': 'Cỗ máy doanh thu',
+  Achievements: 'Thành tựu',
+  unlocked: 'đã mở khóa',
+  'Growth Plan': 'Growth Plan',
+  'Brand IQ': 'Brand IQ',
+  'CEO Advisor': 'CEO Advisor',
+  Walkthrough: 'Hướng dẫn',
+  'Your AI Team': 'AI Team',
+  'Knowledge Hub': 'Knowledge Hub',
+  'Brain Hub': 'Brain Hub',
+  'Campaign Launcher': 'Campaign Launcher',
+  'Landing Pages': 'Landing Pages',
+  'Content Autopilot': 'Content Autopilot',
+  'Content Editor': 'Content Editor',
+  'AI Visibility (GEO)': 'AI Visibility (GEO)',
+  'Market & Competitors': 'Market & Competitors',
+  'Marketing Playbooks': 'Marketing Playbooks',
+  Analytics: 'Analytics',
+  Settings: 'Cài đặt',
+  Admin: 'Admin',
+  Save: 'Lưu',
+  'Save Changes': 'Lưu thay đổi',
+  'Save changes': 'Lưu thay đổi',
+  Cancel: 'Hủy',
+  Edit: 'Chỉnh sửa',
+  Delete: 'Xóa',
+  Review: 'Xem lại',
+  Open: 'Mở',
+  Close: 'Đóng',
+  Back: 'Quay lại',
+  Continue: 'Tiếp tục',
+  Next: 'Tiếp',
+  Skip: 'Bỏ qua',
+  Search: 'Tìm kiếm',
+  Refresh: 'Refresh',
+  Generate: 'Tạo',
+  'Generate Campaign': 'Tạo campaign',
+  'Create Campaign': 'Tạo campaign',
+  'Launch Campaign': 'Launch campaign',
+  'Ready to launch': 'Sẵn sàng launch',
+  'Social posts': 'Social posts',
+  Banners: 'Banners',
+  Blog: 'Blog',
+  'Track performance': 'Theo dõi hiệu quả',
+  'Refresh data': 'Refresh dữ liệu',
+  'Apply to social posts': 'Áp dụng vào social posts',
+  'Use my image': 'Dùng ảnh của tôi',
+  'Edit image': 'Chỉnh ảnh',
+  Select: 'Chọn',
+  Selected: 'Đã chọn',
+  Published: 'Đã publish',
+  Draft: 'Bản nháp',
+  Ready: 'Sẵn sàng',
+  'Create New Page': 'Tạo trang mới',
+  'Publish landing page': 'Publish landing page',
+  'Publish now': 'Publish ngay',
+  'Save as draft': 'Lưu nháp',
+  'Add to my WordPress website': 'Thêm vào website WordPress',
+  'Create a new public website': 'Tạo website công khai mới',
+  'Publish history': 'Lịch sử publish',
+  'Take offline': 'Gỡ khỏi online',
+  Knowledge: 'Knowledge',
+  Documents: 'Tài liệu',
+  Meetings: 'Cuộc họp',
+  'Crawl Data': 'Crawl Data',
+  'Upload File': 'Upload file',
+  'Start Recording': 'Bắt đầu ghi âm',
+  'Upload Audio': 'Upload audio',
+  'Paste Transcript': 'Dán transcript',
+  Approve: 'Duyệt',
+  'Ready for Review': 'Sẵn sàng review',
+  'Test Chat': 'Test chat',
+  Configuration: 'Cấu hình',
+  'Bot Name': 'Tên bot',
+  Greeting: 'Lời chào',
+  Tone: 'Tone',
+  Mode: 'Chế độ',
+  Color: 'Màu',
+  'Allowed domains': 'Domain được phép',
+  'Widget preview': 'Preview widget',
+  'Website Widget': 'Website Widget',
+  'Open on Facebook': 'Mở trên Facebook',
+  'Published on Facebook': 'Đã đăng lên Facebook',
+  'Top actions': 'Hành động ưu tiên',
+  'TOP ACTIONS': 'HÀNH ĐỘNG ƯU TIÊN',
+  "TODAY'S BRIEF": 'TÓM TẮT HÔM NAY',
+  'Refresh advice': 'Refresh tư vấn',
+  'Generate advice': 'Tạo tư vấn',
+  'Why this recommendation': 'Vì sao có đề xuất này',
+  'Your strategy may need an update': 'Chiến lược có thể cần cập nhật',
+  'Create updated draft': 'Tạo bản nháp cập nhật',
+  'Approve current plan': 'Duyệt plan hiện tại',
+  'Create content campaign': 'Tạo content campaign',
+  'Create social campaign': 'Tạo social campaign',
+  'Campaign focus': 'Trọng tâm campaign',
+  'Social outputs': 'Social outputs',
+  'Generated images': 'Ảnh đã tạo',
+  'Choose your campaign images': 'Chọn ảnh campaign',
+  'Blog preview': 'Preview blog',
+  'Ready items were activated inside this campaign. External ad publishing is still handled separately.': 'Các mục sẵn sàng đã được kích hoạt trong campaign này. Việc publish quảng cáo bên ngoài vẫn được xử lý riêng.',
+  'Create Landing Page': 'Tạo Landing Page',
+  'My Pages': 'Trang của tôi',
+  'Generate All': 'Tạo tất cả',
+  Unpublish: 'Unpublish',
+  'Create outputs': 'Tạo outputs',
+  Connect: 'Kết nối',
+  Reconnect: 'Kết nối lại',
+  Connected: 'Đã kết nối',
+  'Not connected': 'Chưa kết nối',
+};
+
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'OPTION', 'CODE', 'PRE']);
 const originals = new WeakMap<Text, string>();
 
@@ -251,10 +428,10 @@ function shouldSkip(textNode: Text) {
   return false;
 }
 
-function translateNode(textNode: Text) {
+function translateNode(textNode: Text, dictionary: Record<string, string>) {
   if (shouldSkip(textNode)) return;
   const original = originals.get(textNode) ?? textNode.nodeValue ?? '';
-  const translated = STATIC_JA_TEXT[original.trim()];
+  const translated = dictionary[original.trim()];
   if (!translated) return;
   originals.set(textNode, original);
   const nextValue = preserveWhitespace(original, translated);
@@ -303,23 +480,29 @@ export function StaticJapaneseLocalizer() {
     const root = document.body;
     if (!root) return;
 
-    if (language !== 'ja') {
+    const dictionary = language === 'ja'
+      ? STATIC_JA_TEXT
+      : language === 'vi'
+        ? STATIC_VI_TEXT
+        : null;
+
+    if (!dictionary) {
       walkTextNodes(root, restoreNode);
       return;
     }
 
-    walkTextNodes(root, translateNode);
+    walkTextNodes(root, (node) => translateNode(node, dictionary));
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.type === 'characterData') {
-          translateNode(mutation.target as Text);
+          translateNode(mutation.target as Text, dictionary);
           continue;
         }
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === Node.TEXT_NODE) {
-            translateNode(node as Text);
+            translateNode(node as Text, dictionary);
           } else if (node.nodeType === Node.ELEMENT_NODE) {
-            walkTextNodes(node as Element, translateNode);
+            walkTextNodes(node as Element, (textNode) => translateNode(textNode, dictionary));
           }
         });
       }

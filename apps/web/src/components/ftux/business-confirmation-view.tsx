@@ -37,6 +37,9 @@ export function BusinessConfirmationView({
   language = 'en',
 }: BusinessConfirmationViewProps) {
   const t = (key: Parameters<typeof appT>[1]) => appT(language, key);
+  const text = (en: string, ja: string, vi: string) => (
+    language === 'ja' ? ja : language === 'vi' ? vi : en
+  );
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -48,7 +51,7 @@ export function BusinessConfirmationView({
     industry: businessInfo?.industry || businessInfo?.market || detectedInfo.market,
     market: businessInfo?.market || detectedInfo.market,
     model: businessInfo?.model || detectedInfo.model,
-    audience: businessInfo?.audience || (language === 'ja' ? '一般的な顧客' : 'General audience'),
+    audience: businessInfo?.audience || text('General audience', '一般的な顧客', 'Khách hàng phổ thông'),
     strategy: businessInfo?.strategy || detectedInfo.strategy,
     offerings: businessInfo?.offerings || [],
     valueProposition: businessInfo?.valueProposition || '',
@@ -135,7 +138,9 @@ export function BusinessConfirmationView({
     if (!normalized.companyName || !normalized.market || !normalized.model || !normalized.audience) {
       setSaveError(language === 'ja'
         ? '保存する前に、会社名、市場、ビジネスモデル、ターゲット顧客を入力してください。'
-        : 'Add a company name, market, business model, and target audience before saving.');
+        : language === 'vi'
+          ? 'Vui lòng nhập tên công ty, thị trường, mô hình kinh doanh và khách hàng mục tiêu trước khi lưu.'
+          : 'Add a company name, market, business model, and target audience before saving.');
       return;
     }
 
@@ -149,7 +154,9 @@ export function BusinessConfirmationView({
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : language === 'ja'
         ? '変更を保存できませんでした。もう一度お試しください。'
-        : 'Could not save your changes. Please try again.');
+        : language === 'vi'
+          ? 'Không thể lưu thay đổi. Vui lòng thử lại.'
+          : 'Could not save your changes. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -233,7 +240,7 @@ export function BusinessConfirmationView({
                         id="business-industry"
                         value={draft.industry}
                         onChange={(event) => updateDraft('industry', event.target.value)}
-                        placeholder={language === 'ja' ? '例：飲食業' : 'Example: Food and beverage'}
+                        placeholder={text('Example: Food and beverage', '例：飲食業', 'VD: Nhà hàng và đồ uống')}
                         disabled={isSaving}
                       />
                     </div>
@@ -252,7 +259,7 @@ export function BusinessConfirmationView({
                         id="business-model"
                         value={draft.model}
                         onChange={(event) => updateDraft('model', event.target.value)}
-                        placeholder={language === 'ja' ? '例：オンライン販売と配送' : 'Example: Online sales and delivery'}
+                        placeholder={text('Example: Online sales and delivery', '例：オンライン販売と配送', 'VD: Bán hàng online và giao hàng')}
                         disabled={isSaving}
                       />
                     </div>
@@ -264,7 +271,7 @@ export function BusinessConfirmationView({
                       id="business-audience"
                       value={draft.audience}
                       onChange={(event) => updateDraft('audience', event.target.value)}
-                      placeholder={language === 'ja' ? '誰が主な顧客になりそうですか？' : 'Who is most likely to buy from you?'}
+                      placeholder={text('Who is most likely to buy from you?', '誰が主な顧客になりそうですか？', 'Ai có khả năng mua hàng cao nhất?')}
                       rows={2}
                       disabled={isSaving}
                     />
@@ -278,7 +285,9 @@ export function BusinessConfirmationView({
                       onChange={(event) => updateDraft('offerings', event.target.value.split('\n'))}
                       placeholder={language === 'ja'
                         ? '1行に1つずつ入力\n例：店内飲食\n宅配'
-                        : 'Add one item per line\nExample: In-store dining\nHome delivery'}
+                        : language === 'vi'
+                          ? 'Nhập mỗi mục một dòng\nVD: Ăn tại quán\nGiao hàng tận nơi'
+                          : 'Add one item per line\nExample: In-store dining\nHome delivery'}
                       rows={3}
                       disabled={isSaving}
                     />
@@ -290,7 +299,7 @@ export function BusinessConfirmationView({
                       id="business-value"
                       value={draft.valueProposition}
                       onChange={(event) => updateDraft('valueProposition', event.target.value)}
-                      placeholder={language === 'ja' ? '顧客があなたを選ぶ主な理由を説明してください。' : 'Describe the main reason customers choose you.'}
+                      placeholder={text('Describe the main reason customers choose you.', '顧客があなたを選ぶ主な理由を説明してください。', 'Mô tả lý do chính khiến khách hàng chọn bạn.')}
                       rows={2}
                       disabled={isSaving}
                     />
@@ -302,7 +311,7 @@ export function BusinessConfirmationView({
                       id="business-strategy"
                       value={draft.strategy}
                       onChange={(event) => updateDraft('strategy', event.target.value)}
-                      placeholder={language === 'ja' ? '顧客を獲得し、維持するための方向性を入力してください。' : 'How should the business attract and retain customers?'}
+                      placeholder={text('How should the business attract and retain customers?', '顧客を獲得し、維持するための方向性を入力してください。', 'Doanh nghiệp nên thu hút và giữ chân khách hàng như thế nào?')}
                       rows={2}
                       disabled={isSaving}
                     />

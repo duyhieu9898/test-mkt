@@ -139,7 +139,7 @@ RULES:
 LANGUAGE RULES:
 - Write all masterPlan values in ${outputLanguage}: plan titles, descriptions, actions, timelines, and expected impacts.
 - Keep company names, brand names, product/service/course names, URLs, exact source titles, JSON keys, and enum values unchanged.
-- If the output language is Japanese, do not return English prose in user-facing plan text.
+- If the output language is not English, do not return English prose in user-facing plan text.
 
 Return ONLY valid JSON:
 {
@@ -379,7 +379,7 @@ EXTRACTION RULES:
 LANGUAGE RULES:
 - Write descriptive businessInfo and masterPlan values in ${outputLanguage}: industry, model, audience, valueProposition, market, strategy, plan titles, descriptions, actions, timelines, and expected impacts.
 - Keep company names, brand names, product/service/course names, URLs, exact source titles, JSON keys, and enum values unchanged.
-- If the output language is Japanese, do not return English prose in businessInfo.market, businessInfo.model, businessInfo.audience, or businessInfo.strategy.
+- If the output language is not English, do not return English prose in businessInfo.market, businessInfo.model, businessInfo.audience, or businessInfo.strategy.
 
 Return ONLY valid JSON:
 {

@@ -17,6 +17,9 @@ export function friendlyError(
     if (/failed to fetch/i.test(msg) || /networkerror/i.test(msg) || /network request failed/i.test(msg)) {
       return "We couldn't reach the server. Check your connection and try again.";
     }
+    if (msg.toLocaleLowerCase().includes('you do not have enough credits')) {
+      return 'You do not have enough credits for this action. Please contact support to add more credits.';
+    }
     if (msg.includes('401') || /unauthor/i.test(msg)) {
       return 'Your session expired. Please sign in again.';
     }

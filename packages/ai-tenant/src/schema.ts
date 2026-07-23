@@ -616,8 +616,8 @@ export const creditBalances = pgTable(
       .references(() => tenants.id, { onDelete: 'cascade' })
       .notNull(),
     plan: varchar('plan', { length: 30 }).default('free').notNull(),
-    monthlyGrant: integer('monthly_grant').default(100).notNull(),
-    monthlyBalance: integer('monthly_balance').default(100).notNull(),
+    monthlyGrant: integer('monthly_grant').default(1000).notNull(),
+    monthlyBalance: integer('monthly_balance').default(1000).notNull(),
     topupBalance: integer('topup_balance').default(0).notNull(),
     rolloverBalance: integer('rollover_balance').default(0).notNull(),
     billingPeriodStart: timestamp('billing_period_start').defaultNow().notNull(),

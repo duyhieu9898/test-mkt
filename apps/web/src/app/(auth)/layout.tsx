@@ -12,6 +12,12 @@ const authCopy = {
     launched: '1,000+ AI companies launched',
     trusted: 'Trusted by founders, creators, and entrepreneurs worldwide',
   },
+  vi: {
+    title: 'Vận hành cả công ty bằng AI Agents',
+    description: 'Khởi tạo doanh nghiệp, xây dựng đội AI và để họ làm việc trong khi bạn tập trung vào điều quan trọng nhất.',
+    launched: 'Hơn 1.000 AI companies đã được tạo',
+    trusted: 'Được tin dùng bởi founders, creators và entrepreneurs trên toàn cầu',
+  },
   ja: {
     title: 'AIエージェントで会社全体を運営',
     description: 'ビジネスを立ち上げ、AIチームを構築し、重要な意思決定に集中できます。',

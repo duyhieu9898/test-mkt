@@ -19,6 +19,7 @@ import { generateMarketDigest } from '../services/market-digest';
 import { generatePositioningMap } from '../services/positioning-map';
 import { saveScanToBrain } from '../services/market-memory';
 import { generateAndSaveCeoBrief } from '../services/ceo-advisor';
+import { buildBusinessContext } from '../services/business-context';
 
 const marketRouter = new Hono();
 marketRouter.use('*', authMiddleware);
@@ -130,9 +131,26 @@ marketRouter.post('/:companyId/competitors/:id/scan', async (c) => {
   await ensureSufficientCredits(companyId, SCAN_COST);
   const scan = await ai.market.startScan(tenantId, competitorId);
   try {
+    const businessContext = await buildBusinessContext(companyId).catch(() => null);
     const result = await scanCompetitor({
-      id: competitor.id, name: competitor.name, url: competitor.url, keywords: competitor.keywords,
+      id: competitor.id,
+      name: competitor.name,
+      url: competitor.url,
+      keywords: competitor.keywords,
+      companyName: businessContext?.companyName ?? null,
+      industry: businessContext?.industry ?? null,
+      products: businessContext?.products ?? [],
+      audiences: businessContext?.targetAudience ?? [],
+      language: businessContext?.language ?? null,
     });
+    if (result.resolvedUrl && result.resolvedUrl !== competitor.url) {
+      await ai.market.updateCompetitor(
+        tenantId,
+        competitor.id,
+        { url: result.resolvedUrl },
+        'system:market-scan',
+      );
+    }
     await ai.market.completeScan(scan.id, {
       status: 'completed',
       sources: result.sources, signals: result.signals,

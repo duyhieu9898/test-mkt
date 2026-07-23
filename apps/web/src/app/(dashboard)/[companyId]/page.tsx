@@ -124,15 +124,18 @@ export default function DashboardPage() {
 
   const firstName = user?.name?.split(' ')[0] ?? 'there';
   const isJapanese = language === 'ja';
+  const isVietnamese = language === 'vi';
   const localizedLastMeetingLabel = isJapanese
     ? (lastMeetingLabel === 'today' ? '今日' : lastMeetingLabel === 'yesterday' ? '昨日' : lastMeetingLabel)
+    : isVietnamese
+      ? (lastMeetingLabel === 'today' ? 'hôm nay' : lastMeetingLabel === 'yesterday' ? 'hôm qua' : lastMeetingLabel)
     : lastMeetingLabel;
 
   const stats = [
-    { icon: Megaphone, label: isJapanese ? 'キャンペーン' : 'Campaigns', value: campaignsCount, link: `/${companyId}/campaigns`, tint: 'text-orange-600 bg-orange-50' },
-    { icon: Briefcase, label: isJapanese ? '商談' : 'Deals', value: dealsCount, link: `/${companyId}/sales`, tint: 'text-emerald-600 bg-emerald-50' },
-    { icon: Target, label: isJapanese ? '競合' : 'Competitors', value: competitorsCount, link: `/${companyId}/market`, tint: 'text-rose-600 bg-rose-50' },
-    { icon: CalendarClock, label: isJapanese ? '最新ミーティング' : 'Last meeting', value: localizedLastMeetingLabel, link: `/${companyId}/meetings`, tint: 'text-indigo-600 bg-indigo-50' },
+    { icon: Megaphone, label: isVietnamese ? 'Campaigns' : isJapanese ? 'キャンペーン' : 'Campaigns', value: campaignsCount, link: `/${companyId}/campaigns`, tint: 'text-orange-600 bg-orange-50' },
+    { icon: Briefcase, label: isVietnamese ? 'Deals' : isJapanese ? '商談' : 'Deals', value: dealsCount, link: `/${companyId}/sales`, tint: 'text-emerald-600 bg-emerald-50' },
+    { icon: Target, label: isVietnamese ? 'Đối thủ' : isJapanese ? '競合' : 'Competitors', value: competitorsCount, link: `/${companyId}/market`, tint: 'text-rose-600 bg-rose-50' },
+    { icon: CalendarClock, label: isVietnamese ? 'Cuộc họp gần nhất' : isJapanese ? '最新ミーティング' : 'Last meeting', value: localizedLastMeetingLabel, link: `/${companyId}/meetings`, tint: 'text-indigo-600 bg-indigo-50' },
   ];
 
   const gamificationLoading = growthScoreQ.isLoading || missionsQ.isLoading;
@@ -142,10 +145,12 @@ export default function DashboardPage() {
       {/* Greeting */}
       <div>
         <h1 className="text-2xl font-bold text-slate-900">
-          {isJapanese ? `${firstName}さん、こんにちは` : `Hello ${firstName}`}
+          {isVietnamese ? `Xin chào ${firstName}` : isJapanese ? `${firstName}さん、こんにちは` : `Hello ${firstName}`}
         </h1>
         <p className="text-sm text-slate-600 mt-1">
-          {isJapanese
+          {isVietnamese
+            ? 'Đây là những việc AI nghĩ bạn nên tập trung hôm nay.'
+            : isJapanese
             ? '今日、AIが優先すべきだと考えていることです。'
             : "Here's what your AI thinks you should focus on today."}
         </p>
@@ -212,7 +217,7 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between mt-1">
                   <p className="text-xs text-slate-500">{s.label}</p>
                   <span className="text-xs text-indigo-600 flex items-center gap-0.5">
-                    {isJapanese ? '表示' : 'View'} <ArrowRight className="w-3 h-3" />
+                    {isVietnamese ? 'Xem' : isJapanese ? '表示' : 'View'} <ArrowRight className="w-3 h-3" />
                   </span>
                 </div>
               </CardContent>
@@ -244,7 +249,7 @@ export default function DashboardPage() {
           onClick={() => router.push(`/${companyId}/insights`)}
         >
           <Sparkles className="w-4 h-4" />
-          {isJapanese ? 'AIに個別アドバイスを依頼' : 'Ask AI for personalized advice'}
+          {isVietnamese ? 'Nhờ AI tư vấn riêng' : isJapanese ? 'AIに個別アドバイスを依頼' : 'Ask AI for personalized advice'}
           <Badge className="ml-1 bg-indigo-500 text-white gap-1 hover:bg-indigo-500">
             <Coins className="w-3 h-3" /> 10
           </Badge>

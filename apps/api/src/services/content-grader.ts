@@ -5,7 +5,7 @@
  * across 5 sub-dimensions plus a ranked list of concrete suggestions
  * the founder can apply to improve the page before publish.
  *
- *   1. entity_coverage         — % of top-SERP entities present in content
+ *   1. entity_coverage         — % of public topic entities present in content
  *   2. topic_coverage          — does the content cover the topic fully (LLM judge)
  *   3. brand_voice             — match against company's brand voice (if set)
  *   4. ai_citation_likelihood  — heuristic: structured paragraphs, Q&A, schema-friendly
@@ -18,7 +18,7 @@ import { db } from '../lib/db';
 import { contentGrades } from '@1person/core/db';
 import type { GradeBreakdown, GradeSuggestion, GradeSeverity } from '@1person/core/db';
 import { llmGenerate, extractJSON } from '../lib/llm';
-import { getTopSerpResults } from './serp-scraper';
+import { getTopicCoverageResults } from './public-discovery';
 import { buildBusinessContext } from './business-context';
 
 export interface GradeResult {
@@ -121,7 +121,7 @@ async function llmJudge(args: {
 }): Promise<{ topicCoverage: number; suggestions: GradeSuggestion[] }> {
   const prompt = `You are a senior SEO + content quality editor. Grade the draft below for the target keyword "${args.targetKeyword}".
 
-Top-SERP entities competitors cover: ${args.serpEntities.slice(0, 20).join(', ') || '(none)'}
+Public topic entities related sources cover: ${args.serpEntities.slice(0, 20).join(', ') || '(none)'}
 Brand voice cues: ${args.brandVoice.join(', ') || 'neutral'}
 
 DRAFT:
@@ -179,13 +179,13 @@ export async function gradeContent(args: {
   if (!contentText.trim()) throw new Error('Content is empty');
   if (!targetKeyword.trim()) throw new Error('Target keyword is required');
 
-  // 1. SERP + brand context in parallel.
+  // 1. Free public discovery + brand context in parallel.
   const [serp, ctx] = await Promise.all([
-    getTopSerpResults(targetKeyword, 10),
+    getTopicCoverageResults(targetKeyword, 10),
     buildBusinessContext(companyId).catch(() => null),
   ]);
 
-  // 2. Aggregate SERP entities (dedupe, keep most frequent first).
+  // 2. Aggregate discovered topic entities (dedupe, keep most frequent first).
   const entityFreq = new Map<string, number>();
   for (const r of serp) {
     for (const e of r.entities_extracted) {
@@ -220,7 +220,7 @@ export async function gradeContent(args: {
     return {
       category: 'entity',
       severity: (freq >= 5 ? 'high' : freq >= 3 ? 'medium' : 'low') as GradeSeverity,
-      text: `Add a section about "${e}" — appears in ${freq}/${serp.length} top-ranking results.`,
+      text: `Add a section about "${e}" — appears in ${freq}/${serp.length} relevant public sources.`,
     };
   });
   const allSuggestions: GradeSuggestion[] = [...entitySuggestions, ...llmSuggestions]

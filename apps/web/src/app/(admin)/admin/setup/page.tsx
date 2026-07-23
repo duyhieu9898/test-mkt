@@ -41,7 +41,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 const CATEGORY_LABEL: Record<ReadinessCategory, { label: string; icon: typeof Brain }> = {
   llm: { label: 'LLM Providers', icon: Brain },
-  search: { label: 'Search & SERP', icon: Search },
+  search: { label: 'Search & SEO', icon: Search },
   image: { label: 'Image Generation', icon: ImageIcon },
   video: { label: 'Video Generation', icon: Video },
   payments: { label: 'Payments', icon: CreditCard },

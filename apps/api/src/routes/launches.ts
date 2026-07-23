@@ -17,6 +17,8 @@ import { startLaunch, getLaunch } from '../services/launch-orchestrator';
 import { buildEffectiveSourceContext } from '../services/source-content-import';
 import { ensureTenantForCompany } from '../lib/tenant-ai';
 import { generateLaunchSuggestions } from '../services/launch-suggestions';
+import { chargeFixedCredits, ensureSufficientCredits } from '../lib/credits';
+import { getLaunchCampaignCost } from '../lib/credit-costs';
 
 const launchesRouter = new Hono();
 
@@ -61,6 +63,11 @@ launchesRouter.post(
     const companyId = c.req.param('companyId');
     await verifyOwnership(companyId, userId);
     const body = c.req.valid('json');
+    const creditCost = getLaunchCampaignCost({
+      includeVideo: body.targets.video,
+      imageMode: body.imageMode,
+    });
+    await ensureSufficientCredits(companyId, creditCost);
     const effectiveBrief = await buildEffectiveSourceContext({
       companyId,
       userId,
@@ -75,6 +82,16 @@ launchesRouter.post(
       assetIds: body.assetIds,
       language: body.language,
       targets: body.targets,
+    });
+    await chargeFixedCredits(companyId, creditCost, {
+      featureKey: 'campaign_launcher',
+      tier: body.targets.video ? 'premium' : 'balanced',
+      refKind: 'campaign_launch',
+      refId: result.launchId,
+      actor: `user:${userId}`,
+      note: body.targets.video
+        ? 'Campaign Launcher with AI video'
+        : 'Campaign Launcher',
     });
     return c.json({ data: result });
   },

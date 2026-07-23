@@ -2,12 +2,16 @@ import { eq } from 'drizzle-orm';
 import { companies } from '@1person/core/db';
 import { db } from './db';
 
-export const SUPPORTED_CONTENT_LANGUAGES = ['en', 'ja'] as const;
+export const SUPPORTED_CONTENT_LANGUAGES = ['en', 'vi', 'ja'] as const;
 export type ContentLanguage = typeof SUPPORTED_CONTENT_LANGUAGES[number];
 
 const LANGUAGE_ALIASES: Record<string, ContentLanguage> = {
   en: 'en',
   english: 'en',
+  vi: 'vi',
+  vietnamese: 'vi',
+  'tiếng việt': 'vi',
+  'tieng viet': 'vi',
   ja: 'ja',
   jp: 'ja',
   japanese: 'ja',
@@ -17,6 +21,7 @@ const LANGUAGE_ALIASES: Record<string, ContentLanguage> = {
 
 export const CONTENT_LANGUAGE_NAMES: Record<ContentLanguage, string> = {
   en: 'English',
+  vi: 'Vietnamese',
   ja: 'Japanese',
 };
 
@@ -74,6 +79,15 @@ export function localizedDefault(
       confidence: 'Choose With Confidence',
       betterWay: 'A Better Way Forward',
       makeItHappen: 'Make It Happen',
+    },
+    vi: {
+      learnMore: 'Tìm hiểu thêm',
+      getStarted: 'Bắt đầu',
+      exploreNow: 'Khám phá ngay',
+      discover: 'Khám phá',
+      confidence: 'Lựa chọn tự tin hơn',
+      betterWay: 'Hướng đi tốt hơn',
+      makeItHappen: 'Triển khai ngay',
     },
     ja: {
       learnMore: '詳しく見る',

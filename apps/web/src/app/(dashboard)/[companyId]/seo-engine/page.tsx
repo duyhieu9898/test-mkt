@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api/client';
 import { useAuthStore } from '@/stores/auth-store';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { friendlyError } from '@/lib/friendly-errors';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -95,6 +96,14 @@ interface PlanItem {
   searchIntent: string;
   source: 'idea' | 'keyword' | 'gap';
   addedAt: number;
+}
+
+interface CreditResponse {
+  balance: { totalAvailable: number };
+  costs?: {
+    contentHubGenerateAllTopic?: number;
+    supportMessage?: string;
+  };
 }
 
 interface KeywordDashboardData {
@@ -240,6 +249,13 @@ export default function ContentHubPage() {
     refetchOnWindowFocus: false,
   });
 
+  const { data: creditsData } = useQuery<CreditResponse>({
+    queryKey: ['credits', companyId],
+    queryFn: () => api.get(`/credits/${companyId}`, { token: token! }),
+    enabled: !!token,
+    staleTime: 30 * 1000,
+  });
+
   // ─── Poll active job ────────────────────────────────────────
 
   const { data: jobStatus } = useQuery<SEOJob>({
@@ -302,11 +318,18 @@ export default function ContentHubPage() {
   const bannerCount = bannersData?.count || bannersData?.data?.length || 0;
   const socialCount = socialData?.count || socialData?.data?.length || 0;
   const keywordCount = suggestions?.keywordOpportunities?.length || results?.keywords?.length || 0;
+  const contentHubTopicCost = creditsData?.costs?.contentHubGenerateAllTopic ?? 80;
+  const generateAllCreditCost = contentPlan.length * contentHubTopicCost;
+  const hasEnoughGenerateCredits = !creditsData || generateAllCreditCost === 0 || creditsData.balance.totalAvailable >= generateAllCreditCost;
 
   // ─── Handlers ────────────────────────────────────────────────
 
   const handleGenerateFromPlan = async () => {
     if (!token || contentPlan.length === 0) return;
+    if (!hasEnoughGenerateCredits) {
+      toast.error(creditsData?.costs?.supportMessage || 'You do not have enough credits for this action.');
+      return;
+    }
     setIsGenerating(true);
     setGeneratingTopicCount(contentPlan.length);
 
@@ -345,13 +368,14 @@ export default function ContentHubPage() {
       qc.invalidateQueries({ queryKey: ['landing-pages'] });
       qc.invalidateQueries({ queryKey: ['banners-count'] });
       qc.invalidateQueries({ queryKey: ['social-count'] });
+      qc.invalidateQueries({ queryKey: ['credits', companyId] });
 
       setTimeout(() => {
         document.getElementById('blog-section')?.scrollIntoView({ behavior: 'smooth' });
       }, 1000);
 
-    } catch {
-      toast.error('Could not generate content. Please try again.');
+    } catch (err) {
+      toast.error(friendlyError(err, 'Could not generate content. Please try again.'));
     } finally {
       setIsGenerating(false);
       setGeneratingTopicCount(0);
@@ -842,13 +866,13 @@ export default function ContentHubPage() {
               </p>
               <Button
                 className="w-full gap-2"
-                disabled={isGenerating}
+                disabled={isGenerating || !hasEnoughGenerateCredits}
                 onClick={handleGenerateFromPlan}
               >
                 {isGenerating ? (
                   <><Loader2 className="w-4 h-4 animate-spin" /> Generating {contentPlan.length} topics...</>
                 ) : (
-                  <><Rocket className="w-4 h-4" /> Generate All Content ({contentPlan.length} topics)</>
+                  <><Rocket className="w-4 h-4" /> Generate All Content ({contentPlan.length} topics) · {generateAllCreditCost} credits</>
                 )}
               </Button>
             </div>

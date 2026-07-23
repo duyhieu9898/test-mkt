@@ -1,7 +1,22 @@
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { brandIdentities, companies, documents, siteConfig } from '@1person/core/db';
-import { CrawlerAgent, type CrawlResult } from '../agents/crawler-agent';
+import { brandIdentities, companies, documents } from '@1person/core/db';
+import { buildContentLanguageInstruction, normalizeContentLanguage, type ContentLanguage } from '../lib/language';
+import { extractJSON, llmGenerate } from '../lib/llm';
+import {
+  analyzeDiscoveryTopic,
+  cleanDiscoveryText as cleanText,
+  type DiscoveryTopicPlan,
+  discoverGoogleNewsSources,
+  discoverPublicWebSources,
+  discoverWebsiteSources,
+  fetchReadableText,
+  getDiscoveryDomain as getDomain,
+  inferDiscoveryType as inferType,
+  isSocialProfileUrl,
+  isSameDiscoveryDomain as isSameDomain,
+  normalizeDiscoveryUrl as normalizeUrl,
+} from './public-discovery';
 
 export type CrawlSourceType =
   | 'official_website'
@@ -30,9 +45,20 @@ export interface CrawlDiscoveryResult {
     websiteUrl: string | null;
     domain: string | null;
   };
+  searchFocus: {
+    query: string | null;
+    targetUrl: string | null;
+    domain: string | null;
+    mode: 'public_google' | 'website';
+  };
   sources: CrawlDiscoverySource[];
   warnings: string[];
   searchedAt: string;
+}
+
+export interface CrawlDiscoveryOptions {
+  query?: string | null;
+  websiteUrl?: string | null;
 }
 
 interface CandidateSource {
@@ -45,7 +71,7 @@ interface CandidateSource {
 
 const MAX_SOURCES = 24;
 const MIN_EXTERNAL_CONFIDENCE = 0.62;
-const MAX_EXTERNAL_VERIFY_CANDIDATES = 18;
+const MAX_EXTERNAL_VERIFY_CANDIDATES = 28;
 const VERIFY_TEXT_MAX_CHARS = 9000;
 const GENERIC_NAME_TOKENS = new Set([
   'the', 'and', 'for', 'with', 'company', 'business', 'school', 'academy',
@@ -53,34 +79,79 @@ const GENERIC_NAME_TOKENS = new Set([
   'vietnam', 'online', 'official',
 ]);
 
-function cleanText(value: unknown): string {
-  return String(value ?? '')
-    .replace(/\s+/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .trim();
-}
+async function localizeCrawlSources(
+  sources: CrawlDiscoverySource[],
+  language: ContentLanguage,
+): Promise<CrawlDiscoverySource[]> {
+  if (language === 'en' || sources.length === 0) return sources;
 
-function normalizeUrl(value: string): string | null {
-  const raw = value.trim();
-  if (!raw) return null;
+  const prompt = `${buildContentLanguageInstruction(language)}
+
+Translate the user-facing crawl result cards into the selected language.
+Preserve URLs, company names, brand names, product names, personal names, platform names, and proper nouns.
+Do not add facts, do not change confidence values, and do not invent source details.
+
+Return ONLY valid JSON:
+{"items":[{"id":"same id","title":"localized title","snippet":"localized snippet","sourceLabel":"localized label"}]}
+
+Items:
+${sources.map((source) => JSON.stringify({
+    id: source.id,
+    title: source.title,
+    snippet: source.snippet,
+    sourceLabel: source.sourceLabel,
+    url: source.url,
+  })).join('\n')}`;
+
   try {
-    const url = new URL(raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`);
-    url.hash = '';
-    return url.toString().replace(/\/$/, '');
-  } catch {
-    return null;
+    const { text } = await llmGenerate(
+      [{ role: 'user', content: prompt }],
+      { featureKey: 'knowledge_crawl_localize', maxTokens: 2600 },
+    );
+    const parsed = extractJSON(text) as { items?: Array<Record<string, unknown>> } | null;
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    const byId = new Map(items.map((item) => [cleanText(item.id), item]));
+
+    return sources.map((source) => {
+      const localized = byId.get(source.id);
+      if (!localized) return source;
+      return {
+        ...source,
+        title: cleanText(localized.title).slice(0, 180) || source.title,
+        snippet: cleanText(localized.snippet).slice(0, 360) || source.snippet,
+        sourceLabel: cleanText(localized.sourceLabel).slice(0, 120) || source.sourceLabel,
+      };
+    });
+  } catch (err) {
+    console.warn('[knowledge-crawl] Source localization failed, using original crawl output:', err);
+    return sources;
   }
 }
 
-function getDomain(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    return new URL(value).hostname.replace(/^www\./, '');
-  } catch {
-    return null;
+function parseDiscoveryFocus(rawQuery: string | null | undefined, rawWebsiteUrl?: string | null): {
+  query: string | null;
+  targetUrl: string | null;
+  domain: string | null;
+  mode: 'public_google' | 'website';
+} {
+  const query = cleanText(rawQuery).slice(0, 180) || null;
+  const targetUrl = normalizeUrl(cleanText(rawWebsiteUrl || ''));
+
+  if (targetUrl) {
+    return {
+      query,
+      targetUrl,
+      domain: getDomain(targetUrl),
+      mode: 'website',
+    };
   }
+
+  return {
+    query,
+    targetUrl: null,
+    domain: null,
+    mode: 'public_google',
+  };
 }
 
 function normalizeIdentityText(value: string): string {
@@ -119,15 +190,6 @@ function getCompanySignals(companyName: string, domain: string | null) {
   return { tokens, exactCompacts };
 }
 
-function isSameDomain(url: string, domain: string | null): boolean {
-  if (!domain) return false;
-  try {
-    return new URL(url).hostname.replace(/^www\./, '') === domain;
-  } catch {
-    return false;
-  }
-}
-
 function getHost(url: string): string | null {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -148,27 +210,6 @@ function isLowValueDiscoveryUrl(url: string): boolean {
   ].includes(host);
 }
 
-function sameHostOrPath(baseUrl: string, href: string): string | null {
-  try {
-    const base = new URL(baseUrl);
-    const url = new URL(href, base);
-    if (url.hostname.replace(/^www\./, '') !== base.hostname.replace(/^www\./, '')) return null;
-    url.hash = '';
-    return url.toString().replace(/\/$/, '');
-  } catch {
-    return null;
-  }
-}
-
-function inferType(title: string, url: string, fallback: CrawlSourceType): CrawlSourceType {
-  const haystack = `${title} ${url}`.toLowerCase();
-  if (/\b(blog|article|insight|guide|story)\b/.test(haystack)) return 'blog';
-  if (/\b(news|press|media|announcement)\b/.test(haystack)) return 'news';
-  if (/\b(review|rating|testimonial)\b/.test(haystack)) return 'review';
-  if (/\b(wiki|profile|linkedin|facebook|crunchbase|directory)\b/.test(haystack)) return 'profile';
-  return fallback;
-}
-
 function confidenceFor(candidate: CandidateSource, companyName: string, domain: string | null): number {
   const haystack = normalizeIdentityText(`${candidate.title} ${candidate.snippet ?? ''} ${candidate.url}`);
   const compactHaystack = haystack.replace(/\s+/g, '');
@@ -180,6 +221,7 @@ function confidenceFor(candidate: CandidateSource, companyName: string, domain: 
   const matches = signals.tokens.filter((token) => haystack.includes(token)).length;
   if (signals.tokens.length > 0) score += Math.min(0.2, matches / signals.tokens.length * 0.2);
   if (candidate.type === 'news') score += 0.08;
+  if (candidate.type === 'profile' || isSocialProfileUrl(candidate.url)) score += 0.1;
   return Math.max(0.2, Math.min(0.98, Number(score.toFixed(2))));
 }
 
@@ -211,77 +253,98 @@ function hasStrongIdentityMention(value: string, companyName: string, domain: st
   return tokenMatches.length >= 2;
 }
 
-function stripHtmlToText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-async function safeFetchText(url: string, timeoutMs = 12000): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (1Person Knowledge Crawl)' },
-      signal: AbortSignal.timeout(timeoutMs),
-      redirect: 'follow',
-    });
-    if (!res.ok) return null;
-    return await res.text();
-  } catch {
-    return null;
-  }
-}
-
-async function fetchReadableText(url: string): Promise<string | null> {
-  const readerText = await safeFetchText(`https://r.jina.ai/${url}`, 9000);
-  if (readerText && readerText.trim().length > 80) {
-    return readerText.slice(0, VERIFY_TEXT_MAX_CHARS);
-  }
-
-  const html = await safeFetchText(url, 8000);
-  if (!html) return null;
-  const text = stripHtmlToText(html);
-  return text ? text.slice(0, VERIFY_TEXT_MAX_CHARS) : null;
-}
-
 async function verifyExternalCandidate(
   candidate: CandidateSource,
-  companyName: string,
+  identityName: string,
   domain: string | null,
+  topic: string | null,
 ): Promise<CandidateSource | null> {
   if (candidate.type === 'official_website') return candidate;
   if (isLowValueDiscoveryUrl(candidate.url)) return null;
 
   const quickText = `${candidate.title}\n${candidate.snippet ?? ''}\n${candidate.url}`;
-  const quickMatch = hasStrongIdentityMention(quickText, companyName, domain);
-  const confidence = confidenceFor(candidate, companyName, domain);
+  const identityMatch = hasStrongIdentityMention(quickText, identityName, domain);
+  const topicMatch = topic ? hasStrongIdentityMention(quickText, topic, null) : false;
+  const confidence = confidenceFor(candidate, identityName, domain);
 
   // Exact brand/domain mention in the search result is good enough to show,
   // and avoids slow fetches for already-clear mentions.
-  if (quickMatch && confidence >= 0.72) return candidate;
+  if ((identityMatch || topicMatch) && confidence >= 0.72) return candidate;
 
-  if (!isRelevantExternalCandidate(candidate, companyName, domain) || confidence < MIN_EXTERNAL_CONFIDENCE) {
+  if (!isRelevantExternalCandidate(candidate, identityName, domain) || confidence < MIN_EXTERNAL_CONFIDENCE) {
     return null;
   }
 
-  const pageText = await fetchReadableText(candidate.url);
+  const pageText = await fetchReadableText(candidate.url, VERIFY_TEXT_MAX_CHARS);
   if (!pageText) return null;
 
   const combined = `${quickText}\n${pageText}`;
-  if (!hasStrongIdentityMention(combined, companyName, domain)) return null;
+  if (
+    !hasStrongIdentityMention(combined, identityName, domain)
+    && !(topic && hasStrongIdentityMention(combined, topic, null))
+  ) {
+    return null;
+  }
 
   return {
     ...candidate,
     snippet: candidate.snippet || cleanText(pageText).slice(0, 260),
+  };
+}
+
+function buildPublicDiscoveryQueries(args: {
+  companyName: string;
+  domain: string | null;
+  industry: string | null;
+  topic: string | null;
+  topicPlan?: DiscoveryTopicPlan | null;
+}) {
+  const companyName = cleanText(args.companyName);
+  const domain = args.domain ? cleanText(args.domain) : '';
+  const topic = args.topic ? cleanText(args.topic) : '';
+  const industry = args.industry ? cleanText(args.industry) : '';
+  const quotedCompany = companyName ? `"${companyName}"` : '';
+  const quotedDomain = domain ? `"${domain}"` : '';
+  const topicPart = topic || industry;
+  const topicHints = [
+    topic,
+    args.topicPlan?.intent,
+    ...(args.topicPlan?.keywords || []),
+    ...(args.topicPlan?.phrases || []),
+    ...(args.topicPlan?.slugs || []),
+  ]
+    .map((value) => cleanText(value))
+    .filter(Boolean)
+    .slice(0, 8);
+  const focusedTopic = topicHints.length ? topicHints.join(' OR ') : topicPart;
+
+  // Split into intent buckets so we can surface a healthy mix of official
+  // profiles, mentions, articles, and broader public pages without trusting
+  // one noisy search query too much.
+  const social = [
+    `${quotedCompany} ${quotedDomain} facebook OR linkedin OR instagram OR youtube OR tiktok`,
+    `${quotedCompany} site:facebook.com OR site:linkedin.com/company OR site:instagram.com`,
+    domain ? `${quotedDomain} facebook OR linkedin OR instagram OR youtube OR tiktok` : '',
+  ];
+  const articles = [
+    `${quotedCompany} ${quotedDomain} news OR article OR blog OR wiki`,
+    focusedTopic ? `${quotedCompany} ${focusedTopic} news OR blog OR article` : '',
+    domain ? `${quotedDomain} news OR article OR blog` : '',
+  ];
+  const web = [
+    `${quotedCompany} ${quotedDomain}`,
+    focusedTopic ? `${quotedCompany} ${focusedTopic}` : '',
+    domain ? `${quotedDomain}` : '',
+  ];
+
+  const normalizeList = (values: string[]) => Array.from(new Set(
+    values.map((value) => cleanText(value)).filter((value) => value.length > 0),
+  ));
+
+  return {
+    social: normalizeList(social),
+    articles: normalizeList(articles),
+    web: normalizeList(web),
   };
 }
 
@@ -310,180 +373,54 @@ async function getCompanyWebsite(companyId: string): Promise<{
   return { company, websiteUrl };
 }
 
-async function discoverOfficialPages(websiteUrl: string): Promise<CandidateSource[]> {
-  const candidates: CandidateSource[] = [];
-  const crawler = new CrawlerAgent();
-  const ctx: any = {
-    companyId: 'knowledge-crawl',
-    executionId: 'knowledge-crawl',
-    memory: { store: async () => '', recall: async () => [], storeKnowledge: async () => '', recallKnowledge: async () => [] },
-  };
-
-  const result = await crawler.execute({ url: websiteUrl }, ctx);
-  if (result.success) {
-    const data = result.data as unknown as CrawlResult & { html?: string };
-    candidates.push({
-      title: data.title || new URL(websiteUrl).hostname,
-      url: websiteUrl,
-      snippet: data.metaDescription || data.h1?.[0] || 'Official website homepage',
-      type: 'official_website',
-      sourceLabel: 'Official site',
-    });
-
-    const usefulLinks = (data.navLinks || [])
-      .map((link) => ({
-        text: cleanText(link.text),
-        url: sameHostOrPath(websiteUrl, link.href),
-      }))
-      .filter((link): link is { text: string; url: string } => !!link.url && link.text.length > 1)
-      .filter((link) => {
-        const value = `${link.text} ${link.url}`.toLowerCase();
-        return /(about|service|product|program|course|blog|news|case|customer|pricing|contact|faq)/.test(value);
-      });
-
-    for (const link of usefulLinks.slice(0, 8)) {
-      candidates.push({
-        title: link.text,
-        url: link.url,
-        snippet: 'Important page found on the official website.',
-        type: 'official_website',
-        sourceLabel: 'Official site',
-      });
-    }
-  } else {
-    candidates.push({
-      title: new URL(websiteUrl).hostname,
-      url: websiteUrl,
-      snippet: 'Official website URL saved on the company profile.',
-      type: 'official_website',
-      sourceLabel: 'Official site',
-    });
-  }
-
-  const origin = new URL(websiteUrl).origin;
-  const sitemap = await safeFetchText(`${origin}/sitemap.xml`, 8000);
-  if (sitemap) {
-    const urls = Array.from(sitemap.matchAll(/<loc>([\s\S]*?)<\/loc>/g))
-      .map((match) => normalizeUrl(cleanText(match[1])))
-      .filter((url): url is string => !!url)
-      .filter((url) => sameHostOrPath(websiteUrl, url));
-    for (const url of urls.slice(0, 10)) {
-      candidates.push({
-        title: url.replace(origin, '').replace(/^\/?/, '/') || new URL(websiteUrl).hostname,
-        url,
-        snippet: 'Page found in the official website sitemap.',
-        type: 'official_website',
-        sourceLabel: 'Sitemap',
-      });
-    }
-  }
-
-  return candidates;
-}
-
-async function fetchGoogleNewsCandidates(query: string): Promise<CandidateSource[]> {
-  const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
-  const xml = await safeFetchText(rssUrl, 12000);
-  if (!xml) return [];
-
-  const candidates: CandidateSource[] = [];
-  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-  let match: RegExpExecArray | null;
-  while ((match = itemRegex.exec(xml)) && candidates.length < 8) {
-    const body = match[1] ?? '';
-    const title = cleanText(body.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/)?.[1]);
-    const link = cleanText(body.match(/<link>([\s\S]*?)<\/link>/)?.[1]);
-    const description = cleanText(body.match(/<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/)?.[1]);
-    const sourceName = cleanText(body.match(/<source[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/source>/)?.[1]);
-    if (!title || !link) continue;
-    candidates.push({
-      title,
-      url: link,
-      snippet: description || 'Public news mention found from Google News.',
-      type: inferType(title, link, 'news'),
-      sourceLabel: sourceName ? `Google News - ${sourceName}` : 'Google News',
-    });
-  }
-  return candidates;
-}
-
-async function resolveSerpApiKey(): Promise<string | null> {
-  try {
-    const row = await db
-      .select()
-      .from(siteConfig)
-      .where(and(eq(siteConfig.section, 'integrations'), eq(siteConfig.locale, 'global')))
-      .limit(1);
-    const content = (row[0]?.content || {}) as Record<string, unknown>;
-    const v = content.serpapi_key;
-    if (typeof v === 'string' && v.trim()) return v.trim();
-  } catch {
-    // Env fallback below keeps this feature usable without admin config.
-  }
-  return process.env.SERPAPI_KEY?.trim() || null;
-}
-
-async function fetchSerpApiCandidates(query: string): Promise<CandidateSource[]> {
-  const apiKey = await resolveSerpApiKey();
-  if (!apiKey) return [];
-
-  const params = new URLSearchParams({
-    q: query,
-    api_key: apiKey,
-    num: '6',
-    engine: 'google',
-  });
-  const res = await fetch(`https://serpapi.com/search?${params.toString()}`, {
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) return [];
-  const data: any = await res.json().catch(() => null);
-  const organic = Array.isArray(data?.organic_results) ? data.organic_results : [];
-  return organic.slice(0, 6).map((item: any) => {
-    const title = cleanText(item.title);
-    const url = cleanText(item.link);
-    return {
-      title,
-      url,
-      snippet: cleanText(item.snippet) || 'Public web result found by search.',
-      type: inferType(title, url, 'web'),
-      sourceLabel: 'Web search',
-    };
-  }).filter((item: CandidateSource) => item.title && normalizeUrl(item.url));
-}
-
-export async function discoverKnowledgeCrawlData(companyId: string): Promise<CrawlDiscoveryResult> {
+export async function discoverKnowledgeCrawlData(
+  companyId: string,
+  options: CrawlDiscoveryOptions = {},
+): Promise<CrawlDiscoveryResult> {
   const { company, websiteUrl } = await getCompanyWebsite(companyId);
   const domain = getDomain(websiteUrl);
+  const focus = parseDiscoveryFocus(options.query, options.websiteUrl);
+  const identityName = company.name || focus.query || 'Business';
+  const topic = focus.query;
+  const relevanceDomain = focus.domain || domain;
+  const language = normalizeContentLanguage((company.settings as Record<string, unknown> | null | undefined)?.language);
+  const topicPlan = !focus.targetUrl && topic
+    ? await analyzeDiscoveryTopic({
+      topic,
+      websiteUrl,
+      companyName: company.name,
+      industry: company.industry,
+      language,
+    })
+    : null;
   const warnings: string[] = [];
   const candidates: CandidateSource[] = [];
 
-  if (websiteUrl) {
-    candidates.push(...await discoverOfficialPages(websiteUrl));
-  } else {
-    warnings.push('No company website was found. Add a website in Company/Brand IQ to improve crawl results.');
+  if (focus.targetUrl) {
+    candidates.push(...await discoverWebsiteSources({
+      websiteUrl: focus.targetUrl,
+      topic: focus.query,
+      language,
+    }));
   }
 
-  const exactCompany = `"${company.name}"`;
-  const exactDomain = domain ? `"${domain}"` : '';
-  const searchQueries = Array.from(new Set([
-    exactDomain || exactCompany,
-    exactCompany,
-    domain ? `${exactCompany} ${exactDomain}` : exactCompany,
-    domain ? `${exactCompany} -site:${domain}` : exactCompany,
-    domain ? `${exactDomain} news OR article OR blog OR wiki` : `${exactCompany} news OR article OR blog OR wiki`,
-  ].filter(Boolean)));
+  if (!focus.targetUrl) {
+    const searchQueries = buildPublicDiscoveryQueries({
+      companyName: identityName,
+      domain: relevanceDomain,
+      industry: company.industry,
+      topic,
+      topicPlan,
+    });
 
-  const publicResults = await Promise.allSettled([
-    ...searchQueries.slice(0, 3).map((query) => fetchGoogleNewsCandidates(query)),
-    ...searchQueries.map((query) => fetchSerpApiCandidates(query)),
-  ]);
-  for (const result of publicResults) {
-    if (result.status === 'fulfilled') candidates.push(...result.value);
-  }
-
-  if (!await resolveSerpApiKey()) {
-    warnings.push('Public web search is running in limited mode. Add SERPAPI_KEY for broader Google result discovery.');
+    const publicResults = await Promise.allSettled([
+      ...searchQueries.articles.slice(0, 4).map((query) => discoverGoogleNewsSources(query, 6, language)),
+      ...searchQueries.social.slice(0, 3).map((query) => discoverPublicWebSources(query, 8, language)),
+      ...searchQueries.web.slice(0, 3).map((query) => discoverPublicWebSources(query, 8, language)),
+    ]);
+    for (const result of publicResults) {
+      if (result.status === 'fulfilled') candidates.push(...result.value);
+    }
   }
 
   const existingDocs = await db
@@ -506,7 +443,7 @@ export async function discoverKnowledgeCrawlData(companyId: string): Promise<Cra
   const verifiedExternal = (await Promise.allSettled(
     externalCandidates
       .slice(0, MAX_EXTERNAL_VERIFY_CANDIDATES)
-      .map((candidate) => verifyExternalCandidate(candidate, company.name, domain)),
+      .map((candidate) => verifyExternalCandidate(candidate, identityName, relevanceDomain, topic)),
   ))
     .flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
 
@@ -514,11 +451,11 @@ export async function discoverKnowledgeCrawlData(companyId: string): Promise<Cra
   for (const candidate of [...officialCandidates, ...verifiedExternal]) {
     const url = normalizeUrl(candidate.url);
     if (!url) continue;
-    const confidence = confidenceFor({ ...candidate, url }, company.name, domain);
+    const confidence = confidenceFor({ ...candidate, url }, identityName, relevanceDomain);
     const type = candidate.type === 'web' ? inferType(candidate.title, url, 'web') : candidate.type;
     if (
       type !== 'official_website'
-      && (!isRelevantExternalCandidate({ ...candidate, url, type }, company.name, domain)
+      && (!isRelevantExternalCandidate({ ...candidate, url, type }, identityName, relevanceDomain)
         || confidence < MIN_EXTERNAL_CONFIDENCE)
     ) {
       continue;
@@ -541,6 +478,7 @@ export async function discoverKnowledgeCrawlData(companyId: string): Promise<Cra
     if (a.alreadyAdded !== b.alreadyAdded) return a.alreadyAdded ? 1 : -1;
     return b.confidence - a.confidence;
   });
+  const localizedSources = await localizeCrawlSources(sources.slice(0, MAX_SOURCES), language);
 
   return {
     company: {
@@ -549,7 +487,8 @@ export async function discoverKnowledgeCrawlData(companyId: string): Promise<Cra
       websiteUrl,
       domain,
     },
-    sources: sources.slice(0, MAX_SOURCES),
+    searchFocus: focus,
+    sources: localizedSources,
     warnings,
     searchedAt: new Date().toISOString(),
   };
