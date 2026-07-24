@@ -19,7 +19,9 @@ import { eq, and } from 'drizzle-orm';
 import { socialConnections, adConnections, knowledgeBase } from '@1person/core/db';
 import { platformRegistry } from '../services/platforms';
 import {
+  buildGoogleDrivePickerAuthUrl,
   buildGoogleDriveAuthUrl,
+  connectGoogleDrivePickedFile,
   connectGoogleDrive,
   disconnectGoogleDrive,
   getGoogleDriveStatus,
@@ -488,6 +490,30 @@ integrationsRouter.get('/google_drive/company/:companyId/files', async (c) => {
   }
 });
 
+integrationsRouter.post('/google_drive/company/:companyId/picker-url', async (c) => {
+  const { userId } = c.get('user');
+  const companyId = c.req.param('companyId');
+  const body = await c.req.json().catch(() => ({}));
+
+  if (!isGoogleDriveConfigured()) {
+    return c.json({ error: 'Google Drive is not available at this time' }, 400);
+  }
+
+  try {
+    await verifyCompanyAccess(userId, companyId);
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
+    const apiBase = baseUrl.includes('/api/v1') ? baseUrl : `${baseUrl}/api/v1`;
+    const redirectUri = `${apiBase}/integrations/google_drive/callback`;
+    const mimeTypes = typeof body.mimeTypes === 'string' ? body.mimeTypes : undefined;
+    return c.json({
+      url: buildGoogleDrivePickerAuthUrl(userId, companyId, redirectUri, { mimeTypes }),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Could not open Google Drive picker.';
+    return c.json({ message }, 400);
+  }
+});
+
 integrationsRouter.get('/onedrive/company/:companyId/files', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
@@ -527,9 +553,23 @@ async function handleGoogleDriveAuthUrl(c: any) {
 
 async function handleGoogleDriveCallback(c: any) {
   const code = c.req.query('code');
+  const oauthError = c.req.query('error');
+  const oauthErrorDescription = c.req.query('error_description');
+  const pickedFileIds = c.req.query('picked_file_ids');
   const state = c.req.query('state') || '';
-  const [userId, platform, companyId] = state.split(':');
+  const [userId, platform, maybePicker, maybeCompanyId] = state.split(':');
+  const isPickerFlow = maybePicker === 'picker';
+  const companyId = isPickerFlow ? maybeCompanyId : maybePicker;
   const webUrl = process.env.WEB_URL || 'http://localhost:3004';
+
+  if (oauthError) {
+    return c.html(oauthPopupHtml(
+      webUrl,
+      'oauth_error',
+      'google_drive',
+      oauthErrorDescription || oauthError,
+    ));
+  }
 
   if (!code || platform !== 'google_drive' || !userId || !companyId) {
     return c.html(oauthPopupHtml(webUrl, 'oauth_error', 'google_drive', 'Invalid Google Drive authorization response.'));
@@ -540,6 +580,19 @@ async function handleGoogleDriveCallback(c: any) {
     const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
     const apiBase = baseUrl.includes('/api/v1') ? baseUrl : `${baseUrl}/api/v1`;
     const redirectUri = `${apiBase}/integrations/google_drive/callback`;
+    if (isPickerFlow) {
+      const fileId = typeof pickedFileIds === 'string'
+        ? pickedFileIds.split(',').map((id: string) => id.trim()).find(Boolean)
+        : undefined;
+      if (!fileId) {
+        return c.html(oauthPopupHtml(webUrl, 'oauth_error', 'google_drive', 'No Google Drive file was selected.'));
+      }
+      const selectedFile = await connectGoogleDrivePickedFile(code, redirectUri, companyId, userId, fileId);
+      return c.html(oauthPopupHtml(webUrl, 'oauth_success', 'google_drive', undefined, {
+        picker: true,
+        selectedFile,
+      }));
+    }
     await connectGoogleDrive(code, redirectUri, companyId, userId);
     return c.html(oauthPopupHtml(webUrl, 'oauth_success', 'google_drive'));
   } catch (err) {
@@ -569,9 +622,20 @@ async function handleOneDriveAuthUrl(c: any) {
 
 async function handleOneDriveCallback(c: any) {
   const code = c.req.query('code');
+  const oauthError = c.req.query('error');
+  const oauthErrorDescription = c.req.query('error_description');
   const state = c.req.query('state') || '';
   const [userId, platform, companyId] = state.split(':');
   const webUrl = process.env.WEB_URL || 'http://localhost:3004';
+
+  if (oauthError) {
+    return c.html(oauthPopupHtml(
+      webUrl,
+      'oauth_error',
+      'onedrive',
+      oauthErrorDescription || oauthError,
+    ));
+  }
 
   if (!code || platform !== 'onedrive' || !userId || !companyId) {
     return c.html(oauthPopupHtml(webUrl, 'oauth_error', 'onedrive', 'Invalid OneDrive authorization response.'));
@@ -598,10 +662,16 @@ async function verifyCompanyAccess(userId: string, companyId: string) {
   }
 }
 
-function oauthPopupHtml(webUrl: string, type: 'oauth_success' | 'oauth_error', platform: string, error?: string) {
+function oauthPopupHtml(
+  webUrl: string,
+  type: 'oauth_success' | 'oauth_error',
+  platform: string,
+  error?: string,
+  extraPayload?: Record<string, unknown>,
+) {
   const platformName = platform === 'google_drive' ? 'Google Drive' : platform === 'onedrive' ? 'OneDrive' : platform;
   const title = type === 'oauth_success' ? `Connected ${platformName}!` : 'Connection Failed';
-  const payload = JSON.stringify({ type, platform, error });
+  const payload = JSON.stringify({ type, platform, error, ...extraPayload });
   const safeError = error ? escapeHtml(error) : '';
   return `
     <html><body style="font-family: Arial, sans-serif; padding: 24px; color: #111827;">

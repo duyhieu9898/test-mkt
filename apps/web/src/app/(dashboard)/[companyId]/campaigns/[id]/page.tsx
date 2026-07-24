@@ -52,8 +52,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { friendlyError } from '@/lib/friendly-errors';
 import { campaignDisplayTitle } from '@/lib/campaign-title';
 import { cn } from '@/lib/utils';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 import { WorkflowProgressPanel } from '@/components/workflow-progress-panel';
 import { PostPreview, type PostPlatform } from '@/components/social-post-preview';
+import {
+  VideoReferenceImagePicker,
+  type VideoReferenceImageSelection,
+  videoReferenceImageRequestBody,
+} from '@/components/marketing/video-reference-image-picker';
 import {
   Dialog,
   DialogContent,
@@ -225,6 +231,13 @@ interface VideoProject {
     };
     imglyScene?: string;
     imglySceneVideoUrl?: string;
+    referenceImage?: {
+      assetId?: string;
+      url?: string;
+      name?: string;
+      mimeType?: string;
+      sourceType?: string;
+    };
   } | null;
   scenes?: unknown[] | null;
   createdAt: string;
@@ -245,7 +258,7 @@ const VIDEO_GENERATION_PHASES = [
   {
     progress: 42,
     label: 'Starting AI rendering',
-    hint: 'Sending the video job to Bedrock. This can take a little while.',
+    hint: 'Sending the video job to Veo through OpenRouter. This can take a little while.',
   },
   {
     progress: 62,
@@ -369,6 +382,11 @@ interface DeleteBannerResponse {
     id: string;
     mediaUrls?: string[] | null;
   }>;
+}
+
+interface DeleteVideoResponse {
+  deleted: boolean;
+  videoId: string;
 }
 
 interface UpdateSocialPostResponse extends SocialPost {}
@@ -1166,6 +1184,7 @@ export default function CampaignDetailPage() {
   const campaignId = params.id as string;
   const token = useAuthStore((s) => s.token);
   const queryClient = useQueryClient();
+  const [language] = usePreferredAppLanguage('en');
   const { data: company } = useCompany(companyId);
   const [progressDone, setProgressDone] = useState(false);
   const [editingBanner, setEditingBanner] = useState<Banner | null>(null);
@@ -1175,6 +1194,7 @@ export default function CampaignDetailPage() {
   const [deletingBannerId, setDeletingBannerId] = useState<string | null>(null);
   const [selectedBannerIds, setSelectedBannerIds] = useState<string[]>([]);
   const [videoAspectRatio, setVideoAspectRatio] = useState<'9:16' | '16:9'>('9:16');
+  const [videoReferenceImage, setVideoReferenceImage] = useState<VideoReferenceImageSelection>({ type: 'none' });
   const [videoGenerating, setVideoGenerating] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoRegenerateDialogOpen, setVideoRegenerateDialogOpen] = useState(false);
@@ -1183,6 +1203,7 @@ export default function CampaignDetailPage() {
   const [videoApplyDialogOpen, setVideoApplyDialogOpen] = useState(false);
   const [selectedVideoApplyPlatforms, setSelectedVideoApplyPlatforms] = useState<SocialImagePlatform[]>([]);
   const [savingPostVideo, setSavingPostVideo] = useState(false);
+  const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
   const [savingPostMedia, setSavingPostMedia] = useState(false);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
   const [selectedApplyPlatforms, setSelectedApplyPlatforms] = useState<SocialImagePlatform[]>([]);
@@ -1277,6 +1298,7 @@ export default function CampaignDetailPage() {
     setVideoApplyDialogOpen(false);
     setVideoRegenerateDialogOpen(false);
     setVideoCreativeNotes('');
+    setVideoReferenceImage({ type: 'none' });
   }, [campaignId]);
 
   useEffect(() => {
@@ -1567,6 +1589,8 @@ export default function CampaignDetailPage() {
           render: true,
           forceNew: Boolean(options?.forceNew),
           creativeNotes: options?.creativeNotes?.trim() || undefined,
+          language,
+          ...videoReferenceImageRequestBody(videoReferenceImage),
         },
         { token },
       );
@@ -1598,6 +1622,32 @@ export default function CampaignDetailPage() {
       toast.error(friendlyError(error, "We couldn't create this video. Please try again."), { id: toastId });
     } finally {
       setVideoGenerating(false);
+    }
+  };
+
+  const deleteFailedVideo = async (videoId: string) => {
+    if (!token || deletingVideoId) return;
+    setDeletingVideoId(videoId);
+    try {
+      await api.delete<DeleteVideoResponse>(
+        `/marketing/company/${companyId}/videos/${videoId}`,
+        { token },
+      );
+      queryClient.setQueryData<DetailResponse>(
+        ['campaign', companyId, campaignId],
+        (current) => current
+          ? {
+            ...current,
+            videos: (current.videos ?? []).filter((video) => video.id !== videoId),
+          }
+          : current,
+      );
+      if (selectedVideoId === videoId) setSelectedVideoId(null);
+      toast.success('Failed video removed.');
+    } catch (error) {
+      toast.error(friendlyError(error, "We couldn't remove this failed video. Please try again."));
+    } finally {
+      setDeletingVideoId(null);
     }
   };
 
@@ -2485,7 +2535,7 @@ export default function CampaignDetailPage() {
               type="button"
               size="sm"
               className="gap-2"
-              onClick={() => void generateCampaignVideo()}
+              onClick={() => setVideoRegenerateDialogOpen(true)}
               disabled={!token || isVideoWorking || isGenerating || isLaunching || !hasEnoughVideoCredits}
               title={!hasEnoughVideoCredits ? 'Not enough credits. Contact support to add more.' : undefined}
             >
@@ -2665,44 +2715,70 @@ export default function CampaignDetailPage() {
                           <p className="text-xs text-slate-500">
                             {video.aspectRatio} · {video.format}
                           </p>
+                          {video.script?.referenceImage?.name && (
+                            <p
+                              className="truncate text-xs text-indigo-700"
+                              title={video.script.referenceImage.name}
+                            >
+                              Source image: {video.script.referenceImage.name}
+                            </p>
+                          )}
                           {isFailedVideo && video.script?.error && (
                             <p className="line-clamp-2 text-xs text-rose-600" title={video.script.error}>
                               {video.script.error}
                             </p>
                           )}
                         </div>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <Button
-                            type="button"
-                            variant={isSelectedVideo ? 'default' : 'outline'}
-                            size="sm"
-                            className="w-full gap-2"
-                            disabled={!isReadyVideo || savingPostVideo}
-                            onClick={() => setSelectedVideoId(video.id)}
-                          >
-                            {isSelectedVideo ? (
-                              <CheckCircle2 className="h-4 w-4" />
-                            ) : (
-                              <Clapperboard className="h-4 w-4" />
-                            )}
-                            {isSelectedVideo ? 'Selected' : 'Select'}
-                          </Button>
+                        {isFailedVideo ? (
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="w-full gap-2"
-                            disabled={!isReadyVideo}
-                            onClick={() => {
-                              if (video.outputUrl) {
-                                window.open(campaignImageSrc(video.outputUrl), '_blank', 'noopener,noreferrer');
-                              }
-                            }}
+                            className="w-full gap-2 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                            disabled={deletingVideoId === video.id}
+                            onClick={() => void deleteFailedVideo(video.id)}
                           >
-                            <ExternalLink className="h-4 w-4" />
-                            Open
+                            {deletingVideoId === video.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                            Remove failed video
                           </Button>
-                        </div>
+                        ) : (
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <Button
+                              type="button"
+                              variant={isSelectedVideo ? 'default' : 'outline'}
+                              size="sm"
+                              className="w-full gap-2"
+                              disabled={!isReadyVideo || savingPostVideo}
+                              onClick={() => setSelectedVideoId(video.id)}
+                            >
+                              {isSelectedVideo ? (
+                                <CheckCircle2 className="h-4 w-4" />
+                              ) : (
+                                <Clapperboard className="h-4 w-4" />
+                              )}
+                              {isSelectedVideo ? 'Selected' : 'Select'}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="w-full gap-2"
+                              disabled={!isReadyVideo}
+                              onClick={() => {
+                                if (video.outputUrl) {
+                                  window.open(campaignImageSrc(video.outputUrl), '_blank', 'noopener,noreferrer');
+                                }
+                              }}
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                              Open
+                            </Button>
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   );
@@ -3091,9 +3167,11 @@ export default function CampaignDetailPage() {
       <Dialog open={videoRegenerateDialogOpen} onOpenChange={setVideoRegenerateDialogOpen}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Create another video</DialogTitle>
+            <DialogTitle>{hasCampaignVideo ? 'Create another video' : 'Create campaign video'}</DialogTitle>
             <DialogDescription>
-              Tell AI what should be different this time. The new video will be added next to the existing videos.
+              {hasCampaignVideo
+                ? 'Tell AI what should be different this time. The new video will be added next to the existing videos.'
+                : 'Choose an optional image source and tell AI what this campaign video should focus on.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -3113,6 +3191,14 @@ export default function CampaignDetailPage() {
               Optional, but a clear note helps AI create a video that feels different from the current one.
             </p>
           </div>
+          <VideoReferenceImagePicker
+            companyId={companyId}
+            campaignId={campaignId}
+            token={token}
+            value={videoReferenceImage}
+            onChange={setVideoReferenceImage}
+            disabled={isVideoWorking}
+          />
 
           <DialogFooter className="gap-2 sm:gap-0">
             <Button
@@ -3129,7 +3215,7 @@ export default function CampaignDetailPage() {
               disabled={isVideoWorking || !hasEnoughVideoCredits}
               title={!hasEnoughVideoCredits ? 'Not enough credits. Contact support to add more.' : undefined}
               onClick={() => void generateCampaignVideo({
-                forceNew: true,
+                forceNew: hasCampaignVideo,
                 creativeNotes: videoCreativeNotes,
               })}
             >

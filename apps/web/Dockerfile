@@ -58,6 +58,9 @@ COPY --from=builder --chown=nextjs:nextjs /app/apps/web/.next/standalone ./
 
 # Static assets
 COPY --from=builder --chown=nextjs:nextjs /app/apps/web/.next/static ./apps/web/.next/static
+# Public assets are not bundled into the standalone server output. Keep favicon,
+# apple-touch-icon, and other /public files available in production.
+COPY --from=builder --chown=nextjs:nextjs /app/apps/web/public ./apps/web/public
 
 USER nextjs
 

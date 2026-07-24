@@ -32,7 +32,10 @@ import { getViralFrameworkPrompt, getAdCopySpecPrompt, AIDA_FRAMEWORK, AB_TEST_A
 import { adaptDesignForSize, AD_SIZES } from '../services/creative-adapter';
 import { validateBanner } from '../services/creative-quality';
 import { generateScript, breakIntoScenes } from '../services/video-engine';
-import { createCampaignVideoProject, syncCampaignVideoProject } from '../services/campaign-video-creative';
+import {
+  createCampaignVideoProject,
+  UnsupportedVideoReferenceImageError,
+} from '../services/campaign-video-creative';
 import {
   applyLatestCampaignBannerMedia,
   bannerIdFromMediaUrl,
@@ -2129,10 +2132,18 @@ marketingEngineRouter.post(
     render: z.boolean().optional().default(false),
     creativeNotes: z.string().max(1200).optional(),
     forceNew: z.boolean().optional().default(false),
+    language: z.string().optional(),
+    referenceImage: z.object({
+      type: z.enum(['asset', 'google_drive', 'onedrive']),
+      assetId: z.string().uuid().optional(),
+      fileId: z.string().min(5).max(300).optional(),
+      fileName: z.string().max(255).optional(),
+    }).optional(),
   })),
   async (c) => {
     const companyId = c.req.param('companyId');
-    const { campaignId, format, aspectRatio, render, creativeNotes, forceNew } = c.req.valid('json');
+    const { userId } = c.get('user');
+    const { campaignId, format, aspectRatio, render, creativeNotes, forceNew, language, referenceImage } = c.req.valid('json');
 
     try {
       if (render) {
@@ -2146,25 +2157,25 @@ marketingEngineRouter.post(
         const project = await createCampaignVideoProject({
           companyId,
           campaignId,
+          userId,
           format,
           aspectRatio,
           creativeNotes,
           forceNew,
+          language,
+          referenceImage: referenceImage?.type === 'asset' && referenceImage.assetId
+            ? { type: 'asset', assetId: referenceImage.assetId }
+            : referenceImage?.type === 'google_drive' && referenceImage.fileId
+              ? { type: 'google_drive', fileId: referenceImage.fileId, fileName: referenceImage.fileName }
+              : referenceImage?.type === 'onedrive' && referenceImage.fileId
+                ? { type: 'onedrive', fileId: referenceImage.fileId, fileName: referenceImage.fileName }
+                : undefined,
         });
-        if ((project as any).justSubmitted) {
-          await chargeFixedCredits(companyId, FIXED_CREDIT_COSTS.campaignVideo, {
-            featureKey: 'campaign_video',
-            tier: 'premium',
-            refKind: 'video_project',
-            refId: project.id,
-            note: `AI campaign video (${format}, ${aspectRatio})`,
-          });
-        }
         return c.json(project);
       }
 
       // Step 1: Generate script
-      const { title, script } = await generateScript(companyId, { format, aspectRatio });
+      const { title, script } = await generateScript(companyId, { format, aspectRatio, language });
 
       // Create video project with script
       const [project] = await db.insert(videoProjects).values({
@@ -2196,6 +2207,9 @@ marketingEngineRouter.post(
       return c.json(updated);
     } catch (err) {
       if (err instanceof HTTPException) throw err;
+      if (err instanceof UnsupportedVideoReferenceImageError) {
+        return c.json({ error: err.message }, 400);
+      }
       console.error('[Video] Script generation failed:', err);
       return c.json({
         error: 'Failed to generate video script. Please try again.',
@@ -2211,8 +2225,30 @@ marketingEngineRouter.get('/company/:companyId/videos/:id', async (c) => {
     .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
     .limit(1);
   if (!project) return c.json({ error: 'Video project not found' }, 404);
-  const synced = await syncCampaignVideoProject({ companyId, projectId: id });
-  return c.json(synced ?? project);
+  return c.json(project);
+});
+
+marketingEngineRouter.delete('/company/:companyId/videos/:id', async (c) => {
+  const companyId = c.req.param('companyId');
+  const id = c.req.param('id');
+  const [project] = await db.select().from(videoProjects)
+    .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
+    .limit(1);
+  if (!project) return c.json({ error: 'Video project not found' }, 404);
+  if (project.status !== 'failed') {
+    return c.json({ error: 'Only failed videos can be removed from this campaign.' }, 409);
+  }
+
+  const assetUrls = [
+    project.outputUrl,
+    project.thumbnailUrl,
+  ].filter((url): url is string => Boolean(url));
+
+  await db.delete(videoProjects)
+    .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)));
+  await deleteStoredAssetsIfUnreferenced(assetUrls, { companyId });
+
+  return c.json({ deleted: true, videoId: id });
 });
 
 // List video projects
@@ -2221,12 +2257,7 @@ marketingEngineRouter.get('/company/:companyId/videos', async (c) => {
   const items = await db.select().from(videoProjects)
     .where(eq(videoProjects.companyId, companyId))
     .orderBy(desc(videoProjects.createdAt));
-  const syncedItems = await Promise.all(
-    items.map((item) => item.status === 'rendering'
-      ? syncCampaignVideoProject({ companyId, projectId: item.id }).then((synced) => synced ?? item)
-      : item),
-  );
-  return c.json({ data: syncedItems });
+  return c.json({ data: items });
 });
 
 // Update video project (edit script/scenes)

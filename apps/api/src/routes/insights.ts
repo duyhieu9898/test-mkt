@@ -115,12 +115,14 @@ insightsRouter.get('/:companyId/advisor/latest', async (c) => {
 insightsRouter.post('/:companyId/advisor/refresh', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
+  const body = await c.req.json().catch(() => ({})) as { language?: string };
   try {
     const { company } = await requireOwnedCompany(companyId);
     const saved = await generateAndSaveCeoBrief({
       companyId,
       companyName: company.name,
       actor: userId ?? 'system',
+      language: body.language,
     });
 
     return c.json({ brief: saved });

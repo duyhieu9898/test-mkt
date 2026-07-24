@@ -51,7 +51,7 @@ import {
   normalizeContentLanguage,
   resolveCompanyLanguage,
 } from '../lib/language';
-import { createCampaignVideoProject } from './campaign-video-creative';
+import { createCampaignVideoProject, type CampaignVideoReferenceImageInput } from './campaign-video-creative';
 
 export interface LaunchTargets {
   wordpress: boolean;
@@ -62,15 +62,19 @@ export interface LaunchTargets {
   language?: string;
   imageMode?: 'ai' | 'uploaded';
   uploadedAssetIds?: string[];
+  videoReferenceImage?: CampaignVideoReferenceImageInput;
+  userId?: string;
 }
 
 export interface StartLaunchArgs {
   companyId: string;
+  userId?: string;
   keyword: string;
   brief?: string;
   targets: LaunchTargets;
   imageMode?: 'ai' | 'uploaded';
   assetIds?: string[];
+  videoReferenceImage?: CampaignVideoReferenceImageInput;
   language?: string;
   /** Who triggered this — defaults to manual one-click. */
   source?: 'manual' | 'autopilot';
@@ -189,6 +193,8 @@ export async function startLaunch(args: StartLaunchArgs): Promise<{ launchId: st
     language,
     imageMode: args.imageMode === 'uploaded' && args.assetIds?.length ? 'uploaded' : 'ai',
     uploadedAssetIds: args.assetIds?.slice(0, 3),
+    videoReferenceImage: args.videoReferenceImage,
+    userId: args.userId,
   };
   const [row] = await db
     .insert(campaignLaunches)
@@ -831,8 +837,11 @@ async function runLaunch(launchId: string): Promise<void> {
       const video = await createCampaignVideoProject({
         companyId: launch.companyId,
         campaignId,
+        userId: launchTargets.userId,
         format: '15s',
         aspectRatio: '9:16',
+        referenceImage: launchTargets.videoReferenceImage,
+        language,
       });
       await markDone(launchId, 'video', {
         campaignId,

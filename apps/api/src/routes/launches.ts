@@ -18,7 +18,7 @@ import { buildEffectiveSourceContext } from '../services/source-content-import';
 import { ensureTenantForCompany } from '../lib/tenant-ai';
 import { generateLaunchSuggestions } from '../services/launch-suggestions';
 import { chargeFixedCredits, ensureSufficientCredits } from '../lib/credits';
-import { getLaunchCampaignCost } from '../lib/credit-costs';
+import { FIXED_CREDIT_COSTS, getLaunchCampaignCost } from '../lib/credit-costs';
 
 const launchesRouter = new Hono();
 
@@ -48,6 +48,12 @@ launchesRouter.post(
       oneDriveFileName: z.string().max(255).optional(),
       imageMode: z.enum(['ai', 'uploaded']).default('ai').optional(),
       assetIds: z.array(z.string().uuid()).max(3).optional(),
+      videoReferenceImage: z.object({
+        type: z.enum(['asset', 'google_drive', 'onedrive']),
+        assetId: z.string().uuid().optional(),
+        fileId: z.string().min(5).max(300).optional(),
+        fileName: z.string().max(255).optional(),
+      }).optional(),
       language: z.string().optional(),
       targets: z.object({
         wordpress: z.boolean().default(false),
@@ -64,10 +70,13 @@ launchesRouter.post(
     await verifyOwnership(companyId, userId);
     const body = c.req.valid('json');
     const creditCost = getLaunchCampaignCost({
-      includeVideo: body.targets.video,
+      // Video credits are charged by the render worker only after the
+      // generated video is completed and stored successfully.
+      includeVideo: false,
       imageMode: body.imageMode,
     });
-    await ensureSufficientCredits(companyId, creditCost);
+    const requiredCredits = body.targets.video ? creditCost + FIXED_CREDIT_COSTS.campaignVideo : creditCost;
+    await ensureSufficientCredits(companyId, requiredCredits);
     const effectiveBrief = await buildEffectiveSourceContext({
       companyId,
       userId,
@@ -76,10 +85,18 @@ launchesRouter.post(
 
     const result = await startLaunch({
       companyId,
+      userId,
       keyword: body.keyword,
       brief: effectiveBrief,
       imageMode: body.imageMode,
       assetIds: body.assetIds,
+      videoReferenceImage: body.videoReferenceImage?.type === 'asset' && body.videoReferenceImage.assetId
+        ? { type: 'asset', assetId: body.videoReferenceImage.assetId }
+        : body.videoReferenceImage?.type === 'google_drive' && body.videoReferenceImage.fileId
+          ? { type: 'google_drive', fileId: body.videoReferenceImage.fileId, fileName: body.videoReferenceImage.fileName }
+          : body.videoReferenceImage?.type === 'onedrive' && body.videoReferenceImage.fileId
+            ? { type: 'onedrive', fileId: body.videoReferenceImage.fileId, fileName: body.videoReferenceImage.fileName }
+            : undefined,
       language: body.language,
       targets: body.targets,
     });
@@ -115,7 +132,11 @@ launchesRouter.get('/:companyId/suggestions', async (c) => {
   const companyId = c.req.param('companyId');
   const company = await verifyOwnership(companyId, userId);
   const tenantId = await ensureTenantForCompany(company.id, company.name);
-  const suggestions = await generateLaunchSuggestions({ companyId, tenantId });
+  const suggestions = await generateLaunchSuggestions({
+    companyId,
+    tenantId,
+    language: c.req.query('language')?.trim(),
+  });
   return c.json({ data: suggestions });
 });
 

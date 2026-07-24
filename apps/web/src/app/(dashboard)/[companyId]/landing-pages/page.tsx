@@ -63,13 +63,13 @@ import { api } from '@/lib/api/client';
 import { useAuthStore } from '@/stores/auth-store';
 import {
   useLandingPages,
-  useCompany,
   useGenerateLandingPage,
   useUpdateLandingPageStatus,
   useDeleteLandingPage,
   type LandingPage,
 } from '@/lib/api/hooks';
 import { PublishDialog } from '@/components/landing-pages/publish-dialog';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 const statusConfig: Record<
   string,
@@ -137,7 +137,7 @@ export default function LandingPagesPage() {
   // Old state removed — wizard handles everything
 
   const { data: pages, isLoading } = useLandingPages(companyId);
-  const { data: company } = useCompany(companyId);
+  const [language] = usePreferredAppLanguage('en');
   const generatePage = useGenerateLandingPage();
   const updateStatus = useUpdateLandingPageStatus();
   const deletePage = useDeleteLandingPage();
@@ -269,7 +269,7 @@ export default function LandingPagesPage() {
             <PageGeneratorWizard
               companyName={undefined}
               companyIndustry={undefined}
-              initialLanguage={company?.settings?.language}
+              initialLanguage={language}
               isGenerating={generatePage.isPending}
               onCancel={() => setIsCreateDialogOpen(false)}
               onGenerate={async (config: PageConfig) => {

@@ -40,6 +40,11 @@ export type GoogleDriveReadResult = GoogleDriveFile & {
   text: string;
 };
 
+export type GoogleDriveBinaryResult = GoogleDriveFile & {
+  buffer: Buffer;
+  mimeType: string;
+};
+
 export function isGoogleDriveConfigured(): boolean {
   return !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 }
@@ -50,7 +55,7 @@ export function buildGoogleDriveAuthUrl(userId: string, companyId: string, redir
   }
 
   const scope = [
-    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/drive.file',
     'https://www.googleapis.com/auth/userinfo.email',
     'https://www.googleapis.com/auth/userinfo.profile',
   ].join(' ');
@@ -64,6 +69,33 @@ export function buildGoogleDriveAuthUrl(userId: string, companyId: string, redir
     prompt: 'consent',
     state: `${userId}:${GOOGLE_DRIVE_PROVIDER}:${companyId}:${Date.now()}`,
   });
+
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+export function buildGoogleDrivePickerAuthUrl(
+  userId: string,
+  companyId: string,
+  redirectUri: string,
+  options: { mimeTypes?: string; allowMultiple?: boolean } = {},
+): string {
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    throw new Error('Google Drive is not configured.');
+  }
+
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'https://www.googleapis.com/auth/drive.file',
+    access_type: 'offline',
+    prompt: 'consent',
+    trigger_onepick: 'true',
+    state: `${userId}:${GOOGLE_DRIVE_PROVIDER}:picker:${companyId}:${Date.now()}`,
+  });
+
+  if (options.allowMultiple) params.set('allow_multiple', 'true');
+  if (options.mimeTypes?.trim()) params.set('mimetypes', options.mimeTypes.trim());
 
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
@@ -88,6 +120,34 @@ export async function connectGoogleDrive(code: string, redirectUri: string, comp
     accountEmail: account.email,
     accountId: account.id,
   });
+}
+
+export async function connectGoogleDrivePickedFile(
+  code: string,
+  redirectUri: string,
+  companyId: string,
+  userId: string,
+  fileId: string,
+): Promise<GoogleDriveFile> {
+  const token = await exchangeCode(code, redirectUri);
+  if (!token.access_token || !token.refresh_token) {
+    throw new Error(token.error_description || token.error || 'Google did not return Drive tokens.');
+  }
+
+  const metadata = await getDriveFileMetadata(token.access_token, fileId);
+
+  // The Picker grants this app access only to the selected file. Store the
+  // refresh token so later generation jobs can read that exact file.
+  await saveDriveToken(companyId, userId, {
+    accessToken: encryptSecret(token.access_token),
+    refreshToken: encryptSecret(token.refresh_token),
+    expiresAt: token.expires_in ? new Date(Date.now() + token.expires_in * 1000).toISOString() : undefined,
+    scope: token.scope,
+    connectedAt: new Date().toISOString(),
+    accountName: 'Google Drive',
+  });
+
+  return metadata;
 }
 
 export async function getGoogleDriveStatus(companyId: string, userId: string) {
@@ -146,6 +206,20 @@ export async function readGoogleDriveFileText(companyId: string, userId: string,
   }
 
   return { ...metadata, mimeType, text };
+}
+
+export async function readGoogleDriveImageFile(
+  companyId: string,
+  userId: string,
+  fileId: string,
+): Promise<GoogleDriveBinaryResult> {
+  const accessToken = await getValidAccessToken(companyId, userId);
+  const metadata = await getDriveFileMetadata(accessToken, fileId);
+  const { buffer, mimeType } = await downloadDriveFile(accessToken, metadata);
+  if (!isSupportedDriveImage(metadata.name, mimeType)) {
+    throw new Error('Choose a JPG or PNG image from Google Drive.');
+  }
+  return { ...metadata, buffer, mimeType };
 }
 
 async function exchangeCode(code: string, redirectUri: string): Promise<TokenResponse> {
@@ -349,4 +423,9 @@ function normalizeText(text: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
+}
+
+function isSupportedDriveImage(name: string, mimeType: string): boolean {
+  if (['image/jpeg', 'image/png'].includes(mimeType)) return true;
+  return /\.(jpe?g|jpe|jfif|png)$/i.test(name);
 }

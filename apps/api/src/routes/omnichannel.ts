@@ -145,7 +145,16 @@ messengerWebhookRouter.post('/messenger', async (c) => {
 // carries the short-lived user/company context and is validated before use.
 router.get('/facebook/oauth/callback', async (c) => {
   const code = c.req.query('code');
+  const oauthError = c.req.query('error');
+  const oauthErrorDescription = c.req.query('error_description');
+  const oauthErrorReason = c.req.query('error_reason');
   const stateParam = c.req.query('state');
+  if (oauthError) {
+    return c.html(facebookPopupHtml('facebook_oauth_error', {
+      error: oauthErrorDescription || oauthErrorReason || oauthError,
+    }), 400);
+  }
+
   if (!code || !stateParam) {
     return c.html(facebookPopupHtml('facebook_oauth_error', {
       error: 'Facebook did not return an authorization code.',

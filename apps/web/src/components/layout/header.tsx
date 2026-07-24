@@ -2,16 +2,16 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { UserAvatar } from '@/components/ui/avatar';
 import { LanguageSwitcher } from '@/components/layout/language-switcher';
-import { useCompany } from '@/lib/api/hooks';
 import { api } from '@/lib/api/client';
-import { APP_LANGUAGE_STORAGE_KEY, appT, normalizeAppLanguage, type AppLanguage } from '@/lib/app-language';
+import { appT } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 import {
   Bell,
   Search,
@@ -38,12 +38,8 @@ export function Header() {
   const { user, logout, token } = useAuthStore();
   const companyId = typeof params?.companyId === 'string' ? params.companyId : undefined;
   const settingsHref = companyId ? `/${companyId}/settings` : '/companies';
-  const { data: company } = useCompany(companyId ?? '');
-  const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage>('en');
+  const [language] = usePreferredAppLanguage('en');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const language = companyId
-    ? normalizeAppLanguage(company?.settings?.language)
-    : preferredLanguage;
   const { data: creditsData, refetch: refetchCredits, isFetching: isFetchingCredits } = useQuery({
     queryKey: ['credits', companyId],
     queryFn: () =>
@@ -54,20 +50,6 @@ export function Header() {
     staleTime: 5_000,
     refetchOnWindowFocus: true,
   });
-
-  useEffect(() => {
-    if (companyId) return;
-    try {
-      setPreferredLanguage(normalizeAppLanguage(window.localStorage.getItem(APP_LANGUAGE_STORAGE_KEY)));
-    } catch {
-      setPreferredLanguage('en');
-    }
-    const handleLanguageChange = (event: Event) => {
-      setPreferredLanguage(normalizeAppLanguage((event as CustomEvent).detail));
-    };
-    window.addEventListener('app-language:changed', handleLanguageChange);
-    return () => window.removeEventListener('app-language:changed', handleLanguageChange);
-  }, [companyId]);
 
   const handleLogout = () => {
     logout();

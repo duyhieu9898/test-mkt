@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { FirstVisitTip } from '@/components/first-visit-tip';
 import { OutOfCreditsModal } from '@/components/out-of-credits-modal';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 type Severity = 'critical' | 'high' | 'medium' | 'low';
 type Priority = 'urgent' | 'high' | 'medium' | 'low';
@@ -259,6 +260,7 @@ export default function CeoAdvisorPage() {
   const [outOfCreditsOpen, setOutOfCreditsOpen] = useState(false);
   const [outOfCreditsRequired, setOutOfCreditsRequired] = useState<number | undefined>();
   const [outOfCreditsAvailable, setOutOfCreditsAvailable] = useState<number | undefined>();
+  const [language] = usePreferredAppLanguage('en');
 
   const latestQ = useQuery({
     queryKey: ['ceo-advisor', 'latest', companyId],
@@ -283,7 +285,11 @@ export default function CeoAdvisorPage() {
     typeof availableCredits !== 'number' || availableCredits >= advisorCampaignCreditCost;
 
   const refreshM = useMutation({
-    mutationFn: () => api.post<{ brief: AdvisorBrief }>(`/insights/${companyId}/advisor/refresh`, {}, { token: token! }),
+    mutationFn: () => api.post<{ brief: AdvisorBrief }>(
+      `/insights/${companyId}/advisor/refresh`,
+      { language },
+      { token: token! },
+    ),
     onSuccess: (data) => {
       toast.success(hasAdvice ? 'Advice refreshed' : 'Your first advice is ready');
       qc.setQueryData(['ceo-advisor', 'latest', companyId], data);
@@ -315,6 +321,7 @@ export default function CeoAdvisorPage() {
           contentTopic: proposal.publicTopic,
           contentAngle: proposal.contentAngle,
           expectedOutcome: proposal.expectedOutcome,
+          language,
           tier: 'balanced',
           advisorBriefId: brief?.id,
           advisorActionIndex: index,

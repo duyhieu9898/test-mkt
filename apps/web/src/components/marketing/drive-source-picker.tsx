@@ -76,6 +76,14 @@ export function DriveSourcePicker({
   onChange,
   label = 'Source content (optional)',
   description = 'Add a Google Drive or OneDrive file when the AI should use source material from your documents.',
+  buttonLabel = 'Add content from Drive',
+  dialogTitle = 'Add content from Drive',
+  dialogDescription = 'Add source context from Google Drive or OneDrive before generating AI content.',
+  allowPublicLink = true,
+  fileFilter,
+  googlePickerMimeTypes,
+  className = '',
+  buttonClassName = '',
 }: {
   companyId: string;
   token: string | null;
@@ -83,15 +91,21 @@ export function DriveSourcePicker({
   onChange: (next: DriveSourceSelection) => void;
   label?: string;
   description?: string;
+  buttonLabel?: string;
+  dialogTitle?: string;
+  dialogDescription?: string;
+  allowPublicLink?: boolean;
+  fileFilter?: (file: DriveFile) => boolean;
+  googlePickerMimeTypes?: string;
+  className?: string;
+  buttonClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [driveProvider, setDriveProvider] = useState<DriveProvider>('google');
-  const [driveSourceMode, setDriveSourceMode] = useState<DriveSourceMode>('public_link');
+  const [driveSourceMode, setDriveSourceMode] = useState<DriveSourceMode>(allowPublicLink ? 'public_link' : 'connected_drive');
   const [googleDriveUrlInput, setGoogleDriveUrlInput] = useState(value.googleDriveUrl ?? '');
-  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
-  const [driveSearch, setDriveSearch] = useState('');
-  const [driveLoading, setDriveLoading] = useState(false);
-  const [driveError, setDriveError] = useState<string | null>(null);
+  const [googlePickerLoading, setGooglePickerLoading] = useState(false);
+  const [googlePickerError, setGooglePickerError] = useState<string | null>(null);
   const [oneDriveFiles, setOneDriveFiles] = useState<DriveFile[]>([]);
   const [oneDriveSearch, setOneDriveSearch] = useState('');
   const [oneDriveLoading, setOneDriveLoading] = useState(false);
@@ -101,21 +115,32 @@ export function DriveSourcePicker({
     setGoogleDriveUrlInput(value.googleDriveUrl ?? '');
   }, [value.googleDriveUrl]);
 
-  const loadDriveFiles = async (query = driveSearch) => {
+  useEffect(() => {
+    if (!allowPublicLink) setDriveSourceMode('connected_drive');
+  }, [allowPublicLink]);
+
+  const visibleOneDriveFiles = fileFilter ? oneDriveFiles.filter(fileFilter) : oneDriveFiles;
+
+  const openGooglePicker = async () => {
     if (!token) return;
-    setDriveLoading(true);
-    setDriveError(null);
+    setGooglePickerLoading(true);
+    setGooglePickerError(null);
     try {
-      const suffix = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : '';
-      const res = await api.get<{ files: DriveFile[] }>(`/integrations/google_drive/company/${companyId}/files${suffix}`, { token });
-      setDriveFiles(res.files || []);
+      const res = await api.post<{ url: string }>(
+        `/integrations/google_drive/company/${companyId}/picker-url`,
+        googlePickerMimeTypes ? { mimeTypes: googlePickerMimeTypes } : {},
+        { token },
+      );
+      const popup = window.open(res.url, 'google_drive_picker', 'width=720,height=760');
+      if (!popup) {
+        throw new Error('Popup was blocked. Allow popups and try again.');
+      }
     } catch (e) {
-      const message = (e as Error).message || 'Connect Google Drive in Settings first';
-      setDriveError(message);
+      const message = (e as Error).message || 'Could not open Google Drive picker.';
+      setGooglePickerError(message);
       toast.error(message);
-      setDriveFiles([]);
     } finally {
-      setDriveLoading(false);
+      setGooglePickerLoading(false);
     }
   };
 
@@ -136,6 +161,35 @@ export function DriveSourcePicker({
       setOneDriveLoading(false);
     }
   };
+
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (!open) return;
+      if (event.data?.type !== 'oauth_success' || event.data?.platform !== 'google_drive' || !event.data?.picker) return;
+      const file = event.data.selectedFile as DriveFile | undefined;
+      if (!file?.id) {
+        toast.error('Google Drive did not return a selected file.');
+        return;
+      }
+      if (fileFilter && !fileFilter(file)) {
+        toast.error(`${file.name} is not supported for this action.`);
+        return;
+      }
+      onChange({
+        ...value,
+        googleDriveUrl: undefined,
+        googleDriveFileId: file.id,
+        googleDriveFileName: file.name,
+        googleDriveFileMimeType: file.mimeType,
+      });
+      setGoogleDriveUrlInput('');
+      setGooglePickerError(null);
+      setOpen(false);
+      toast.success('Google Drive file selected');
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [fileFilter, onChange, open, value]);
 
   const clearGoogle = () => {
     onChange({
@@ -158,18 +212,18 @@ export function DriveSourcePicker({
   };
 
   return (
-    <div className="space-y-2">
+    <div className={`space-y-2 ${className}`}>
       <div className="flex items-center justify-between gap-3">
-        <Label>{label}</Label>
+        {label ? <Label>{label}</Label> : <span />}
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="gap-2"
+          className={`gap-2 ${buttonClassName}`}
           onClick={() => setOpen(true)}
         >
           <FolderOpen className="w-4 h-4" />
-          Add content from Drive
+          {buttonLabel}
         </Button>
       </div>
       <div className="space-y-2">
@@ -200,7 +254,7 @@ export function DriveSourcePicker({
             removeLabel="Remove OneDrive file"
           />
         )}
-        {!hasDriveSource(value) && (
+        {!hasDriveSource(value) && description && (
           <p className="text-[11px] text-muted-foreground">{description}</p>
         )}
       </div>
@@ -208,9 +262,9 @@ export function DriveSourcePicker({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add content from Drive</DialogTitle>
+            <DialogTitle>{dialogTitle}</DialogTitle>
             <DialogDescription>
-              Add source context from Google Drive or OneDrive before generating AI content.
+              {dialogDescription}
             </DialogDescription>
           </DialogHeader>
 
@@ -225,8 +279,7 @@ export function DriveSourcePicker({
                 onClick={() => {
                   setDriveProvider(option.key);
                   if (option.key === 'google' && driveSourceMode === 'connected_drive') {
-                    setDriveError(null);
-                    void loadDriveFiles('');
+                    setGooglePickerError(null);
                   }
                   if (option.key === 'onedrive') {
                     setOneDriveError(null);
@@ -244,26 +297,27 @@ export function DriveSourcePicker({
 
           {driveProvider === 'google' && (
             <div className="space-y-3">
-              <div className="grid gap-2 sm:grid-cols-2">
-                <SourceModeButton
-                  active={driveSourceMode === 'public_link'}
-                  icon={<ExternalLink className="w-4 h-4 text-primary" />}
-                  label="Public file link"
-                  description="Use files shared as anyone with the link can view."
-                  onClick={() => setDriveSourceMode('public_link')}
-                />
-                <SourceModeButton
-                  active={driveSourceMode === 'connected_drive'}
-                  icon={<FolderOpen className="w-4 h-4 text-primary" />}
-                  label="Connected Drive"
-                  description="Choose private files after connecting Google Drive."
-                  onClick={() => {
-                    setDriveSourceMode('connected_drive');
-                    setDriveError(null);
-                    void loadDriveFiles('');
-                  }}
-                />
-              </div>
+              {allowPublicLink && (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <SourceModeButton
+                    active={driveSourceMode === 'public_link'}
+                    icon={<ExternalLink className="w-4 h-4 text-primary" />}
+                    label="Public file link"
+                    description="Use files shared as anyone with the link can view."
+                    onClick={() => setDriveSourceMode('public_link')}
+                  />
+                  <SourceModeButton
+                    active={driveSourceMode === 'connected_drive'}
+                    icon={<FolderOpen className="w-4 h-4 text-primary" />}
+                    label="Connected Drive"
+                    description="Choose private files after connecting Google Drive."
+                    onClick={() => {
+                      setDriveSourceMode('connected_drive');
+                      setGooglePickerError(null);
+                    }}
+                  />
+                </div>
+              )}
 
               {driveSourceMode === 'public_link' ? (
                 <div className="space-y-2">
@@ -290,26 +344,10 @@ export function DriveSourcePicker({
                   </Button>
                 </div>
               ) : (
-                <FileList
-                  provider="Google Drive"
-                  companyId={companyId}
-                  search={driveSearch}
-                  onSearchChange={setDriveSearch}
-                  onSearch={() => loadDriveFiles()}
-                  loading={driveLoading}
-                  error={driveError}
-                  files={driveFiles}
-                  onSelect={(file) => {
-                    onChange({
-                      ...value,
-                      googleDriveUrl: undefined,
-                      googleDriveFileId: file.id,
-                      googleDriveFileName: file.name,
-                      googleDriveFileMimeType: file.mimeType,
-                    });
-                    setGoogleDriveUrlInput('');
-                    setOpen(false);
-                  }}
+                <GooglePickerPanel
+                  loading={googlePickerLoading}
+                  error={googlePickerError}
+                  onOpenPicker={openGooglePicker}
                 />
               )}
             </div>
@@ -324,7 +362,7 @@ export function DriveSourcePicker({
               onSearch={() => loadOneDriveFiles()}
               loading={oneDriveLoading}
               error={oneDriveError}
-              files={oneDriveFiles}
+              files={visibleOneDriveFiles}
               onSelect={(file) => {
                 onChange({
                   ...value,
@@ -398,6 +436,45 @@ function SourceModeButton({
       </div>
       <p className="text-xs text-muted-foreground mt-1">{description}</p>
     </button>
+  );
+}
+
+function GooglePickerPanel({
+  loading,
+  error,
+  onOpenPicker,
+}: {
+  loading: boolean;
+  error: string | null;
+  onOpenPicker: () => void;
+}) {
+  return (
+    <div className="rounded-lg border bg-slate-50/60 p-4">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-white p-2 text-primary shadow-sm">
+          <FolderOpen className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-slate-900">Choose a specific Google Drive file</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Google will only share the file you pick with 1Person. We do not request access to browse your whole Drive.
+          </p>
+          {error ? (
+            <p className="mt-2 text-xs text-rose-600">{error}</p>
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            className="mt-3 gap-2"
+            onClick={onOpenPicker}
+            disabled={loading}
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderOpen className="h-4 w-4" />}
+            Open Google Picker
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

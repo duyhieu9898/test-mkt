@@ -19,6 +19,7 @@ import {
   normalizeAppLanguage,
   type AppLanguage,
 } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 interface LandingHeroProps {
   onSubmit: (prompt: string, websiteUrl?: string, language?: AppLanguage) => void;
@@ -35,7 +36,7 @@ function detectIsUrl(input: string): boolean {
 export function LandingHero({ onSubmit, isProcessing }: LandingHeroProps) {
   const [path, setPath] = useState<UserPath>(null);
   const [prompt, setPrompt] = useState('');
-  const [language, setLanguage] = useState<AppLanguage>('en');
+  const [language, setLanguage] = usePreferredAppLanguage('en');
   const t = useCallback((key: Parameters<typeof appT>[1]) => appT(language, key), [language]);
 
   const isUrl = useMemo(() => detectIsUrl(prompt), [prompt]);

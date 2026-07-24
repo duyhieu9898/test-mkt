@@ -392,8 +392,15 @@ taskWorker.start().catch((err) => {
 
 // Start feedback loop cron (checks every 30 min for optimization opportunities)
 import { feedbackCron } from './workers/feedback-cron';
+import { videoRenderCron } from './workers/video-render-cron';
 feedbackCron.start().catch((err) => {
   console.warn('⚠️  Feedback cron failed:', err.message);
+});
+
+// Start AI video render poller. Providers return a job ID quickly; this worker
+// later downloads completed videos into S3 so UI requests do not time out.
+videoRenderCron.start().catch((err) => {
+  console.warn('Video render cron failed:', err.message);
 });
 
 // Content Autopilot scheduler — every 15 min, generate due posts for companies

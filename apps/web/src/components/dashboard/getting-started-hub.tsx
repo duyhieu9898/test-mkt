@@ -21,7 +21,7 @@ import { Progress } from '@/components/ui/progress';
 import { api } from '@/lib/api/client';
 import { useBrandIq } from '@/lib/api/brand-iq-hooks';
 import { useCompany, useLandingPages } from '@/lib/api/hooks';
-import { normalizeAppLanguage } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 import { useAuthStore } from '@/stores/auth-store';
 
 interface GettingStartedHubProps {
@@ -69,7 +69,7 @@ export function GettingStartedHub({
   });
 
   const company = companyQuery.data;
-  const language = normalizeAppLanguage(company?.settings?.language);
+  const [language] = usePreferredAppLanguage('en');
   const text = (en: string, ja: string, vi: string) => (
     language === 'ja' ? ja : language === 'vi' ? vi : en
   );

@@ -299,6 +299,7 @@ knowledgeRouter.get('/company/:companyId/crawl/discover', async (c) => {
   const result = await discoverKnowledgeCrawlData(companyId, {
     query: c.req.query('q')?.trim() || null,
     websiteUrl: c.req.query('websiteUrl')?.trim() || null,
+    language: c.req.query('language')?.trim() || null,
   });
   await chargeFixedCredits(companyId, FIXED_CREDIT_COSTS.knowledgeCrawlDiscover, {
     featureKey: 'knowledge_crawl_discover',

@@ -107,14 +107,16 @@ async function checkImageProvider(): Promise<ReadinessItem> {
 }
 
 async function checkVideoProvider(): Promise<ReadinessItem> {
-  const hasOutputBucket = !!process.env.AWS_BEDROCK_VIDEO_OUTPUT_S3_URI;
-  const region = process.env.AWS_BEDROCK_REGION || process.env.AWS_REGION;
-  const model = process.env.AWS_BEDROCK_LUMA_MODEL_ID || 'luma.ray-v2:0';
-  const hasRegion = !!region;
-  const hasSupportedRegion = !region || region === 'us-west-2';
-  const hasSupportedModel = model === 'luma.ray-v2:0';
-  const hasAccessKey = !!(process.env.AWS_S3_ACCESS_KEY_ID && process.env.AWS_S3_SECRET_ACCESS_KEY);
-  const configured = hasOutputBucket && hasRegion && hasAccessKey && hasSupportedRegion && hasSupportedModel;
+  const model = process.env.OPENROUTER_VIDEO_MODEL || 'google/veo-3.1-fast';
+  const hasOpenRouterKey = !!process.env.OPENROUTER_API_KEY;
+  const hasS3Storage = !!(
+    process.env.AWS_S3_BUCKET
+    && (process.env.AWS_S3_REGION || process.env.AWS_REGION)
+    && process.env.AWS_S3_ACCESS_KEY_ID
+    && process.env.AWS_S3_SECRET_ACCESS_KEY
+    && process.env.AWS_S3_PUBLIC_URL
+  );
+  const configured = hasOpenRouterKey && hasS3Storage;
   return {
     id: 'video.provider',
     category: 'video',
@@ -122,8 +124,8 @@ async function checkVideoProvider(): Promise<ReadinessItem> {
     status: configured ? 'ok' : 'warn',
     detail:
       configured
-        ? `AWS Bedrock Luma video generation configured (${model}).`
-        : 'AWS Bedrock Luma is not fully configured. Use AWS_BEDROCK_REGION=us-west-2, AWS_BEDROCK_LUMA_MODEL_ID=luma.ray-v2:0, AWS_S3_ACCESS_KEY_ID/AWS_S3_SECRET_ACCESS_KEY, and AWS_BEDROCK_VIDEO_OUTPUT_S3_URI before rendering campaign videos.',
+        ? `OpenRouter video generation configured (${model}). Videos will be saved to S3.`
+        : 'OpenRouter video generation is not fully configured. Set OPENROUTER_API_KEY plus AWS_S3_BUCKET, AWS_S3_REGION, AWS_S3_ACCESS_KEY_ID, AWS_S3_SECRET_ACCESS_KEY, and AWS_S3_PUBLIC_URL before rendering campaign videos.',
     fixHref: '/admin/llm-config',
     enables: ['Campaign AI video generation', 'Social video drafts'],
   };
