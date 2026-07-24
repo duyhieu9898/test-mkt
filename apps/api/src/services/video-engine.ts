@@ -7,6 +7,7 @@
 
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { buildBusinessContext } from './business-context';
+import { buildContentLanguageInstruction, normalizeContentLanguage } from '../lib/language';
 
 // ============================================================================
 // TYPES
@@ -66,10 +67,11 @@ const FORMAT_SCENE_COUNT: Record<VideoFormat, string> = {
 
 export async function generateScript(
   companyId: string,
-  options: { format: VideoFormat; aspectRatio: VideoAspectRatio }
+  options: { format: VideoFormat; aspectRatio: VideoAspectRatio; language?: string }
 ): Promise<{ title: string; script: VideoScript }> {
   const ctx = await buildBusinessContext(companyId);
   const seconds = FORMAT_SECONDS[options.format];
+  const language = normalizeContentLanguage(options.language ?? ctx.language);
 
   const { text } = await llmGenerate([
     {
@@ -81,6 +83,7 @@ export async function generateScript(
       content: `Create a ${options.format} video ad script.
 
 BUSINESS: ${ctx.fullContext.substring(0, 1200)}
+${buildContentLanguageInstruction(language)}
 
 FORMAT: ${options.format} (${seconds} seconds)
 ASPECT RATIO: ${options.aspectRatio}

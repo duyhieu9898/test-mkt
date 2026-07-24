@@ -39,7 +39,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useCompanies, useGrowthScore, useStreak } from '@/lib/api/hooks';
-import { appT, normalizeAppLanguage, type AppMessageKey } from '@/lib/app-language';
+import { appT, type AppMessageKey } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 const TESTING_UNLOCK_ALL = true;
 
@@ -204,7 +205,7 @@ export function Sidebar() {
   const hasCompany = Boolean(companyId);
   const currentCompany = companies?.find((company) => company.id === companyId);
   const companyName = currentCompany?.name || companies?.[0]?.name || 'My Business';
-  const language = normalizeAppLanguage(currentCompany?.settings?.language || companies?.[0]?.settings?.language);
+  const [language] = usePreferredAppLanguage('en');
 
   const { data: streakData } = useStreak(companyId ?? '');
   const { data: growthScoreData } = useGrowthScore(companyId ?? '');

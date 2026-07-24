@@ -5,8 +5,8 @@ import { createPortal } from 'react-dom';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, Check, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useCompany } from '@/lib/api/hooks';
-import { appT, normalizeAppLanguage, type AppMessageKey } from '@/lib/app-language';
+import { appT, type AppMessageKey } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 interface TourStep {
   target: string;
@@ -115,8 +115,7 @@ export function CompanyGuidedTour() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { data: company } = useCompany(companyId ?? '');
-  const language = normalizeAppLanguage(company?.settings?.language);
+  const [language] = usePreferredAppLanguage('en');
   const [active, setActive] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
   const [highlight, setHighlight] = useState<HighlightRect | null>(null);

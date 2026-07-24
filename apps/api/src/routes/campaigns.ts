@@ -65,7 +65,6 @@ import {
   localizedDefault,
   normalizeContentLanguage,
 } from '../lib/language';
-import { syncCampaignVideoProject } from '../services/campaign-video-creative';
 
 const campaignsRouter = new Hono();
 
@@ -1905,27 +1904,6 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
       hashtags: normalized.hashtags,
     };
   });
-  const syncedVideoRows = await Promise.all(
-    videoRows.map(async (video) => {
-      if (video.status !== 'rendering') return video;
-      const synced = await syncCampaignVideoProject({ companyId, projectId: video.id });
-      if (!synced) return video;
-      return {
-        id: synced.id,
-        title: synced.title,
-        format: synced.format,
-        aspectRatio: synced.aspectRatio,
-        status: synced.status,
-        script: synced.script,
-        scenes: synced.scenes,
-        outputUrl: synced.outputUrl,
-        thumbnailUrl: synced.thumbnailUrl,
-        createdAt: synced.createdAt,
-        updatedAt: synced.updatedAt,
-      };
-    }),
-  );
-
   let linkedLaunch: typeof campaignLaunches.$inferSelect | undefined;
   let blogPost = targetingBlogPost[0] ?? null;
   // Legacy campaigns may not have targeting.blogPostId. Keep the old launch
@@ -1966,7 +1944,7 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
     campaign,
     banners: bannerRows,
     socialPosts: normalizedPostRows,
-    videos: syncedVideoRows,
+    videos: videoRows,
     blogPost: blogPost ?? null,
     launch: linkedLaunch
       ? {

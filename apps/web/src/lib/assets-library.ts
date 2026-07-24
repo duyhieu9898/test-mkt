@@ -14,10 +14,16 @@ export async function uploadImageAsset(
   companyId: string,
   file: File,
   token: string,
+  options?: {
+    tags?: string[];
+    campaignId?: string;
+  },
 ): Promise<ImageAsset> {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('name', file.name.replace(/\.[^/.]+$/, ''));
+  if (options?.tags?.length) formData.append('tags', JSON.stringify(options.tags));
+  if (options?.campaignId) formData.append('campaignId', options.campaignId);
 
   const response = await fetch(
     `${API_URL}/assets-library/company/${companyId}/upload`,

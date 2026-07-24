@@ -1,9 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { useCompany } from '@/lib/api/hooks';
-import { APP_LANGUAGE_STORAGE_KEY, normalizeAppLanguage, type AppLanguage } from '@/lib/app-language';
+import { useEffect } from 'react';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 const STATIC_JA_TEXT: Record<string, string> = {
   Dashboard: 'ダッシュボード',
@@ -453,27 +451,7 @@ function walkTextNodes(root: Node, visitor: (node: Text) => void) {
 }
 
 export function StaticJapaneseLocalizer() {
-  const params = useParams();
-  const companyId = params.companyId as string | undefined;
-  const { data: company } = useCompany(companyId ?? '');
-  const [preferredLanguage, setPreferredLanguage] = useState<AppLanguage>('en');
-  const language = companyId
-    ? normalizeAppLanguage(company?.settings?.language)
-    : preferredLanguage;
-
-  useEffect(() => {
-    if (companyId) return;
-    try {
-      setPreferredLanguage(normalizeAppLanguage(window.localStorage.getItem(APP_LANGUAGE_STORAGE_KEY)));
-    } catch {
-      setPreferredLanguage('en');
-    }
-    const handleLanguageChange = (event: Event) => {
-      setPreferredLanguage(normalizeAppLanguage((event as CustomEvent).detail));
-    };
-    window.addEventListener('app-language:changed', handleLanguageChange);
-    return () => window.removeEventListener('app-language:changed', handleLanguageChange);
-  }, [companyId]);
+  const [language] = usePreferredAppLanguage('en');
 
   useEffect(() => {
     document.documentElement.lang = language;

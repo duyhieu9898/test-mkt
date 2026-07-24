@@ -18,7 +18,8 @@ import { useParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { normalizeAppLanguage, type AppLanguage } from '@/lib/app-language';
+import { type AppLanguage } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 import {
   Sparkles,
   ArrowRight,
@@ -802,7 +803,7 @@ export default function WalkthroughPage() {
   const { companyId } = useParams<{ companyId: string }>();
   const { data: company, isLoading: companyLoading } = useCompany(companyId);
   const { data: landingPages = [], isLoading: landingPagesLoading } = useLandingPages(companyId);
-  const language = normalizeAppLanguage(company?.settings?.language);
+  const [language] = usePreferredAppLanguage('en');
   const copy = WALKTHROUGH_COPY[language] || WALKTHROUGH_COPY.en;
   const sections = localizeSections(SECTIONS(companyId), language);
   const showWebsiteStep = !companyLoading

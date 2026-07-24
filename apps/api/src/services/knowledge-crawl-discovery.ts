@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { brandIdentities, companies, documents } from '@1person/core/db';
+import { brandIdentities, brandIqProfiles, companies, documents } from '@1person/core/db';
 import { buildContentLanguageInstruction, normalizeContentLanguage, type ContentLanguage } from '../lib/language';
 import { extractJSON, llmGenerate } from '../lib/llm';
 import {
@@ -59,6 +59,7 @@ export interface CrawlDiscoveryResult {
 export interface CrawlDiscoveryOptions {
   query?: string | null;
   websiteUrl?: string | null;
+  language?: string | null;
 }
 
 interface CandidateSource {
@@ -361,14 +362,28 @@ async function getCompanyWebsite(companyId: string): Promise<{
     where: eq(brandIdentities.companyId, companyId),
     columns: { extractedFromUrl: true },
   });
+  const brandIq = await db.query.brandIqProfiles.findFirst({
+    where: eq(brandIqProfiles.companyId, companyId),
+    columns: { sourceUrl: true, isActive: true, version: true },
+    orderBy: [desc(brandIqProfiles.isActive), desc(brandIqProfiles.version)],
+  });
+  const urlDocuments = await db
+    .select({ sourceUrl: documents.sourceUrl })
+    .from(documents)
+    .where(eq(documents.companyId, companyId))
+    .orderBy(desc(documents.updatedAt))
+    .limit(20);
 
   const settings = (company.settings ?? {}) as Record<string, any>;
-  const websiteUrl = normalizeUrl(
-    settings.websiteUrl
-      || settings.wordpress?.siteUrl
-      || brand?.extractedFromUrl
-      || '',
-  );
+  const websiteUrl = [
+    settings.websiteUrl,
+    settings.wordpress?.siteUrl,
+    brandIq?.sourceUrl,
+    brand?.extractedFromUrl,
+    ...urlDocuments.map((doc) => doc.sourceUrl),
+  ]
+    .map((url) => normalizeUrl(url || ''))
+    .find(Boolean) || null;
 
   return { company, websiteUrl };
 }
@@ -383,7 +398,9 @@ export async function discoverKnowledgeCrawlData(
   const identityName = company.name || focus.query || 'Business';
   const topic = focus.query;
   const relevanceDomain = focus.domain || domain;
-  const language = normalizeContentLanguage((company.settings as Record<string, unknown> | null | undefined)?.language);
+  const language = normalizeContentLanguage(
+    options.language ?? (company.settings as Record<string, unknown> | null | undefined)?.language,
+  );
   const topicPlan = !focus.targetUrl && topic
     ? await analyzeDiscoveryTopic({
       topic,
@@ -405,6 +422,18 @@ export async function discoverKnowledgeCrawlData(
   }
 
   if (!focus.targetUrl) {
+    if (websiteUrl) {
+      candidates.push({
+        title: company.name || getDomain(websiteUrl) || websiteUrl,
+        url: websiteUrl,
+        snippet: topic
+          ? `Saved company website from Brand IQ/company profile. Use it as the official source for "${topic}".`
+          : 'Saved company website from Brand IQ/company profile.',
+        type: 'official_website',
+        sourceLabel: 'Official website',
+      });
+    }
+
     const searchQueries = buildPublicDiscoveryQueries({
       companyName: identityName,
       domain: relevanceDomain,

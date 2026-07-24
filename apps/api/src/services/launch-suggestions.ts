@@ -1,4 +1,5 @@
 import { extractJSON, llmGenerate } from '../lib/llm';
+import { buildContentLanguageInstruction, contentLanguageName, normalizeContentLanguage } from '../lib/language';
 import {
   buildAdvisorContext,
   type AdvisorContext,
@@ -117,11 +118,17 @@ function sourceLabels(context: AdvisorContext): string[] {
 export async function generateLaunchSuggestions(args: {
   companyId: string;
   tenantId: string;
+  language?: string;
 }): Promise<LaunchSuggestionPack> {
   const context = await buildAdvisorContext(args);
+  const language = normalizeContentLanguage(args.language ?? context.business.language);
   const sources = sourceLabels(context);
   const promptContext = {
-    business: context.business,
+    business: {
+      ...context.business,
+      language,
+      languageName: contentLanguageName(language),
+    },
     recentCampaigns: context.campaigns.slice(0, 8),
     recentBlogs: context.blogs.slice(0, 10),
     marketSignals: context.marketSignals.slice(0, 5),
@@ -147,6 +154,7 @@ export async function generateLaunchSuggestions(args: {
             'The brief must clearly state audience, message angle, value, and desired action.',
             'Do not repeat an existing campaign or blog topic unless proposing a meaningfully different angle.',
             'Return JSON only.',
+            buildContentLanguageInstruction(language),
           ].join('\n'),
         },
         {
@@ -178,7 +186,7 @@ Return:
       },
     );
     const parsed = extractJSON(response.text);
-    const rows = Array.isArray(parsed?.suggestions)
+    const rows: unknown[] = Array.isArray(parsed?.suggestions)
       ? parsed.suggestions
       : Array.isArray(parsed)
         ? parsed

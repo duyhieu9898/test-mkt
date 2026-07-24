@@ -44,6 +44,11 @@ export type OneDriveReadResult = OneDriveFile & {
   text: string;
 };
 
+export type OneDriveBinaryResult = OneDriveFile & {
+  buffer: Buffer;
+  mimeType: string;
+};
+
 type GraphDriveItem = {
   id: string;
   name: string;
@@ -159,6 +164,20 @@ export async function readOneDriveFileText(companyId: string, userId: string, fi
   }
 
   return { ...mapGraphItem(metadata), mimeType, text };
+}
+
+export async function readOneDriveImageFile(
+  companyId: string,
+  userId: string,
+  fileId: string,
+): Promise<OneDriveBinaryResult> {
+  const accessToken = await getValidAccessToken(companyId, userId);
+  const metadata = await getDriveItemMetadata(accessToken, fileId);
+  const { buffer, mimeType } = await downloadDriveItem(accessToken, metadata);
+  if (!isSupportedOneDriveImage(metadata.name, mimeType)) {
+    throw new Error('Choose a JPG or PNG image from OneDrive.');
+  }
+  return { ...mapGraphItem(metadata), buffer, mimeType };
 }
 
 async function exchangeCode(code: string, redirectUri: string): Promise<TokenResponse> {
@@ -383,6 +402,11 @@ function guessMimeFromName(name: string): string {
 function isDocxFile(fileName: string, mimeType: string): boolean {
   return fileName.toLowerCase().endsWith('.docx')
     || mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+}
+
+function isSupportedOneDriveImage(name: string, mimeType: string): boolean {
+  if (['image/jpeg', 'image/png'].includes(mimeType)) return true;
+  return /\.(jpe?g|jpe|jfif|png)$/i.test(name);
 }
 
 function extractDocxText(buffer: Buffer): string {

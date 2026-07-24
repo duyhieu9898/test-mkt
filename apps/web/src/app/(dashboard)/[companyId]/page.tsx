@@ -32,9 +32,8 @@ import {
   useStreak,
   useCompleteMission,
   useSkipMission,
-  useCompany,
 } from '@/lib/api/hooks';
-import { normalizeAppLanguage } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 import { GrowthScoreWidget } from '@/components/dashboard/growth-score-widget';
 import { TodaysFocus } from '@/components/dashboard/todays-focus';
 import { SystemProgressBars } from '@/components/dashboard/system-progress-bars';
@@ -84,8 +83,7 @@ export default function DashboardPage() {
   const streakQ = useStreak(companyId);
   const completeMutation = useCompleteMission(companyId);
   const skipMutation = useSkipMission(companyId);
-  const companyQ = useCompany(companyId);
-  const language = normalizeAppLanguage(companyQ.data?.settings?.language);
+  const [language] = usePreferredAppLanguage('en');
 
   // === Existing data hooks ===
   const briefQ = useQuery({

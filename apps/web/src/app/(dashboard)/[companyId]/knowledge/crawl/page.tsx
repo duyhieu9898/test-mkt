@@ -24,8 +24,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { KnowledgeTabs } from '@/components/knowledge/knowledge-tabs';
 import { api } from '@/lib/api/client';
-import { useCompany } from '@/lib/api/hooks';
-import { normalizeAppLanguage, type AppLanguage } from '@/lib/app-language';
+import { type AppLanguage } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 import { friendlyError } from '@/lib/friendly-errors';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth-store';
@@ -317,8 +317,7 @@ export default function KnowledgeCrawlPage() {
   const companyId = params.companyId as string;
   const token = useAuthStore((state) => state.token);
   const qc = useQueryClient();
-  const { data: company } = useCompany(companyId);
-  const language = normalizeAppLanguage(company?.settings?.language);
+  const [language] = usePreferredAppLanguage('en');
   const tx = crawlCopy[language] || crawlCopy.en;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isImporting, setIsImporting] = useState(false);
@@ -350,6 +349,7 @@ export default function KnowledgeCrawlPage() {
       const qs = new URLSearchParams();
       if (activeWebsiteInput.trim()) qs.set('websiteUrl', activeWebsiteInput.trim());
       if (activeTopicInput.trim()) qs.set('q', activeTopicInput.trim());
+      qs.set('language', language);
       const suffix = qs.toString() ? `?${qs.toString()}` : '';
       return api.get<CrawlDiscoveryResponse>(
         `/knowledge/company/${companyId}/crawl/discover${suffix}`,

@@ -4,6 +4,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import { useAuthStore } from '@/stores/auth-store';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 export type LaunchStepStatus = 'pending' | 'running' | 'done' | 'skipped' | 'error';
 export type LaunchOverallStatus = 'queued' | 'running' | 'completed' | 'partial' | 'failed';
@@ -85,10 +86,11 @@ export function useLaunch(companyId: string, launchId: string | null) {
 
 export function useLaunchSuggestions(companyId: string) {
   const token = useAuthStore((s) => s.token);
+  const [language] = usePreferredAppLanguage('en');
   return useQuery({
-    queryKey: ['launch-suggestions', companyId],
+    queryKey: ['launch-suggestions', companyId, language],
     queryFn: () =>
-      api.get<{ data: LaunchSuggestionPack }>(`/launches/${companyId}/suggestions`, {
+      api.get<{ data: LaunchSuggestionPack }>(`/launches/${companyId}/suggestions?language=${encodeURIComponent(language)}`, {
         token: token!,
       }),
     enabled: !!token && !!companyId,
@@ -113,6 +115,12 @@ export function useStartLaunch(companyId: string) {
       imageMode?: 'ai' | 'uploaded';
       assetIds?: string[];
       language?: string;
+      videoReferenceImage?: {
+        type: 'asset' | 'google_drive' | 'onedrive';
+        assetId?: string;
+        fileId?: string;
+        fileName?: string;
+      };
       targets: LaunchTargets;
     }) =>
       api.post<{ data: { launchId: string } }>(`/launches/${companyId}`, body, { token: token! }),

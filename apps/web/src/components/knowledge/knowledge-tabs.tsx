@@ -15,8 +15,8 @@ import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { FileText, Globe2, Mic, Search } from 'lucide-react';
-import { useCompany } from '@/lib/api/hooks';
-import { normalizeAppLanguage, type AppLanguage } from '@/lib/app-language';
+import { type AppLanguage } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 type TabKey = 'documents' | 'meetings' | 'search' | 'crawl';
 
@@ -77,8 +77,7 @@ export function KnowledgeTabs() {
   const params = useParams();
   const pathname = usePathname();
   const companyId = params.companyId as string;
-  const { data: company } = useCompany(companyId);
-  const language = normalizeAppLanguage(company?.settings?.language);
+  const [language] = usePreferredAppLanguage('en');
   const labels = tabLabels[language] || tabLabels.en;
 
   return (

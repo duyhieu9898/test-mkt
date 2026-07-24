@@ -55,7 +55,7 @@ import {
 import { useCompany } from '@/lib/api/hooks';
 import { useBrandIq } from '@/lib/api/brand-iq-hooks';
 import { api } from '@/lib/api/client';
-import { normalizeAppLanguage } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 import { useAuthStore } from '@/stores/auth-store';
 import { ImglyBannerEditor } from '@/components/marketing/imgly-banner-editor';
 import {
@@ -63,9 +63,15 @@ import {
   driveSourceRequestBody,
   type DriveSourceSelection,
 } from '@/components/marketing/drive-source-picker';
+import {
+  VideoReferenceImagePicker,
+  type VideoReferenceImageSelection,
+  videoReferenceImageLaunchRequestBody,
+} from '@/components/marketing/video-reference-image-picker';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 const CAMPAIGN_FOCUS_MAX_LENGTH = 1200;
+const CAMPAIGN_LAUNCHER_VIDEO_ENABLED = false;
 
 interface CreditResponse {
   balance: { totalAvailable: number };
@@ -487,6 +493,7 @@ export default function LaunchPage() {
   const [sourceSelection, setSourceSelection] = useState<DriveSourceSelection>({});
   const [imageMode, setImageMode] = useState<'ai' | 'uploaded'>('ai');
   const [campaignImages, setCampaignImages] = useState<UploadedCampaignImage[]>([]);
+  const [videoReferenceImage, setVideoReferenceImage] = useState<VideoReferenceImageSelection>({ type: 'none' });
   const [uploadingImages, setUploadingImages] = useState(false);
   const [targets, setTargets] = useState({
     wordpress: false,
@@ -511,7 +518,7 @@ export default function LaunchPage() {
     enabled: !!token && !!companyId,
     staleTime: 30_000,
   });
-  const companyLanguage = normalizeAppLanguage(company.data?.settings?.language);
+  const [contentLanguage] = usePreferredAppLanguage('en');
   const growthPlanPrefillKey = searchParams.toString();
 
   useEffect(() => {
@@ -648,7 +655,13 @@ export default function LaunchPage() {
       );
       return;
     }
-    const launchTargets = { ...targets, wordpress: false };
+    const launchTargets = {
+      ...targets,
+      wordpress: false,
+      // Video generation is temporarily moved to Campaign detail so users can
+      // review the campaign first and control the video source intentionally.
+      video: CAMPAIGN_LAUNCHER_VIDEO_ENABLED && targets.video,
+    };
     try {
       const res = await start.mutateAsync({
         keyword: keyword.trim(),
@@ -656,7 +669,8 @@ export default function LaunchPage() {
         ...driveSourceRequestBody(sourceSelection),
         imageMode,
         assetIds: imageMode === 'uploaded' ? campaignImages.map((image) => image.id) : undefined,
-        language: companyLanguage,
+        language: contentLanguage,
+        ...(launchTargets.video ? videoReferenceImageLaunchRequestBody(videoReferenceImage) : {}),
         targets: launchTargets,
       });
       setActiveLaunchId(res.data.launchId);
@@ -667,6 +681,7 @@ export default function LaunchPage() {
       setSourceSelection({});
       setImageMode('ai');
       setCampaignImages([]);
+      setVideoReferenceImage({ type: 'none' });
       setTargets((current) => ({ ...current, video: false }));
       queryClient.invalidateQueries({ queryKey: ['credits', companyId] });
       toast.success('Launch queued. Watch the progress below.');
@@ -685,7 +700,11 @@ export default function LaunchPage() {
   const baseLaunchCost = imageMode === 'uploaded'
     ? credits.data?.costs?.launchCampaignUploadedImages ?? 90
     : credits.data?.costs?.launchCampaignBase ?? 120;
-  const launchCreditCost = baseLaunchCost + (targets.video ? credits.data?.costs?.campaignVideo ?? 300 : 0);
+  const launchCreditCost = baseLaunchCost + (
+    CAMPAIGN_LAUNCHER_VIDEO_ENABLED && targets.video
+      ? credits.data?.costs?.campaignVideo ?? 300
+      : 0
+  );
   const availableCredits = credits.data?.balance.totalAvailable;
   const hasEnoughLaunchCredits =
     typeof availableCredits !== 'number' || availableCredits >= launchCreditCost;
@@ -1005,34 +1024,60 @@ export default function LaunchPage() {
             </p>
           </div>
 
-          <label
-            className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
-              targets.video
-                ? 'border-indigo-300 bg-indigo-50'
-                : 'border-slate-200 bg-white hover:bg-slate-50'
-            }`}
-          >
-            <Checkbox
-              checked={targets.video}
-              onCheckedChange={(checked) => setTargets((current) => ({
-                ...current,
-                video: checked === true,
-              }))}
-              className="mt-0.5"
-            />
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Video className="h-4 w-4 text-indigo-500" />
-                Create one AI video
-                <Badge variant="secondary" className="bg-indigo-50 text-[10px] text-indigo-700">
-                  {credits.data?.costs?.campaignVideo ?? 300} credits
-                </Badge>
-              </span>
-              <span className="mt-1 block text-xs text-muted-foreground">
-                AI will create one short campaign video only, no matter how many social channels you choose.
-              </span>
-            </span>
-          </label>
+          {CAMPAIGN_LAUNCHER_VIDEO_ENABLED ? (
+            <>
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                  targets.video
+                    ? 'border-indigo-300 bg-indigo-50'
+                    : 'border-slate-200 bg-white hover:bg-slate-50'
+                }`}
+              >
+                <Checkbox
+                  checked={targets.video}
+                  onCheckedChange={(checked) => setTargets((current) => ({
+                    ...current,
+                    video: checked === true,
+                  }))}
+                  className="mt-0.5"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <Video className="h-4 w-4 text-indigo-500" />
+                    Create one AI video
+                    <Badge variant="secondary" className="bg-indigo-50 text-[10px] text-indigo-700">
+                      {credits.data?.costs?.campaignVideo ?? 300} credits
+                    </Badge>
+                  </span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    AI will create one short campaign video only, no matter how many social channels you choose.
+                  </span>
+                </span>
+              </label>
+
+              {targets.video && (
+                <VideoReferenceImagePicker
+                  companyId={companyId}
+                  token={token}
+                  value={videoReferenceImage}
+                  onChange={setVideoReferenceImage}
+                  disabled={launchInProgress || uploadingImages}
+                />
+              )}
+            </>
+          ) : (
+            <div className="flex items-start gap-3 rounded-lg border border-indigo-100 bg-indigo-50/60 p-3">
+              <div className="mt-0.5 rounded-full bg-white p-1.5 text-indigo-600 shadow-sm">
+                <Video className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900">Video is created after launch</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  Finish this campaign first, then open Campaign detail to create one AI video with your preferred visual source.
+                </p>
+              </div>
+            </div>
+          )}
 
           <p className="text-[11px] text-muted-foreground">
             Each launch creates a blog draft and 3 editable advertising banners. Only selected social outputs are saved as campaign drafts.

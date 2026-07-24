@@ -30,6 +30,7 @@ import { GuidedTour } from '@/components/guided-tour';
 import { OutOfCreditsModal } from '@/components/out-of-credits-modal';
 import { cn } from '@/lib/utils';
 import { campaignDisplayTitle } from '@/lib/campaign-title';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 import {
   DriveSourcePicker,
   driveSourceRequestBody,
@@ -82,6 +83,7 @@ export default function CampaignsPage() {
   const router = useRouter();
   const companyId = params.companyId as string;
   const token = useAuthStore((s) => s.token);
+  const [language] = usePreferredAppLanguage('en');
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [goal, setGoal] = useState('');
@@ -140,6 +142,7 @@ export default function CampaignsPage() {
         {
           goal: goal.trim(),
           audience: audience.trim(),
+          language,
           tier,
           ...driveSourceRequestBody(sourceSelection),
         },

@@ -29,6 +29,7 @@ import { chargeFixedCredits, ensureSufficientCredits } from '../lib/credits';
 import { ensureTenantForCompany, getTenantAI } from '../lib/tenant-ai';
 import {
   buildContentLanguageInstruction,
+  contentLanguageName,
   normalizeContentLanguage,
   type ContentLanguage,
 } from '../lib/language';
@@ -1086,10 +1087,11 @@ export function mergeCampaignReviewActions(args: {
 export async function generateCeoBrief(args: {
   companyId: string;
   tenantId: string;
+  language?: string;
 }): Promise<GeneratedBrief> {
   const { companyId, tenantId } = args;
   const context = await buildAdvisorContext({ companyId, tenantId });
-  const language = normalizeContentLanguage(context.business.language);
+  const language = normalizeContentLanguage(args.language ?? context.business.language);
   const evidenceById = new Map(context.evidence.map((item) => [item.id, item]));
   const strategicGaps = buildStrategicGaps(context, evidenceById);
   const unavailableSources = context.sourceHealth
@@ -1097,7 +1099,11 @@ export async function generateCeoBrief(args: {
     .map((source) => source.source);
 
   const promptContext = {
-    business: context.business,
+    business: {
+      ...context.business,
+      language,
+      languageName: contentLanguageName(language),
+    },
     growthPlanHealth: context.growthPlanHealth,
     todayMarketPulse: buildTodayMarketPulse(context),
     campaigns: context.campaigns.slice(0, 20),
@@ -1442,12 +1448,14 @@ export async function generateAndSaveCeoBrief(args: {
   companyName: string;
   actor: string;
   chargeCredits?: boolean;
+  language?: string;
 }) {
   const {
     companyId,
     companyName,
     actor,
     chargeCredits = true,
+    language,
   } = args;
   const tenantId = await ensureTenantForCompany(companyId, companyName);
 
@@ -1455,7 +1463,7 @@ export async function generateAndSaveCeoBrief(args: {
     await ensureSufficientCredits(companyId, 10);
   }
 
-  const result = await generateCeoBrief({ companyId, tenantId });
+  const result = await generateCeoBrief({ companyId, tenantId, language });
   const saved = await getTenantAI().ceoAdvisor.append(
     tenantId,
     {

@@ -8,7 +8,14 @@ import {
 } from '@/lib/app-language';
 
 export function usePreferredAppLanguage(defaultLanguage: AppLanguage = 'en') {
-  const [language, setLanguageState] = useState<AppLanguage>(defaultLanguage);
+  const [language, setLanguageState] = useState<AppLanguage>(() => {
+    if (typeof window === 'undefined') return defaultLanguage;
+    try {
+      return normalizeAppLanguage(window.localStorage.getItem(APP_LANGUAGE_STORAGE_KEY) ?? defaultLanguage);
+    } catch {
+      return defaultLanguage;
+    }
+  });
 
   useEffect(() => {
     const readStoredLanguage = () => {
@@ -24,8 +31,16 @@ export function usePreferredAppLanguage(defaultLanguage: AppLanguage = 'en') {
       const nextLanguage = (event as CustomEvent<AppLanguage>).detail;
       setLanguageState(normalizeAppLanguage(nextLanguage));
     };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== APP_LANGUAGE_STORAGE_KEY) return;
+      setLanguageState(normalizeAppLanguage(event.newValue ?? defaultLanguage));
+    };
     window.addEventListener('app-language:changed', handleLanguageChange);
-    return () => window.removeEventListener('app-language:changed', handleLanguageChange);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('app-language:changed', handleLanguageChange);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, [defaultLanguage]);
 
   useEffect(() => {

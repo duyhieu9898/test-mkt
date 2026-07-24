@@ -9,12 +9,11 @@
  */
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, Brain, Shield, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useCompany } from '@/lib/api/hooks';
-import { appT, normalizeAppLanguage, type AppMessageKey } from '@/lib/app-language';
+import { appT, type AppMessageKey } from '@/lib/app-language';
+import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 const STORAGE_KEY = '1person.tour.campaigns.dismissed';
 
@@ -52,10 +51,7 @@ const STEPS: Step[] = [
 ];
 
 export function GuidedTour() {
-  const params = useParams<{ companyId?: string }>();
-  const companyId = typeof params?.companyId === 'string' ? params.companyId : '';
-  const { data: company } = useCompany(companyId);
-  const language = normalizeAppLanguage(company?.settings?.language);
+  const [language] = usePreferredAppLanguage('en');
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState(0);
