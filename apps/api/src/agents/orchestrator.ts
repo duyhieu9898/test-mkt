@@ -224,7 +224,13 @@ export class Orchestrator {
 
     try {
       const result = await agent.execute(input, context);
-      console.log(`[Orchestrator] ${agent.name} ${result.success ? 'succeeded' : 'failed'}`);
+      if (result.success) {
+        console.log(`[Orchestrator] ${agent.name} succeeded`);
+      } else {
+        console.warn(
+          `[Orchestrator] ${agent.name} failed: ${result.error || 'No error details returned'}`,
+        );
+      }
       return result;
     } catch (error) {
       console.error(`[Orchestrator] ${agent.name} threw error:`, error);

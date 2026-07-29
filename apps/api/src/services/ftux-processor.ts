@@ -1173,10 +1173,6 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
         },
       });
 
-      // Also fire orchestrator in background for deeper analysis
-      this.autoTriggerOrchestrator(company.id, session.prompt, session.websiteUrl, businessProfile).catch(
-        (err) => console.warn('[FTUX] Auto-trigger orchestrator failed (non-blocking):', err)
-      );
     } catch (error) {
       console.error('FTUX processing error:', error);
       await this.updateSession(sessionId, {
@@ -1196,35 +1192,6 @@ Verified Website Analysis (confidence: ${businessProfile?.confidence || 0}):
       Object.assign(session, update);
       sessions.set(sessionId, session);
     }
-  }
-
-  /**
-   * Auto-trigger the orchestrator after FTUX completes.
-   * This creates real tasks and starts executing immediately.
-   * By the time user reaches the dashboard, the system is already working.
-   */
-  private async autoTriggerOrchestrator(
-    companyId: string,
-    prompt: string,
-    websiteUrl?: string,
-    businessProfile?: any
-  ): Promise<void> {
-    const { orchestrator } = await import('../agents');
-
-    const goal = websiteUrl
-      ? `Analyze ${websiteUrl}, discover keywords, create SEO content plan, and generate initial landing pages for the business`
-      : `Analyze market, discover keywords, create content plan, and generate initial landing pages for: ${prompt}`;
-
-    console.log(`[FTUX] Auto-triggering orchestrator for company ${companyId}`);
-
-    const result = await orchestrator.executeGoal(companyId, goal, {
-      websiteUrl,
-      prompt,
-      businessInfo: businessProfile,
-      autoMode: true,
-    });
-
-    console.log(`[FTUX] Auto-trigger complete: ${result.summary}`);
   }
 
   private assessContentQuality(content: any): { level: 'rich' | 'moderate' | 'insufficient'; score: number } {
