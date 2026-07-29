@@ -203,9 +203,8 @@ knowledgeRouter.post('/company/:companyId/upload', async (c) => {
             file.name || name,
             fileType,
           );
-          const truncated = rawText.substring(0, 15000); // Limit text for LLM
-          const entries = await knowledgeExtractionService.structureContent(truncated, name);
-          return { rawText: truncated, entries };
+          const entries = await knowledgeExtractionService.structureContent(rawText, name);
+          return { rawText, entries };
         };
 
         // 60 second timeout
@@ -217,7 +216,7 @@ knowledgeRouter.post('/company/:companyId/upload', async (c) => {
 
         await db.update(documents).set({
           status: 'extracted',
-          rawContent: rawText.substring(0, 50000),
+          rawContent: rawText,
           extractedContent: entries as any,
           updatedAt: new Date(),
         }).where(eq(documents.id, doc.id));
@@ -277,7 +276,7 @@ knowledgeRouter.post(
 
       await db.update(documents).set({
         status: 'extracted',
-        rawContent: rawText.substring(0, 50000),
+        rawContent: rawText,
         extractedContent: entries as any,
         updatedAt: new Date(),
       }).where(eq(documents.id, doc.id));
@@ -404,7 +403,7 @@ knowledgeRouter.post(
 
         await db.update(documents).set({
           status: 'extracted',
-          rawContent: contentForAi.substring(0, 50000),
+          rawContent: contentForAi,
           extractedContent: entries as any,
           updatedAt: new Date(),
         }).where(eq(documents.id, doc.id));

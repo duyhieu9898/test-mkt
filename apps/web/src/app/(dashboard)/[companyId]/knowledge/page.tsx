@@ -475,6 +475,11 @@ export default function KnowledgePage() {
                       </div>
                       <p className="font-medium text-sm">{entry.title}</p>
                       <p className="text-sm text-muted-foreground mt-1">{entry.content}</p>
+                      {entry.evidence && (
+                        <p className="mt-2 rounded-md bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                          Evidence: {entry.evidence}
+                        </p>
+                      )}
                     </CardContent>
                   </Card>
                 ))}
@@ -484,7 +489,7 @@ export default function KnowledgePage() {
               <TabsContent value="raw" className="flex-1 overflow-y-auto mt-3">
                 <Card>
                   <CardContent className="p-4">
-                    <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-[400px] overflow-y-auto">
+                    <pre className="max-h-[65vh] overflow-y-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground">
                       {previewDoc.rawContent || 'No raw content available'}
                     </pre>
                   </CardContent>

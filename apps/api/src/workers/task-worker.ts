@@ -599,7 +599,7 @@ ${body}
 
       await db.update(documents).set({
         status: 'extracted',
-        rawContent: rawText.substring(0, 50000),
+        rawContent: rawText,
         extractedContent: entries as any,
         updatedAt: new Date(),
       }).where(eq(documents.id, documentId));

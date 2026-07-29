@@ -15,6 +15,35 @@ export interface KnowledgeEntry {
   content: string;
   tags: string[];
   confidence: number;
+  evidence?: string;
+}
+
+function splitTextIntoChunks(text: string, maxChars: number, maxChunks: number): string[] {
+  const cleaned = text.trim();
+  const chunks: string[] = [];
+  let cursor = 0;
+
+  while (cursor < cleaned.length) {
+    const hardEnd = Math.min(cursor + maxChars, cleaned.length);
+    const paragraphEnd = cleaned.lastIndexOf('\n\n', hardEnd);
+    const sentenceEnd = cleaned.lastIndexOf('. ', hardEnd);
+    const boundary = Math.max(paragraphEnd, sentenceEnd);
+    const end = boundary > cursor + Math.floor(maxChars * 0.65) ? boundary + 1 : hardEnd;
+    chunks.push(cleaned.slice(cursor, end).trim());
+    cursor = end;
+  }
+
+  const nonEmptyChunks = chunks.filter(Boolean);
+  if (nonEmptyChunks.length <= maxChunks) return nonEmptyChunks;
+
+  const selected = new Set<number>();
+  for (let i = 0; i < maxChunks; i++) {
+    selected.add(Math.round((i * (nonEmptyChunks.length - 1)) / (maxChunks - 1)));
+  }
+  return Array.from(selected)
+    .sort((a, b) => a - b)
+    .map((index) => nonEmptyChunks[index] ?? '')
+    .filter((chunk) => chunk.length > 0);
 }
 
 export class KnowledgeExtractionService {
@@ -109,16 +138,17 @@ export class KnowledgeExtractionService {
    * Structure raw text into knowledge entries using LLM
    */
   async structureContent(rawText: string, documentName: string): Promise<KnowledgeEntry[]> {
-    // Chunk text if too long (max ~4000 tokens worth)
-    const maxChars = 8000;
-    const text = rawText.substring(0, maxChars);
+    const chunks = splitTextIntoChunks(rawText, 9000, 6);
+    const allEntries: KnowledgeEntry[] = [];
 
-    try {
-      const { text: response } = await llmGenerate([{
-        role: 'user',
-        content: `Extract structured knowledge from this document.
+    for (const [chunkIndex, text] of chunks.entries()) {
+      try {
+        const { text: response } = await llmGenerate([{
+          role: 'user',
+          content: `Extract structured knowledge from this document chunk.
 
 Document: ${documentName}
+Chunk: ${chunkIndex + 1}/${chunks.length}
 
 Content:
 <<<
@@ -134,33 +164,53 @@ Return ONLY JSON array:
     "title": "Clear, specific title",
     "content": "The actual knowledge content — detailed and useful",
     "tags": ["relevant", "tags"],
-    "confidence": 0.9
+    "confidence": 0.9,
+    "evidence": "Short quote or phrase copied from this chunk"
   }
 ]
 
 Rules:
-- Each entry must be independently useful
+- Use ONLY facts explicitly present in this chunk. Do not use outside company context.
+- Do not invent decisions, strategies, products, pricing, policies, or recommendations that are not written in this chunk.
+- Each entry must be independently useful and supported by the evidence quote.
 - Category must be one of: product, pricing, faq, policy, process, team, market, customer, technical, general
 - Be specific in titles, not vague
-- Extract at least 3 entries, max 15
-- Confidence: 0.9+ for explicit facts, 0.7-0.9 for inferred, below 0.7 for uncertain`,
-      }], { maxTokens: 2000 });
+- Extract 0-10 entries. Return [] if this chunk has no concrete business facts.
+- Add an "evidence" field containing a short quote or phrase from this chunk.
+- Confidence: 0.9+ for explicit facts, 0.6-0.8 for lightly summarized facts. Never include unsupported guesses.`,
+        }], { maxTokens: 2000 });
 
-      const parsed = extractJSON(response);
-      if (parsed && Array.isArray(parsed)) {
-        return parsed.map((entry: any) => ({
-          category: entry.category || 'general',
-          title: entry.title || 'Untitled',
-          content: entry.content || '',
-          tags: entry.tags || [],
-          confidence: typeof entry.confidence === 'number' ? entry.confidence : 0.7,
-        }));
+        const parsed = extractJSON(response);
+        if (parsed && Array.isArray(parsed)) {
+          allEntries.push(...parsed.map((entry: any) => ({
+            category: entry.category || 'general',
+            title: entry.title || 'Untitled',
+            content: entry.content || '',
+            tags: entry.tags || [],
+            confidence: typeof entry.confidence === 'number' ? entry.confidence : 0.7,
+            evidence: typeof entry.evidence === 'string' ? entry.evidence : undefined,
+          })));
+        }
+      } catch (err) {
+        console.error('[KnowledgeExtraction] LLM structuring failed:', err);
       }
-    } catch (err) {
-      console.error('[KnowledgeExtraction] LLM structuring failed:', err);
     }
 
+    const seen = new Set<string>();
+    const groundedEntries = allEntries
+      .filter((entry) => entry.content.trim().length > 0)
+      .filter((entry) => {
+        const key = `${entry.category}:${entry.title}:${entry.content}`.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 25);
+
+    if (groundedEntries.length > 0) return groundedEntries;
+
     // Fallback: create a single entry from raw text
+    const text = rawText.trim();
     return [{
       category: 'general',
       title: documentName,

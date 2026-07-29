@@ -32,6 +32,11 @@ import {
   MessageSquare,
   Trash2,
   Play,
+  RefreshCw,
+  BookOpen,
+  TrendingUp,
+  MessageCircleWarning,
+  Tags,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth-store';
@@ -46,6 +51,24 @@ const statusConfig: Record<string, { icon: React.ElementType; color: string; lab
   analyzed: { icon: Sparkles, color: 'text-purple-600', label: 'Ready for Review' },
   approved: { icon: CheckCircle2, color: 'text-green-600', label: 'Approved' },
 };
+
+function EmptyInsight({ children }: { children: React.ReactNode }) {
+  return <p className="text-xs text-muted-foreground">{children}</p>;
+}
+
+function getSupportedRecordingFormat(): { mimeType?: string; extension: string } {
+  if (typeof MediaRecorder === 'undefined') return { extension: 'webm' };
+
+  const formats = [
+    { mimeType: 'audio/webm;codecs=opus', extension: 'webm' },
+    { mimeType: 'audio/webm', extension: 'webm' },
+    { mimeType: 'audio/mp4', extension: 'm4a' },
+    { mimeType: 'audio/ogg;codecs=opus', extension: 'ogg' },
+  ];
+
+  return formats.find(({ mimeType }) => MediaRecorder.isTypeSupported(mimeType))
+    || { extension: 'webm' };
+}
 
 export default function MeetingsPage() {
   const params = useParams();
@@ -73,6 +96,8 @@ export default function MeetingsPage() {
   const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
   const [meetingToDiscard, setMeetingToDiscard] = useState<any | null>(null);
   const [isDiscardingMeeting, setIsDiscardingMeeting] = useState(false);
+  const [transcriptPreview, setTranscriptPreview] = useState<{ title: string; transcript: string } | null>(null);
+  const [reanalyzingMeetingId, setReanalyzingMeetingId] = useState<string | null>(null);
 
   useEffect(() => () => {
     if (audioPreviewUrlRef.current) URL.revokeObjectURL(audioPreviewUrlRef.current);
@@ -150,6 +175,25 @@ export default function MeetingsPage() {
       toast.error('Failed to analyze transcript');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleReanalyze = async (meetingId: string) => {
+    if (!token) return;
+    setReanalyzingMeetingId(meetingId);
+    try {
+      await api.post(
+        `/meetings/company/${companyId}/${meetingId}/reanalyze`,
+        {},
+        { token },
+      );
+      toast.success('AI insights updated from the full transcript.');
+      await queryClient.invalidateQueries({ queryKey: ['meetings', companyId] });
+      setExpandedMeeting(meetingId);
+    } catch (error) {
+      toast.error(friendlyError(error, 'Could not analyze this meeting again.'));
+    } finally {
+      setReanalyzingMeetingId(null);
     }
   };
 
@@ -240,9 +284,19 @@ export default function MeetingsPage() {
 
   // Start recording
   const handleStartRecording = async () => {
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+        toast.error('Audio recording is not supported by this browser. Please upload an audio file instead.');
+        return;
+      }
+
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const activeStream = stream;
+      const recordingFormat = getSupportedRecordingFormat();
+      const mediaRecorder = recordingFormat.mimeType
+        ? new MediaRecorder(activeStream, { mimeType: recordingFormat.mimeType })
+        : new MediaRecorder(activeStream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
       discardRecordingRef.current = false;
@@ -252,7 +306,7 @@ export default function MeetingsPage() {
       };
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
+        activeStream.getTracks().forEach((t) => t.stop());
         if (timerRef.current) {
           clearInterval(timerRef.current);
           timerRef.current = null;
@@ -269,15 +323,23 @@ export default function MeetingsPage() {
           return;
         }
 
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const recordedMimeType = mediaRecorder.mimeType
+          || chunksRef.current.find((chunk) => chunk.type)?.type
+          || recordingFormat.mimeType
+          || 'audio/webm';
+        const blob = new Blob(chunksRef.current, { type: recordedMimeType });
         chunksRef.current = [];
         if (blob.size === 0) {
           toast.error('No audio was recorded. Please try again.');
           return;
         }
-        const file = new File([blob], `recording-${Date.now()}.webm`, { type: 'audio/webm' });
+        const file = new File(
+          [blob],
+          `recording-${Date.now()}.${recordingFormat.extension}`,
+          { type: recordedMimeType },
+        );
 
-        // Upload the recording
+        // Browser recordings intentionally reuse the exact upload/transcribe/analyze pipeline.
         await handleUpload(file);
       };
 
@@ -288,7 +350,8 @@ export default function MeetingsPage() {
 
       toast.success('Recording started');
     } catch (err) {
-      toast.error('Microphone access denied. Please allow microphone access.');
+      stream?.getTracks().forEach((track) => track.stop());
+      toast.error('Could not start recording. Check microphone permission or upload an audio file instead.');
     }
   };
 
@@ -467,90 +530,201 @@ export default function MeetingsPage() {
                       {isExpanded && insights && (
                         <div className="mt-3 space-y-3">
                           {/* Summary */}
-                          {insights.summary && (
-                            <div className="p-3 bg-muted/50 rounded-lg">
-                              <div className="flex items-center gap-1 mb-1 text-xs font-medium">
-                                <MessageSquare className="w-3 h-3" /> Summary
-                              </div>
-                              <p className="text-sm">{insights.summary}</p>
+                          <div className="p-3 bg-muted/50 rounded-lg">
+                            <div className="flex items-center gap-1 mb-1 text-xs font-medium">
+                              <MessageSquare className="w-3 h-3" /> Summary
                             </div>
-                          )}
+                            {insights.summary ? (
+                              <p className="text-sm">{insights.summary}</p>
+                            ) : (
+                              <EmptyInsight>No readable summary was found.</EmptyInsight>
+                            )}
+                          </div>
 
-                          {/* Decisions */}
-                          {insights.decisions?.length > 0 && (
+                          {/* Grounded highlights are expected for every readable transcript. */}
+                          <div className="p-3 bg-violet-50 dark:bg-violet-950/20 rounded-lg">
+                            <div className="flex items-center gap-1 mb-2 text-xs font-medium text-violet-700 dark:text-violet-400">
+                              <BookOpen className="w-3 h-3" /> Key points ({insights.highlights?.length || 0})
+                            </div>
+                            {insights.highlights?.length > 0 ? (
+                              <ul className="space-y-1">
+                                {insights.highlights.map((point: string, i: number) => (
+                                  <li key={i} className="text-sm flex items-start gap-2">
+                                    <span className="text-violet-500 mt-1">-</span>
+                                    {point}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <EmptyInsight>
+                                This meeting was analyzed before key points were available. Use Analyze again below.
+                              </EmptyInsight>
+                            )}
+                          </div>
+
+                          <div className="grid gap-3 lg:grid-cols-2">
+                            {/* Decisions */}
                             <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg">
                               <div className="flex items-center gap-1 mb-2 text-xs font-medium text-blue-700 dark:text-blue-400">
-                                <Target className="w-3 h-3" /> Decisions ({insights.decisions.length})
+                                <Target className="w-3 h-3" /> Decisions ({insights.decisions?.length || 0})
                               </div>
-                              <ul className="space-y-1">
-                                {insights.decisions.map((d: string, i: number) => (
-                                  <li key={i} className="text-sm flex items-start gap-2">
-                                    <span className="text-blue-500 mt-1">-</span>
-                                    {d}
-                                  </li>
-                                ))}
-                              </ul>
+                              {insights.decisions?.length > 0 ? (
+                                <ul className="space-y-1">
+                                  {insights.decisions.map((d: string, i: number) => (
+                                    <li key={i} className="text-sm flex items-start gap-2">
+                                      <span className="text-blue-500 mt-1">-</span>
+                                      {d}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <EmptyInsight>No explicit decision was made in this recording.</EmptyInsight>
+                              )}
                             </div>
-                          )}
 
-                          {/* Action Items */}
-                          {insights.tasks?.length > 0 && (
+                            {/* Action Items */}
                             <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg">
                               <div className="flex items-center gap-1 mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
-                                <ListChecks className="w-3 h-3" /> Action Items ({insights.tasks.length})
+                                <ListChecks className="w-3 h-3" /> Action Items ({insights.tasks?.length || 0})
                               </div>
-                              <ul className="space-y-1">
-                                {insights.tasks.map((t: any, i: number) => (
-                                  <li key={i} className="text-sm flex items-start gap-2">
-                                    <span className="text-amber-500 mt-1">-</span>
-                                    <div>
-                                      {t.title}
-                                      {t.assignee && (
-                                        <span className="text-xs text-muted-foreground ml-1">
-                                          ({t.assignee})
-                                        </span>
-                                      )}
-                                    </div>
-                                  </li>
-                                ))}
-                              </ul>
+                              {insights.tasks?.length > 0 ? (
+                                <ul className="space-y-1">
+                                  {insights.tasks.map((t: any, i: number) => (
+                                    <li key={i} className="text-sm flex items-start gap-2">
+                                      <span className="text-amber-500 mt-1">-</span>
+                                      <div>
+                                        {t.title}
+                                        {t.assignee && (
+                                          <span className="text-xs text-muted-foreground ml-1">
+                                            ({t.assignee})
+                                          </span>
+                                        )}
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <EmptyInsight>No explicit action item was assigned in this recording.</EmptyInsight>
+                              )}
                             </div>
-                          )}
 
-                          {/* Strategies */}
-                          {insights.strategies?.length > 0 && (
+                            {/* Strategies */}
                             <div className="p-3 bg-green-50 dark:bg-green-950/20 rounded-lg">
                               <div className="flex items-center gap-1 mb-2 text-xs font-medium text-green-700 dark:text-green-400">
-                                <Lightbulb className="w-3 h-3" /> Strategy Insights ({insights.strategies.length})
+                                <Lightbulb className="w-3 h-3" /> Strategy Insights ({insights.strategies?.length || 0})
                               </div>
-                              <ul className="space-y-1">
-                                {insights.strategies.map((s: string, i: number) => (
-                                  <li key={i} className="text-sm flex items-start gap-2">
-                                    <span className="text-green-500 mt-1">-</span> {s}
-                                  </li>
-                                ))}
-                              </ul>
+                              {insights.strategies?.length > 0 ? (
+                                <ul className="space-y-1">
+                                  {insights.strategies.map((s: string, i: number) => (
+                                    <li key={i} className="text-sm flex items-start gap-2">
+                                      <span className="text-green-500 mt-1">-</span> {s}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <EmptyInsight>No business approach or positioning was described.</EmptyInsight>
+                              )}
                             </div>
-                          )}
 
-                          {/* Keywords */}
-                          {insights.keyTopics?.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5">
-                              {insights.keyTopics.map((kw: string, i: number) => (
-                                <Badge key={i} variant="secondary" className="text-[10px]">{kw}</Badge>
-                              ))}
+                            {/* Market and customer evidence */}
+                            <div className="p-3 bg-cyan-50 dark:bg-cyan-950/20 rounded-lg">
+                              <div className="flex items-center gap-1 mb-2 text-xs font-medium text-cyan-700 dark:text-cyan-400">
+                                <TrendingUp className="w-3 h-3" /> Market &amp; Customer Insights ({insights.marketInsights?.length || 0})
+                              </div>
+                              {insights.marketInsights?.length > 0 ? (
+                                <ul className="space-y-1">
+                                  {insights.marketInsights.map((item: string, i: number) => (
+                                    <li key={i} className="text-sm flex items-start gap-2">
+                                      <span className="text-cyan-500 mt-1">-</span> {item}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <EmptyInsight>No market or customer evidence was mentioned.</EmptyInsight>
+                              )}
                             </div>
+
+                            {/* Sales objections */}
+                            <div className="p-3 bg-rose-50 dark:bg-rose-950/20 rounded-lg lg:col-span-2">
+                              <div className="flex items-center gap-1 mb-2 text-xs font-medium text-rose-700 dark:text-rose-400">
+                                <MessageCircleWarning className="w-3 h-3" /> Sales Objections ({insights.salesObjections?.length || 0})
+                              </div>
+                              {insights.salesObjections?.length > 0 ? (
+                                <ul className="space-y-1">
+                                  {insights.salesObjections.map((item: string, i: number) => (
+                                    <li key={i} className="text-sm flex items-start gap-2">
+                                      <span className="text-rose-500 mt-1">-</span> {item}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <EmptyInsight>No customer objection was mentioned in this recording.</EmptyInsight>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 rounded-lg border border-border/70 p-3">
+                            <div className="flex items-center gap-1 text-xs font-medium">
+                              <Tags className="h-3 w-3" /> Topics &amp; keywords
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(insights.keyTopics || []).map((topic: string, i: number) => (
+                                <Badge key={`topic-${i}`} variant="secondary" className="text-[10px]">
+                                  {topic}
+                                </Badge>
+                              ))}
+                              {(insights.keywords || [])
+                                .filter((keyword: string) => !(insights.keyTopics || []).includes(keyword))
+                                .map((keyword: string, i: number) => (
+                                  <Badge key={`keyword-${i}`} variant="outline" className="text-[10px]">
+                                    {keyword}
+                                  </Badge>
+                                ))}
+                              {!insights.keyTopics?.length && !insights.keywords?.length && (
+                                <EmptyInsight>No topics were extracted yet. Use Analyze again below.</EmptyInsight>
+                              )}
+                            </div>
+                          </div>
+
+                          {meeting.status !== 'approved' && meeting.transcript && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-2"
+                              disabled={reanalyzingMeetingId === meeting.id}
+                              onClick={() => handleReanalyze(meeting.id)}
+                            >
+                              {reanalyzingMeetingId === meeting.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3.5 w-3.5" />
+                              )}
+                              {reanalyzingMeetingId === meeting.id ? 'Analyzing full transcript...' : 'Analyze again'}
+                            </Button>
                           )}
 
                           {/* Transcript (expandable) */}
                           {meeting.transcript && (
                             <details className="text-xs">
                               <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                                View full transcript
+                                Transcript preview
                               </summary>
-                              <pre className="mt-2 p-3 bg-muted rounded-lg whitespace-pre-wrap font-mono text-[11px] max-h-[300px] overflow-y-auto">
+                              <pre className="mt-2 max-h-[420px] overflow-y-auto rounded-lg bg-muted p-3 font-mono text-[11px] whitespace-pre-wrap">
                                 {meeting.transcript}
                               </pre>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="mt-2 h-8 text-xs"
+                                onClick={() => setTranscriptPreview({
+                                  title: meeting.title,
+                                  transcript: meeting.transcript,
+                                })}
+                              >
+                                Open full transcript
+                              </Button>
                             </details>
                           )}
                         </div>
@@ -664,6 +838,25 @@ export default function MeetingsPage() {
                 <Sparkles className="w-4 h-4" />
               )}
               Analyze with AI
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!transcriptPreview} onOpenChange={() => setTranscriptPreview(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{transcriptPreview?.title || 'Meeting transcript'}</DialogTitle>
+            <DialogDescription>
+              Full transcript captured from the uploaded recording or pasted text.
+            </DialogDescription>
+          </DialogHeader>
+          <pre className="max-h-[70vh] overflow-y-auto rounded-lg bg-muted p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+            {transcriptPreview?.transcript || ''}
+          </pre>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTranscriptPreview(null)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
