@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq, and, desc, gte, sql } from 'drizzle-orm';
+import { eq, and, desc, gte, sql, inArray } from 'drizzle-orm';
 import { db } from '../lib/db';
 import {
   companies,
+  companyMembers,
   departments,
   agents,
   tasks,
@@ -15,7 +16,7 @@ import {
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { nanoid } from 'nanoid';
-import { ensureTenantForCompany } from '../lib/tenant-ai';
+import { ensureTenantForCompany, getTenantAI } from '../lib/tenant-ai';
 import { buildAdvisorContext } from '../services/advisor-context-builder';
 import { generateAndSaveCeoBrief } from '../services/ceo-advisor';
 import {
@@ -23,6 +24,7 @@ import {
   createGrowthPlanVersion,
 } from '../services/growth-plan-intelligence';
 import { websiteAnalyzerService } from '../services/website-analyzer';
+import { authorizeCompanyAccess } from '../lib/company-access';
 
 const companiesRouter = new Hono();
 
@@ -106,10 +108,27 @@ function mergeSettingsPatch(existing: unknown, patch: unknown): unknown {
 companiesRouter.get('/', async (c) => {
   const { userId } = c.get('user');
 
-  const userCompanies = await db.query.companies.findMany({
+  const ownedCompanies = await db.query.companies.findMany({
     where: eq(companies.ownerId, userId),
     orderBy: [desc(companies.createdAt)],
   });
+
+  const memberships = await db.query.companyMembers.findMany({
+    where: and(eq(companyMembers.userId, userId), eq(companyMembers.status, 'active')),
+    columns: { companyId: true },
+  });
+  const memberCompanyIds = memberships
+    .map((membership) => membership.companyId)
+    .filter((companyId) => !ownedCompanies.some((company) => company.id === companyId));
+
+  const memberCompanies = memberCompanyIds.length
+    ? await db.query.companies.findMany({
+      where: inArray(companies.id, memberCompanyIds),
+      orderBy: [desc(companies.createdAt)],
+    })
+    : [];
+  const userCompanies = [...ownedCompanies, ...memberCompanies]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   return c.json({ data: userCompanies.map(sanitizeCompany) });
 });
@@ -158,6 +177,9 @@ companiesRouter.post('/', zValidator('json', createCompanySchema), async (c) => 
     }))
   );
 
+  const tenantId = await ensureTenantForCompany(company.id, company.name);
+  await getTenantAI().credits.getOrCreateBalance(tenantId);
+
   return c.json(company, 201);
 });
 
@@ -165,9 +187,10 @@ companiesRouter.post('/', zValidator('json', createCompanySchema), async (c) => 
 companiesRouter.get('/:id', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('id');
+  await authorizeCompanyAccess(userId, companyId, 'company.view');
 
   const company = await db.query.companies.findFirst({
-    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+    where: eq(companies.id, companyId),
     with: {
       departments: true,
     },
@@ -203,10 +226,11 @@ companiesRouter.patch('/:id', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('id');
   const data = await c.req.json();
+  await authorizeCompanyAccess(userId, companyId, 'company.edit');
 
   // Check ownership
   const existing = await db.query.companies.findFirst({
-    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
+    where: eq(companies.id, companyId),
   });
 
   if (!existing) {

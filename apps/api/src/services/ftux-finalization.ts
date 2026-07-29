@@ -74,12 +74,17 @@ export async function finalizeFtuxCompany(
   await ensureGroundedBrandIq(companyId, company.name);
 
   const tenantId = await ensureTenantForCompany(companyId, company.name);
+  await getTenantAI().credits.getOrCreateBalance(tenantId);
   const existingAdvice = await getTenantAI().ceoAdvisor.latest(tenantId);
   if (!existingAdvice) {
     await generateAndSaveCeoBrief({
       companyId,
       companyName: company.name,
       actor,
+      // FTUX finalization is part of creating the first company experience.
+      // It prepares the initial Advisor data for the user and must not spend
+      // credits; paid refreshes happen later from the CEO Advisor page.
+      chargeCredits: false,
     });
   }
 

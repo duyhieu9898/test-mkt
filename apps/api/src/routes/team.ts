@@ -8,11 +8,9 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
-import { db } from '../lib/db';
-import { companies } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
+import { authorizeCompanyAccess } from '../lib/company-access';
 import {
   listEmployees,
   getEmployeeBySlug,
@@ -27,21 +25,12 @@ const teamRouter = new Hono();
 
 teamRouter.use('*', authMiddleware);
 
-async function verifyOwnership(companyId: string, userId: string) {
-  const company = await db.query.companies.findFirst({
-    where: eq(companies.id, companyId),
-    columns: { id: true, ownerId: true },
-  });
-  if (!company) throw new HTTPException(404, { message: 'Company not found' });
-  if (company.ownerId !== userId) throw new HTTPException(403, { message: 'Access denied' });
-}
-
 /* ─── List ──────────────────────────────────────────────────────── */
 
 teamRouter.get('/:companyId', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  await verifyOwnership(companyId, userId);
+  await authorizeCompanyAccess(userId, companyId, 'company.view');
 
   const employees = await listEmployees(companyId);
   const memory = await countChunks(companyId);
@@ -74,7 +63,7 @@ teamRouter.get('/:companyId/:slug', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const slug = c.req.param('slug');
-  await verifyOwnership(companyId, userId);
+  await authorizeCompanyAccess(userId, companyId, 'company.view');
 
   const employee = await getEmployeeBySlug(companyId, slug);
   if (!employee) throw new HTTPException(404, { message: 'Employee not found' });
@@ -112,7 +101,7 @@ teamRouter.post(
     const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
     const slug = c.req.param('slug');
-    await verifyOwnership(companyId, userId);
+    await authorizeCompanyAccess(userId, companyId, 'company.view');
     const { message } = c.req.valid('json');
 
     try {

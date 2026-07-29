@@ -12,7 +12,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and, desc } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { companies, landingPageDeployments, landingPages, landingPageLeads } from '@1person/core/db';
+import { landingPageDeployments, landingPages, landingPageLeads } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { landingPageService } from '../services/landing-page-service';
@@ -20,6 +20,7 @@ import { CMSIntegration } from '../services/cms-integration';
 import { decryptMaybe } from '../lib/crypto';
 import { landingPagePublisher } from '../services/landing-page-publisher';
 import { pageRendererService } from '../services/page-renderer-service';
+import { authorizeCompanyAccess, type CompanyPermission } from '../lib/company-access';
 
 const landingPagesRouter = new Hono();
 
@@ -103,17 +104,20 @@ const updateLeadStatusSchema = z.object({
 // HELPERS
 // =============================================================================
 
-const checkCompanyOwnership = async (companyId: string, userId: string) => {
-  const company = await db.query.companies.findFirst({
-    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
-  });
-  if (!company) {
-    throw new HTTPException(404, { message: 'Company not found' });
-  }
-  return company;
+const checkCompanyAccess = async (
+  companyId: string,
+  userId: string,
+  permission: CompanyPermission = 'company.view',
+) => {
+  const access = await authorizeCompanyAccess(userId, companyId, permission);
+  return access.company;
 };
 
-const checkPageOwnership = async (pageId: string, userId: string) => {
+const checkPageAccess = async (
+  pageId: string,
+  userId: string,
+  permission: CompanyPermission = 'company.view',
+) => {
   const page = await db.query.landingPages.findFirst({
     where: eq(landingPages.id, pageId),
     with: { company: true },
@@ -123,9 +127,7 @@ const checkPageOwnership = async (pageId: string, userId: string) => {
     throw new HTTPException(404, { message: 'Landing page not found' });
   }
 
-  if (page.company.ownerId !== userId) {
-    throw new HTTPException(403, { message: 'Access denied' });
-  }
+  await authorizeCompanyAccess(userId, page.companyId, permission);
 
   return page;
 };
@@ -146,7 +148,7 @@ landingPagesRouter.get('/', async (c) => {
     throw new HTTPException(400, { message: 'companyId is required' });
   }
 
-  await checkCompanyOwnership(companyId, userId);
+  await checkCompanyAccess(companyId, userId);
 
   const pages = await landingPageService.getPagesByCompany(companyId);
 
@@ -165,7 +167,7 @@ landingPagesRouter.get('/:id', async (c) => {
   const { userId } = c.get('user');
   const pageId = c.req.param('id');
 
-  const ownedPage = await checkPageOwnership(pageId, userId);
+  const ownedPage = await checkPageAccess(pageId, userId);
 
   const page = await landingPageService.getPage(pageId);
 
@@ -202,7 +204,8 @@ landingPagesRouter.post(
     const { userId } = c.get('user');
     const data = c.req.valid('json');
 
-    await checkCompanyOwnership(data.companyId, userId);
+    await checkCompanyAccess(data.companyId, userId, 'landing_page.create');
+    await authorizeCompanyAccess(userId, data.companyId, 'credits.spend');
 
     console.log(`[API] Generating landing page for company ${data.companyId}`);
     console.log(`[API] Prompt: ${data.prompt.substring(0, 100)}...`);
@@ -236,7 +239,7 @@ landingPagesRouter.patch(
     const pageId = c.req.param('id');
     const { status } = c.req.valid('json');
 
-    await checkPageOwnership(pageId, userId);
+    await checkPageAccess(pageId, userId, 'landing_page.edit');
 
     const updated = await landingPageService.updateStatus(pageId, status);
 
@@ -260,7 +263,7 @@ landingPagesRouter.put(
     const pageId = c.req.param('id');
     const { sections } = c.req.valid('json');
 
-    await checkPageOwnership(pageId, userId);
+    await checkPageAccess(pageId, userId, 'landing_page.edit');
 
     const updated = await landingPageService.updateSections(pageId, sections);
 
@@ -284,7 +287,7 @@ landingPagesRouter.put(
     const pageId = c.req.param('id');
     const { sections, pageSettings } = c.req.valid('json');
 
-    await checkPageOwnership(pageId, userId);
+    await checkPageAccess(pageId, userId, 'landing_page.edit');
     const updated = await landingPageService.updateSections(pageId, sections, pageSettings);
 
     return c.json({
@@ -303,7 +306,7 @@ landingPagesRouter.delete('/:id', async (c) => {
   const { userId } = c.get('user');
   const pageId = c.req.param('id');
 
-  await checkPageOwnership(pageId, userId);
+  await checkPageAccess(pageId, userId, 'landing_page.edit');
 
   await landingPageService.deletePage(pageId);
 
@@ -326,7 +329,7 @@ landingPagesRouter.post('/company/:companyId/extract-document', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
 
-  await checkCompanyOwnership(companyId, userId);
+  await checkCompanyAccess(companyId, userId, 'landing_page.create');
 
   const formData = await c.req.formData();
   const file = formData.get('file') as File;
@@ -389,7 +392,7 @@ landingPagesRouter.get('/:id/leads', async (c) => {
   const { userId } = c.get('user');
   const pageId = c.req.param('id');
 
-  const page = await checkPageOwnership(pageId, userId);
+  const page = await checkPageAccess(pageId, userId);
 
   const leads = await landingPageService.getLeads(pageId);
 
@@ -458,7 +461,7 @@ landingPagesRouter.patch(
     const leadId = c.req.param('leadId');
     const { status, notes } = c.req.valid('json');
 
-    await checkPageOwnership(pageId, userId);
+    await checkPageAccess(pageId, userId, 'landing_page.edit');
 
     const [updated] = await db
       .update(landingPageLeads)
@@ -495,7 +498,7 @@ landingPagesRouter.get('/:id/analytics', async (c) => {
   const { userId } = c.get('user');
   const pageId = c.req.param('id');
 
-  const page = await checkPageOwnership(pageId, userId);
+  const page = await checkPageAccess(pageId, userId);
 
   // Return basic metrics for now
   return c.json({
@@ -526,13 +529,8 @@ landingPagesRouter.post('/:pageId/generate-content', async (c) => {
     throw new HTTPException(404, { message: 'Page not found' });
   }
 
-  // Verify user owns the company that owns this page
-  const company = await db.query.companies.findFirst({
-    where: and(eq(companies.id, page.companyId), eq(companies.ownerId, userId)),
-  });
-  if (!company) {
-    throw new HTTPException(403, { message: 'Access denied' });
-  }
+  await authorizeCompanyAccess(userId, page.companyId, 'landing_page.edit');
+  await authorizeCompanyAccess(userId, page.companyId, 'credits.spend');
 
   const { landingPageSections } = await import('@1person/core/db');
 
@@ -736,11 +734,12 @@ landingPagesRouter.post(
     const pageId = c.req.param('pageId');
     const { types, language } = c.req.valid('json');
 
-    await checkCompanyOwnership(companyId, userId);
+    await checkCompanyAccess(companyId, userId, 'landing_page.edit');
+    await authorizeCompanyAccess(userId, companyId, 'credits.spend');
 
     // 1. Load the landing page + its sections
     const page = await db.query.landingPages.findFirst({
-      where: eq(landingPages.id, pageId),
+      where: and(eq(landingPages.id, pageId), eq(landingPages.companyId, companyId)),
     });
 
     if (!page) {
@@ -972,7 +971,7 @@ Return JSON:
 
 landingPagesRouter.get('/:id/publish-options', async (c) => {
   const { userId } = c.get('user');
-  const page = await checkPageOwnership(c.req.param('id'), userId);
+  const page = await checkPageAccess(c.req.param('id'), userId);
   const settings = (page.company.settings || {}) as Record<string, any>;
   const wp = settings.wordpress;
 
@@ -1028,7 +1027,7 @@ landingPagesRouter.get('/:id/publish-options', async (c) => {
 
 landingPagesRouter.get('/:id/publish-history', async (c) => {
   const { userId } = c.get('user');
-  const page = await checkPageOwnership(c.req.param('id'), userId);
+  const page = await checkPageAccess(c.req.param('id'), userId);
   const deployments = await db.query.landingPageDeployments.findMany({
     where: eq(landingPageDeployments.pageId, page.id),
     orderBy: [desc(landingPageDeployments.createdAt)],
@@ -1073,7 +1072,7 @@ landingPagesRouter.get('/:id/publish-history', async (c) => {
 landingPagesRouter.get('/:id/publish-history/:versionId/preview', async (c) => {
   const { userId } = c.get('user');
   const pageId = c.req.param('id');
-  await checkPageOwnership(pageId, userId);
+  await checkPageAccess(pageId, userId);
 
   try {
     const rendered = await pageRendererService.renderVersionToHtml(
@@ -1107,7 +1106,13 @@ landingPagesRouter.post('/:id/publish', zValidator('json', z.object({
   const pageId = c.req.param('id');
   const body = c.req.valid('json');
   const { userId } = c.get('user');
-  await checkPageOwnership(pageId, userId);
+  await checkPageAccess(
+    pageId,
+    userId,
+    body.target === 'hosted' || body.wordpress?.status === 'publish'
+      ? 'landing_page.publish_direct'
+      : 'landing_page.publish_request',
+  );
 
   try {
     const result = await landingPagePublisher.publish({
@@ -1134,7 +1139,7 @@ landingPagesRouter.post('/:id/publish', zValidator('json', z.object({
 landingPagesRouter.post('/:id/unpublish', async (c) => {
   const pageId = c.req.param('id');
   const { userId } = c.get('user');
-  await checkPageOwnership(pageId, userId);
+  await checkPageAccess(pageId, userId, 'landing_page.publish_direct');
 
   try {
     await landingPagePublisher.unpublish(pageId);
@@ -1160,7 +1165,7 @@ landingPagesRouter.post('/:companyId/:pageId/submit-publish', zValidator('json',
   const { companyId, pageId } = c.req.param() as { companyId: string; pageId: string };
   const body = c.req.valid('json');
   const sub = body.subdomain.toLowerCase();
-  await checkCompanyOwnership(companyId, userId);
+  await checkCompanyAccess(companyId, userId, 'landing_page.publish_request');
   const page = await db.query.landingPages.findFirst({ where: and(eq(landingPages.id, pageId), eq(landingPages.companyId, companyId)) });
   if (!page) throw new HTTPException(404, { message: 'Page not found' });
   const taken = await db.query.landingPages.findFirst({ where: eq(landingPages.subdomain, sub), columns: { id: true } });

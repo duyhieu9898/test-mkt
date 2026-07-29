@@ -17,6 +17,7 @@ import {
 import { toast } from 'sonner';
 import { TrustBanner } from '@/components/trust-banner';
 import { api } from '@/lib/api/client';
+import { apiErrorFromResponse, friendlyError } from '@/lib/friendly-errors';
 import { useAuthStore } from '@/stores/auth-store';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -160,13 +161,12 @@ export default function AssetsPage() {
         );
 
         if (!response.ok) {
-          const err = await response.json().catch(() => ({ message: 'Upload failed' }));
-          throw new Error(err.error?.message || err.message || 'Upload failed');
+          throw await apiErrorFromResponse(response, `Failed to upload ${file.name}`);
         }
 
         uploadedCount++;
       } catch (err: any) {
-        toast.error(err.message || `Failed to upload ${file.name}`);
+        toast.error(friendlyError(err, `Failed to upload ${file.name}`));
       }
     }
 

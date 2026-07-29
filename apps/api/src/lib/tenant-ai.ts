@@ -70,20 +70,3 @@ export async function ensureTenantForCompany(
 ): Promise<string> {
   return getTenantAI().initTenant(companyId, companyName);
 }
-
-/**
- * Ensure a trust tenant exists for an account-level wallet.
- *
- * Business/brain data remains company-scoped via ensureTenantForCompany().
- * Credits are intentionally account-scoped so creating multiple companies
- * does not grant multiple free balances.
- */
-export async function ensureTenantForAccount(
-  userId: string,
-  displayName?: string | null,
-): Promise<string> {
-  return getTenantAI().initTenant(
-    `account:${userId}`,
-    displayName?.trim() || `Account ${userId}`,
-  );
-}

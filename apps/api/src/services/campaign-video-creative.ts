@@ -689,11 +689,17 @@ export async function syncCampaignVideoProject(args: {
   const readyProject = updated ?? project;
   try {
     const creditChargedAt = new Date().toISOString();
+    const requestedByUserId = typeof script.requestedByUserId === 'string'
+      ? script.requestedByUserId
+      : typeof generation?.requestedByUserId === 'string'
+        ? generation.requestedByUserId
+        : undefined;
     await chargeFixedCredits(args.companyId, FIXED_CREDIT_COSTS.campaignVideo, {
       featureKey: 'campaign_video',
       tier: 'premium',
       refKind: 'video_project',
       refId: project.id,
+      actor: requestedByUserId ? `user:${requestedByUserId}` : 'system',
       note: `AI campaign video (${project.format}, ${project.aspectRatio}) completed`,
     });
     const readyScript = (readyProject.script ?? {}) as Record<string, any>;
@@ -783,6 +789,7 @@ export async function createCampaignVideoProject(args: {
       creativeBrief,
       brandKit: brandCreativeKitSnapshot(brandKit),
       provider: 'openrouter',
+      requestedByUserId: args.userId,
       referenceImage: referenceImage ? {
         assetId: referenceImage.assetId,
         url: referenceImage.url,
@@ -846,6 +853,7 @@ export async function createCampaignVideoProject(args: {
             resolution: getOpenRouterVideoResolution(),
             generateAudio: shouldGenerateOpenRouterAudio(),
             status: 'pending',
+            requestedByUserId: args.userId,
             submittedAt: new Date().toISOString(),
           },
         } as any,

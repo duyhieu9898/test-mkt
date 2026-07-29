@@ -89,6 +89,7 @@ import marketingSkillsRouter from './routes/marketing-skills';
 import visionRouter from './routes/vision-analyze';
 import autopilotRouter from './routes/autopilot';
 import publishingRouter from './routes/publishing';
+import accessRouter from './routes/access';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -347,6 +348,7 @@ api.route('/marketing-skills', marketingSkillsRouter);
 api.route('/vision', visionRouter);
 api.route('/autopilot', autopilotRouter);
 api.route('/publishing', publishingRouter);
+api.route('/access', accessRouter);
 
 // Mount API
 app.route('/api/v1', api);

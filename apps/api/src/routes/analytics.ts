@@ -13,21 +13,20 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { companies, knowledgeBase } from '@1person/core/db';
+import { knowledgeBase } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
-import { HTTPException } from 'hono/http-exception';
 import { Ga4Client } from '../services/ga4-client';
+import { authorizeCompanyAccess, type CompanyPermission } from '../lib/company-access';
 
 const analyticsRouter = new Hono();
 analyticsRouter.use('*', authMiddleware);
 
-async function verifyOwnership(companyId: string, userId: string) {
-  const company = await db.query.companies.findFirst({
-    where: eq(companies.id, companyId),
-    columns: { id: true, ownerId: true },
-  });
-  if (!company) throw new HTTPException(404, { message: 'Company not found' });
-  if (company.ownerId !== userId) throw new HTTPException(403, { message: 'Access denied' });
+async function verifyAnalyticsAccess(
+  companyId: string,
+  userId: string,
+  permission: CompanyPermission = 'company.view',
+) {
+  await authorizeCompanyAccess(userId, companyId, permission);
 }
 
 async function getGoogleRefreshToken(companyId: string): Promise<string | null> {
@@ -57,7 +56,7 @@ async function getGa4PropertyId(companyId: string): Promise<string | null> {
 analyticsRouter.get('/:companyId/ga4', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  await verifyOwnership(companyId, userId);
+  await verifyAnalyticsAccess(companyId, userId);
 
   const days = Math.min(Math.max(Number(c.req.query('days') ?? 28), 1), 90);
   const refreshToken = await getGoogleRefreshToken(companyId);
@@ -88,7 +87,7 @@ analyticsRouter.post(
   async (c) => {
     const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
-    await verifyOwnership(companyId, userId);
+    await verifyAnalyticsAccess(companyId, userId, 'channels.connect');
     const { propertyId } = c.req.valid('json');
     const clean = propertyId.replace(/^properties\//, '');
 

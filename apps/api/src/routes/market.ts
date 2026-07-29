@@ -11,6 +11,7 @@ import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
 import { ensureSufficientCredits, chargeFixedCredits } from '../lib/credits';
+import { authorizeCompanyAccess, type CompanyPermission } from '../lib/company-access';
 import { scanCompetitor } from '../services/market-scan';
 import { suggestCompetitors } from '../services/suggest-competitors';
 import { generateCompetitorBrief } from '../services/competitor-brief';
@@ -25,14 +26,13 @@ const marketRouter = new Hono();
 marketRouter.use('*', authMiddleware);
 const SCAN_COST = 5;
 
-async function verifyOwnership(companyId: string, userId: string): Promise<string> {
-  const company = await db.query.companies.findFirst({
-    where: eq(companies.id, companyId),
-    columns: { id: true, name: true, ownerId: true },
-  });
-  if (!company) throw new HTTPException(404, { message: 'Company not found' });
-  if (company.ownerId !== userId) throw new HTTPException(403, { message: 'You do not own this company' });
-  return ensureTenantForCompany(company.id, company.name);
+async function verifyMarketAccess(
+  companyId: string,
+  userId: string,
+  permission: CompanyPermission = 'market.view',
+): Promise<string> {
+  const access = await authorizeCompanyAccess(userId, companyId, permission);
+  return ensureTenantForCompany(access.company.id, access.company.name);
 }
 
 async function listCompetitorsSafe(tenantId: string): Promise<Array<{ name: string }>> {
@@ -53,21 +53,21 @@ const competitorSchema = z.object({
 
 marketRouter.get('/:companyId/competitors', async (c) => {
   const { userId } = c.get('user');
-  const tenantId = await verifyOwnership(c.req.param('companyId'), userId);
+  const tenantId = await verifyMarketAccess(c.req.param('companyId'), userId);
   const data = await listCompetitorsSafe(tenantId);
   return c.json({ data });
 });
 
 marketRouter.post('/:companyId/competitors', zValidator('json', competitorSchema), async (c) => {
   const { userId } = c.get('user');
-  const tenantId = await verifyOwnership(c.req.param('companyId'), userId);
+  const tenantId = await verifyMarketAccess(c.req.param('companyId'), userId, 'market.scan');
   const competitor = await getTenantAI().market.createCompetitor(tenantId, c.req.valid('json'), `user:${userId}`);
   return c.json(competitor, 201);
 });
 
 marketRouter.patch('/:companyId/competitors/:id', zValidator('json', competitorSchema.partial()), async (c) => {
   const { userId } = c.get('user');
-  const tenantId = await verifyOwnership(c.req.param('companyId'), userId);
+  const tenantId = await verifyMarketAccess(c.req.param('companyId'), userId, 'market.scan');
   const competitor = await getTenantAI().market.updateCompetitor(
     tenantId, c.req.param('id'), c.req.valid('json'), `user:${userId}`,
   );
@@ -76,7 +76,7 @@ marketRouter.patch('/:companyId/competitors/:id', zValidator('json', competitorS
 
 marketRouter.delete('/:companyId/competitors/:id', async (c) => {
   const { userId } = c.get('user');
-  const tenantId = await verifyOwnership(c.req.param('companyId'), userId);
+  const tenantId = await verifyMarketAccess(c.req.param('companyId'), userId, 'market.scan');
   await getTenantAI().market.deleteCompetitor(tenantId, c.req.param('id'), `user:${userId}`);
   return c.json({ success: true });
 });
@@ -86,7 +86,7 @@ marketRouter.delete('/:companyId/competitors/:id', async (c) => {
 marketRouter.post('/:companyId/competitors/suggest', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  const tenantId = await verifyOwnership(companyId, userId);
+  const tenantId = await verifyMarketAccess(companyId, userId, 'market.scan');
 
   // Exclude already-tracked competitors so suggestions are fresh
   const existing = await listCompetitorsSafe(tenantId);
@@ -106,7 +106,7 @@ marketRouter.post(
   async (c) => {
     const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
-    const tenantId = await verifyOwnership(companyId, userId);
+    const tenantId = await verifyMarketAccess(companyId, userId, 'market.scan');
 
     const { competitors } = c.req.valid('json');
     const ai = getTenantAI();
@@ -123,7 +123,8 @@ marketRouter.post('/:companyId/competitors/:id/scan', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const competitorId = c.req.param('id');
-  const tenantId = await verifyOwnership(companyId, userId);
+  const tenantId = await verifyMarketAccess(companyId, userId, 'market.scan');
+  await authorizeCompanyAccess(userId, companyId, 'credits.spend');
   const ai = getTenantAI();
   const competitor = await ai.market.getCompetitor(tenantId, competitorId);
   if (!competitor) throw new HTTPException(404, { message: 'Competitor not found' });
@@ -201,7 +202,7 @@ marketRouter.post('/:companyId/competitors/:id/brief', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const competitorId = c.req.param('id');
-  const tenantId = await verifyOwnership(companyId, userId);
+  const tenantId = await verifyMarketAccess(companyId, userId, 'market.scan');
 
   const brief = await generateCompetitorBrief({ companyId, tenantId, competitorId });
   return c.json({ success: true, data: brief });
@@ -211,7 +212,7 @@ marketRouter.post('/:companyId/competitors/:id/comparison-page', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const competitorId = c.req.param('id');
-  const tenantId = await verifyOwnership(companyId, userId);
+  const tenantId = await verifyMarketAccess(companyId, userId, 'market.scan');
 
   const page = await generateComparisonPage({ companyId, tenantId, competitorId });
   return c.json({ success: true, data: { pageId: page.id, slug: page.slug, name: page.name } });
@@ -220,7 +221,7 @@ marketRouter.post('/:companyId/competitors/:id/comparison-page', async (c) => {
 marketRouter.get('/:companyId/digest', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  const tenantId = await verifyOwnership(companyId, userId);
+  const tenantId = await verifyMarketAccess(companyId, userId);
   const windowDays = Math.min(30, Math.max(1, parseInt(c.req.query('days') ?? '7', 10) || 7));
 
   const digest = await generateMarketDigest({ companyId, tenantId, windowDays });
@@ -230,7 +231,7 @@ marketRouter.get('/:companyId/digest', async (c) => {
 marketRouter.get('/:companyId/positioning', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  const tenantId = await verifyOwnership(companyId, userId);
+  const tenantId = await verifyMarketAccess(companyId, userId);
 
   const map = await generatePositioningMap({ companyId, tenantId });
   return c.json({ success: true, data: map });

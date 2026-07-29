@@ -16,26 +16,23 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { contentGrades, companies } from '@1person/core/db';
-import { authMiddleware, getUserCompanies } from '../middleware/auth';
+import { contentGrades } from '@1person/core/db';
+import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { ensureSufficientCredits, chargeFixedCredits } from '../lib/credits';
 import { gradeContent } from '../services/content-grader';
+import { authorizeCompanyAccess, type CompanyPermission } from '../lib/company-access';
 
 const contentEditorRouter = new Hono();
 contentEditorRouter.use('*', authMiddleware);
 
-async function assertCompanyAccess(companyId: string, userId: string) {
-  const owned = await getUserCompanies(userId);
-  if (!owned.some((c) => c.id === companyId)) {
-    throw new HTTPException(403, { message: 'Access denied' });
-  }
-  const co = await db.query.companies.findFirst({
-    where: eq(companies.id, companyId),
-    columns: { id: true, name: true },
-  });
-  if (!co) throw new HTTPException(404, { message: 'Company not found' });
-  return co;
+async function assertCompanyAccess(
+  companyId: string,
+  userId: string,
+  permission: CompanyPermission = 'company.view',
+) {
+  const access = await authorizeCompanyAccess(userId, companyId, permission);
+  return access.company;
 }
 
 contentEditorRouter.post(
@@ -51,7 +48,7 @@ contentEditorRouter.post(
   async (c) => {
     const { companyId, content, targetKeyword } = c.req.valid('json');
     const { userId } = c.get('user');
-    await assertCompanyAccess(companyId, userId);
+    await assertCompanyAccess(companyId, userId, 'credits.spend');
 
     // Pre-check credits (5 per grade — admin can override via feature config).
     await ensureSufficientCredits(companyId, 5);
@@ -63,6 +60,7 @@ contentEditorRouter.post(
         featureKey: 'content_grade',
         refKind: 'content_grade',
         refId: result.id,
+        actor: `user:${userId}`,
       }).catch(() => null);
       return c.json({ success: true, data: result });
     } catch (err: any) {

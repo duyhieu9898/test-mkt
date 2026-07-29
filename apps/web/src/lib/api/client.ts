@@ -1,4 +1,7 @@
+import { translatePermissionErrorCode } from '@/lib/permission-error-messages';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
+const APP_LANGUAGE_STORAGE_KEY = '1person.appLanguage';
 
 interface RequestOptions extends RequestInit {
   token?: string;
@@ -13,6 +16,7 @@ class ApiClient {
 
   private async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
     const { token, ...fetchOptions } = options;
+    const language = this.getPreferredLanguage();
 
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
@@ -30,15 +34,27 @@ class ApiClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: 'An error occurred' }));
+      const errorCode = error.code || error.error?.code;
+      const translatedPermissionMessage = translatePermissionErrorCode(errorCode, language);
       const requestError = new Error(
-        error.error?.message || error.message || 'Request failed',
+        translatedPermissionMessage || error.error?.message || error.message || 'Request failed',
       ) as Error & { code?: string; status?: number };
-      requestError.code = error.code || error.error?.code;
+      requestError.code = errorCode;
       requestError.status = response.status;
       throw requestError;
     }
 
     return response.json();
+  }
+
+  private getPreferredLanguage() {
+    if (typeof window === 'undefined') return undefined;
+    try {
+      const language = window.localStorage.getItem(APP_LANGUAGE_STORAGE_KEY);
+      return language && ['en', 'vi', 'ja'].includes(language) ? language : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async get<T>(endpoint: string, options?: RequestOptions): Promise<T> {

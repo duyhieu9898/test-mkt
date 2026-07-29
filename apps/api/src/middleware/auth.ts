@@ -2,9 +2,9 @@ import type { Context, Next } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { verifyToken } from '../lib/auth';
 import type { JwtPayload } from '../lib/auth';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { companies } from '@1person/core/db';
+import { companies, companyMembers } from '@1person/core/db';
 
 // Extend Hono context
 declare module 'hono' {
@@ -47,13 +47,28 @@ export const authMiddleware = async (c: Context, next: Next) => {
 
 // Get companies that a user has access to
 export async function getUserCompanies(userId: string): Promise<Array<{ id: string; name: string; slug: string }>> {
-  // Get companies owned by user
   const ownedCompanies = await db.query.companies.findMany({
     where: eq(companies.ownerId, userId),
     columns: { id: true, name: true, slug: true },
   });
 
-  return ownedCompanies;
+  const memberships = await db.query.companyMembers.findMany({
+    where: eq(companyMembers.userId, userId),
+    columns: { companyId: true, status: true },
+  });
+  const memberCompanyIds = memberships
+    .filter((membership) => membership.status === 'active')
+    .map((membership) => membership.companyId)
+    .filter((companyId) => !ownedCompanies.some((company) => company.id === companyId));
+
+  if (memberCompanyIds.length === 0) return ownedCompanies;
+
+  const memberCompanies = await db.query.companies.findMany({
+    where: inArray(companies.id, memberCompanyIds),
+    columns: { id: true, name: true, slug: true },
+  });
+
+  return [...ownedCompanies, ...memberCompanies];
 }
 
 // Optional auth - doesn't throw if no token

@@ -8,6 +8,7 @@ import { assetLibrary } from '@1person/core/db';
 import { eq, and, desc, ilike, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { deleteObjectByPublicUrl, saveObject } from '../services/object-storage';
+import { authorizeCompanyAccess } from '../lib/company-access';
 
 const assetsLibrary = new Hono();
 
@@ -94,6 +95,7 @@ assetsLibrary.post('/company/:companyId/upload', async (c) => {
   if (!(await verifyCompanyAccess(userId, companyId))) {
     throw new HTTPException(403, { message: 'Access denied' });
   }
+  await authorizeCompanyAccess(userId, companyId, 'campaign.edit');
 
   const body = await c.req.parseBody();
   const file = body['file'];
@@ -211,6 +213,7 @@ assetsLibrary.post(
     if (!(await verifyCompanyAccess(userId, companyId))) {
       throw new HTTPException(403, { message: 'Access denied' });
     }
+    await authorizeCompanyAccess(userId, companyId, 'campaign.edit');
 
     // Determine mime type from URL or default to jpeg
     let mimeType = 'image/jpeg';
@@ -351,6 +354,7 @@ assetsLibrary.patch(
     if (!(await verifyCompanyAccess(userId, asset.companyId))) {
       throw new HTTPException(403, { message: 'Access denied' });
     }
+    await authorizeCompanyAccess(userId, asset.companyId, 'campaign.edit');
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (body.name !== undefined) updateData.name = body.name;
@@ -391,6 +395,7 @@ assetsLibrary.delete('/:assetId', async (c) => {
   if (!(await verifyCompanyAccess(userId, asset.companyId))) {
     throw new HTTPException(403, { message: 'Access denied' });
   }
+  await authorizeCompanyAccess(userId, asset.companyId, 'campaign.edit');
 
   // Try to delete the file from object storage if it is an uploaded asset.
   if (asset.source === 'upload') {

@@ -7,6 +7,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './client';
 import { useAuthStore } from '@/stores/auth-store';
+import { apiErrorFromResponse } from '@/lib/friendly-errors';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
 
@@ -195,8 +196,7 @@ export function useUploadFile(companyId: string) {
         body: fd,
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: 'Upload failed' }));
-        throw new Error(err.error?.message || err.message || 'Upload failed');
+        throw await apiErrorFromResponse(res, 'Upload failed');
       }
       return res.json();
     },

@@ -1,6 +1,7 @@
 // Export all schemas
 export * from './users';
 export * from './companies';
+export * from './company-access';
 export * from './agents';
 export * from './tasks';
 export * from './messages';
