@@ -10,7 +10,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq, desc } from 'drizzle-orm';
 import { db } from '../lib/db';
-import { companies, campaignLaunches } from '@1person/core/db';
+import { campaignLaunches } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
 import { startLaunch, getLaunch } from '../services/launch-orchestrator';
@@ -19,19 +19,15 @@ import { ensureTenantForCompany } from '../lib/tenant-ai';
 import { generateLaunchSuggestions } from '../services/launch-suggestions';
 import { chargeFixedCredits, ensureSufficientCredits } from '../lib/credits';
 import { FIXED_CREDIT_COSTS, getLaunchCampaignCost } from '../lib/credit-costs';
+import { authorizeCompanyAccess, type CompanyPermission } from '../lib/company-access';
 
 const launchesRouter = new Hono();
 
 launchesRouter.use('*', authMiddleware);
 
-async function verifyOwnership(companyId: string, userId: string) {
-  const company = await db.query.companies.findFirst({
-    where: eq(companies.id, companyId),
-    columns: { id: true, name: true, ownerId: true },
-  });
-  if (!company) throw new HTTPException(404, { message: 'Company not found' });
-  if (company.ownerId !== userId) throw new HTTPException(403, { message: 'Access denied' });
-  return company;
+async function verifyCompanyPermission(companyId: string, userId: string, permission: CompanyPermission) {
+  const access = await authorizeCompanyAccess(userId, companyId, permission);
+  return access.company;
 }
 
 launchesRouter.post(
@@ -67,7 +63,8 @@ launchesRouter.post(
   async (c) => {
     const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
-    await verifyOwnership(companyId, userId);
+    await verifyCompanyPermission(companyId, userId, 'campaign.generate_ai');
+    await verifyCompanyPermission(companyId, userId, 'credits.spend');
     const body = c.req.valid('json');
     const creditCost = getLaunchCampaignCost({
       // Video credits are charged by the render worker only after the
@@ -117,7 +114,7 @@ launchesRouter.post(
 launchesRouter.get('/:companyId', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  await verifyOwnership(companyId, userId);
+  await verifyCompanyPermission(companyId, userId, 'campaign.view');
   const rows = await db
     .select()
     .from(campaignLaunches)
@@ -130,7 +127,7 @@ launchesRouter.get('/:companyId', async (c) => {
 launchesRouter.get('/:companyId/suggestions', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  const company = await verifyOwnership(companyId, userId);
+  const company = await verifyCompanyPermission(companyId, userId, 'campaign.generate_ai');
   const tenantId = await ensureTenantForCompany(company.id, company.name);
   const suggestions = await generateLaunchSuggestions({
     companyId,
@@ -144,7 +141,7 @@ launchesRouter.get('/:companyId/:id', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const id = c.req.param('id');
-  await verifyOwnership(companyId, userId);
+  await verifyCompanyPermission(companyId, userId, 'campaign.view');
   const row = await getLaunch(companyId, id);
   if (!row) throw new HTTPException(404, { message: 'Launch not found' });
   return c.json({ data: row });

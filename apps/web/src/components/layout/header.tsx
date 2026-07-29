@@ -22,6 +22,7 @@ import {
   ChevronDown,
   HelpCircle,
   Gem,
+  Shield,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -31,6 +32,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useMyCompanyAccess } from '@/lib/api/company-access-hooks';
 
 export function Header() {
   const router = useRouter();
@@ -38,18 +40,23 @@ export function Header() {
   const { user, logout, token } = useAuthStore();
   const companyId = typeof params?.companyId === 'string' ? params.companyId : undefined;
   const settingsHref = companyId ? `/${companyId}/settings` : '/companies';
+  const accessHref = companyId ? `/${companyId}/settings/team` : '/companies';
   const [language] = usePreferredAppLanguage('en');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const { data: creditsData, refetch: refetchCredits, isFetching: isFetchingCredits } = useQuery({
     queryKey: ['credits', companyId],
     queryFn: () =>
-      api.get<{ balance: { totalAvailable: number } }>(`/credits/${companyId}`, {
+      api.get<{
+        balance: { totalAvailable: number };
+        access?: { label?: string; canSpend?: boolean; canManage?: boolean };
+      }>(`/credits/${companyId}`, {
         token: token!,
       }),
     enabled: !!token && !!companyId,
     staleTime: 5_000,
     refetchOnWindowFocus: true,
   });
+  const { data: accessData, refetch: refetchAccess, isFetching: isFetchingAccess } = useMyCompanyAccess(companyId);
 
   const handleLogout = () => {
     logout();
@@ -60,6 +67,7 @@ export function Header() {
     setUserMenuOpen(open);
     if (open && token && companyId) {
       void refetchCredits();
+      void refetchAccess();
     }
   };
 
@@ -135,10 +143,20 @@ export function Header() {
                     <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
                       <Gem className="h-3 w-3" />
                       {typeof creditsData?.balance.totalAvailable === 'number'
-                        ? `${creditsData.balance.totalAvailable.toLocaleString()} credits left`
+                        ? `${creditsData.access?.label || 'Company credits'}: ${creditsData.balance.totalAvailable.toLocaleString()}`
                         : isFetchingCredits
                           ? 'Checking credits...'
-                          : 'Credits unavailable'}
+                          : 'No credit access'}
+                    </span>
+                  )}
+                  {companyId && (
+                    <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary">
+                      <Shield className="h-3 w-3" />
+                      {accessData?.roleLabel
+                        ? `Role: ${accessData.roleLabel}`
+                        : isFetchingAccess
+                          ? 'Checking access...'
+                          : 'Role unavailable'}
                     </span>
                   )}
                 </div>
@@ -154,6 +172,14 @@ export function Header() {
                   {appT(language, 'settings')}
                 </Link>
               </DropdownMenuItem>
+              {companyId && (
+                <DropdownMenuItem asChild>
+                  <Link href={accessHref}>
+                    <Shield className="w-4 h-4 mr-2" />
+                    View my access
+                  </Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="text-destructive">
                 <LogOut className="w-4 h-4 mr-2" />

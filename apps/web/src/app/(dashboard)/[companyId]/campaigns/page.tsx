@@ -31,6 +31,8 @@ import { OutOfCreditsModal } from '@/components/out-of-credits-modal';
 import { cn } from '@/lib/utils';
 import { campaignDisplayTitle } from '@/lib/campaign-title';
 import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
+import { useMyCompanyAccess } from '@/lib/api/company-access-hooks';
+import { hasCompanyPermission } from '@/lib/company-access';
 import {
   DriveSourcePicker,
   driveSourceRequestBody,
@@ -95,6 +97,7 @@ export default function CampaignsPage() {
   const [oocReq, setOocReq] = useState<number | undefined>();
   const [oocAvail, setOocAvail] = useState<number | undefined>();
   const queryClient = useQueryClient();
+  const access = useMyCompanyAccess(companyId);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['campaigns', companyId],
@@ -120,9 +123,14 @@ export default function CampaignsPage() {
   const availableCredits = creditsData?.balance.totalAvailable;
   const hasEnoughCredits =
     typeof availableCredits !== 'number' || availableCredits >= selectedCreditCost;
+  const canGenerateCampaign = hasCompanyPermission(access.data, 'campaign.generate_ai');
 
   const onGenerate = async () => {
     if (!token) return;
+    if (!canGenerateCampaign) {
+      toast.error('Your role can review campaigns, but cannot create campaigns or spend AI credits.');
+      return;
+    }
     if (goal.trim().length < 3 || audience.trim().length < 3) {
       toast.error('Please describe your goal and who it is for.');
       return;
@@ -195,6 +203,8 @@ export default function CampaignsPage() {
         <Button
           onClick={() => setDialogOpen(true)}
           data-tour="generate-campaign"
+          disabled={access.isLoading || !canGenerateCampaign}
+          title={!canGenerateCampaign ? 'Your role can review campaigns, but cannot create campaigns.' : undefined}
           className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2 w-full sm:w-auto"
         >
           <Sparkles className="w-4 h-4" /> Generate Campaign

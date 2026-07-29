@@ -23,6 +23,7 @@ import { renderSkillKnowledgeBundle } from '@1person/core';
 import { authMiddleware } from '../middleware/auth';
 import { llmGenerate } from '../lib/llm';
 import { buildBusinessContext } from '../services/business-context';
+import { authorizeCompanyAccess, type CompanyPermission } from '../lib/company-access';
 
 const chatbotRouter = new Hono();
 
@@ -284,15 +285,37 @@ setInterval(() => {
 const authed = new Hono();
 authed.use('*', authMiddleware);
 
+async function requireChatbotAccess(c: any, permission: CompanyPermission) {
+  const { userId } = c.get('user');
+  const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(userId, companyId, permission);
+  return { userId, companyId };
+}
+
+async function canConfigureChatbot(userId: string, companyId: string) {
+  try {
+    await authorizeCompanyAccess(userId, companyId, 'chatbot.configure');
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'status' in error && (error as any).status === 403) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 // List all chatbots for company
 authed.get('/company/:companyId/chatbots', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { userId, companyId } = await requireChatbotAccess(c, 'company.view');
   const bots = await db.select().from(chatbotConfig)
     .where(eq(chatbotConfig.companyId, companyId))
     .orderBy(desc(chatbotConfig.createdAt));
 
   // Auto-create default if none
   if (bots.length === 0) {
+    if (!await canConfigureChatbot(userId, companyId)) {
+      return c.json({ data: [] });
+    }
     const [created] = await db.insert(chatbotConfig)
       .values({ companyId, name: 'AI Assistant', isActive: true })
       .returning();
@@ -315,7 +338,7 @@ authed.post(
     handoffEnabled: z.boolean().optional(),
   })),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireChatbotAccess(c, 'chatbot.configure');
     const body = c.req.valid('json');
     const [created] = await db.insert(chatbotConfig)
       .values({ companyId, ...body, isActive: true })
@@ -326,7 +349,7 @@ authed.post(
 
 // Delete chatbot
 authed.delete('/company/:companyId/chatbots/:botId', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireChatbotAccess(c, 'chatbot.configure');
   const botId = c.req.param('botId');
   await db.delete(chatbotConfig).where(and(
     eq(chatbotConfig.id, botId),
@@ -341,7 +364,7 @@ authed.post(
   '/company/:companyId/chatbots/:botId/config',
   zValidator('json', chatbotConfigUpdateSchema),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireChatbotAccess(c, 'chatbot.configure');
     const botId = c.req.param('botId');
     const body = c.req.valid('json');
 
@@ -364,7 +387,7 @@ authed.post(
   '/company/:companyId/config',
   zValidator('json', chatbotConfigUpdateSchema),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireChatbotAccess(c, 'chatbot.configure');
     const body = c.req.valid('json');
 
     // Upsert config
@@ -391,13 +414,16 @@ authed.post(
 
 // Get chatbot config
 authed.get('/company/:companyId/config', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { userId, companyId } = await requireChatbotAccess(c, 'company.view');
 
   let config = await db.query.chatbotConfig.findFirst({
     where: eq(chatbotConfig.companyId, companyId),
   });
 
   if (!config) {
+    if (!await canConfigureChatbot(userId, companyId)) {
+      return c.json(null);
+    }
     // Auto-create with defaults + active
     const [created] = await db
       .insert(chatbotConfig)
@@ -423,7 +449,7 @@ authed.post(
     })
   ),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireChatbotAccess(c, 'chatbot.view_conversations');
     const { conversationId, botId, message, visitorName, visitorEmail } = c.req.valid('json');
 
     const response = await handleChat(companyId, {
@@ -441,7 +467,7 @@ authed.post(
 
 // List conversations
 authed.get('/company/:companyId/conversations', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireChatbotAccess(c, 'chatbot.view_conversations');
 
   const conversations = await db
     .select()
@@ -455,10 +481,11 @@ authed.get('/company/:companyId/conversations', async (c) => {
 
 // Get conversation messages
 authed.get('/company/:companyId/conversations/:id', async (c) => {
+  const { companyId } = await requireChatbotAccess(c, 'chatbot.view_conversations');
   const convId = c.req.param('id');
 
   const conversation = await db.query.chatConversations.findFirst({
-    where: eq(chatConversations.id, convId),
+    where: and(eq(chatConversations.id, convId), eq(chatConversations.companyId, companyId)),
   });
 
   if (!conversation) return c.json({ error: 'Conversation not found' }, 404);
@@ -478,7 +505,7 @@ authed.get('/company/:companyId/conversations/:id', async (c) => {
 
 // List conversations waiting for handoff
 authed.get('/company/:companyId/handoff-queue', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireChatbotAccess(c, 'chatbot.view_conversations');
   const waiting = await db
     .select()
     .from(chatConversations)
@@ -506,10 +533,11 @@ authed.get('/company/:companyId/handoff-queue', async (c) => {
 
 // Staff picks up a conversation
 authed.post('/company/:companyId/conversations/:convId/pickup', async (c) => {
+  const { companyId } = await requireChatbotAccess(c, 'chatbot.view_conversations');
   const convId = c.req.param('convId');
   const user = c.get('user');
   const conv = await db.query.chatConversations.findFirst({
-    where: eq(chatConversations.id, convId),
+    where: and(eq(chatConversations.id, convId), eq(chatConversations.companyId, companyId)),
   });
   if (!conv) return c.json({ error: 'Conversation not found' }, 404);
 
@@ -530,8 +558,13 @@ authed.post(
   '/company/:companyId/conversations/:convId/staff-reply',
   zValidator('json', z.object({ message: z.string().min(1) })),
   async (c) => {
+    const { companyId } = await requireChatbotAccess(c, 'chatbot.view_conversations');
     const convId = c.req.param('convId');
     const { message } = c.req.valid('json');
+    const conv = await db.query.chatConversations.findFirst({
+      where: and(eq(chatConversations.id, convId), eq(chatConversations.companyId, companyId)),
+    });
+    if (!conv) return c.json({ error: 'Conversation not found' }, 404);
 
     await db.insert(chatMessages).values({
       conversationId: convId,
@@ -549,9 +582,10 @@ authed.post(
 
 // Staff closes a handoff conversation
 authed.post('/company/:companyId/conversations/:convId/close', async (c) => {
+  const { companyId } = await requireChatbotAccess(c, 'chatbot.view_conversations');
   const convId = c.req.param('convId');
   const conv = await db.query.chatConversations.findFirst({
-    where: eq(chatConversations.id, convId),
+    where: and(eq(chatConversations.id, convId), eq(chatConversations.companyId, companyId)),
   });
   if (!conv) return c.json({ error: 'Conversation not found' }, 404);
 

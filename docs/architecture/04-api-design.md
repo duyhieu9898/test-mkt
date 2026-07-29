@@ -18,6 +18,12 @@ GET    /auth/me                # Get current user
 POST   /auth/oauth/{provider}  # OAuth login
 ```
 
+### Authorization
+
+Company APIs must enforce role-based permissions on the backend, not only in
+the UI. See [12 - Access Control & Permissions](./12-access-control-and-permissions.md)
+for roles, permission groups, credit ownership, and API enforcement rules.
+
 ---
 
 ## Companies API

@@ -213,7 +213,7 @@ billing.post('/webhook', async (c) => {
             const { getTenantAI } = await import('../lib/tenant-ai');
             const { getCreditTenantIdFromCompanyId } = await import('../lib/credits');
             const tenantId = await getCreditTenantIdFromCompanyId(company.id);
-            if (!tenantId) throw new Error('Credit account wallet not found');
+            if (!tenantId) throw new Error('Credit company wallet not found');
             await getTenantAI().credits.changePlan(tenantId, plan, {
               customerId,
               subscriptionId: sub.id,
@@ -243,7 +243,7 @@ billing.post('/webhook', async (c) => {
             const { getTenantAI } = await import('../lib/tenant-ai');
             const { getCreditTenantIdFromCompanyId } = await import('../lib/credits');
             const tenantId = await getCreditTenantIdFromCompanyId(company.id);
-            if (!tenantId) throw new Error('Credit account wallet not found');
+            if (!tenantId) throw new Error('Credit company wallet not found');
             await getTenantAI().credits.changePlan(tenantId, 'free');
           } catch (err) {
             console.error('[billing] credit plan downgrade failed (non-fatal):', err);

@@ -54,6 +54,7 @@ import {
 } from '../services/campaign-social-generator';
 import { saveObject } from '../services/object-storage';
 import { deleteStoredAssetsIfUnreferenced } from '../services/asset-storage-cleanup';
+import { authorizeCompanyAccess, type CompanyPermission } from '../lib/company-access';
 
 const marketingEngineRouter = new Hono();
 marketingEngineRouter.use('*', authMiddleware);
@@ -61,6 +62,16 @@ marketingEngineRouter.use('*', authMiddleware);
 const CUSTOM_BANNER_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const CAMPAIGN_VIDEO_MEDIA_PATTERN =
   /\/videos\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\//i;
+
+async function requireCompanyPermission(c: any, permission: CompanyPermission) {
+  const { userId } = c.get('user');
+  const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(userId, companyId, permission);
+  if (permission === 'campaign.generate_ai' || permission === 'campaign.publish_social') {
+    await authorizeCompanyAccess(userId, companyId, 'credits.spend');
+  }
+  return { userId, companyId };
+}
 
 function customBannerExtension(file: File): 'jpg' | 'png' | 'webp' {
   if (file.type === 'image/jpeg') return 'jpg';
@@ -143,7 +154,7 @@ marketingEngineRouter.post(
     targeting: z.any().optional(),
   })),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.create');
     const data = c.req.valid('json');
 
     try {
@@ -168,7 +179,7 @@ marketingEngineRouter.post(
 
 // List campaigns
 marketingEngineRouter.get('/company/:companyId/campaigns', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.view');
   const items = await db.select().from(campaigns)
     .where(eq(campaigns.companyId, companyId))
     .orderBy(desc(campaigns.createdAt));
@@ -177,8 +188,9 @@ marketingEngineRouter.get('/company/:companyId/campaigns', async (c) => {
 
 // Get campaign detail
 marketingEngineRouter.get('/company/:companyId/campaigns/:id', async (c) => {
+  const { companyId } = await requireCompanyPermission(c, 'campaign.view');
   const id = c.req.param('id');
-  const campaign = await db.query.campaigns.findFirst({ where: eq(campaigns.id, id) });
+  const campaign = await db.query.campaigns.findFirst({ where: and(eq(campaigns.id, id), eq(campaigns.companyId, companyId)) });
   if (!campaign) return c.json({ error: 'Not found' }, 404);
 
   const campaignBanners = await db.select().from(banners).where(eq(banners.campaignId, id));
@@ -189,7 +201,7 @@ marketingEngineRouter.get('/company/:companyId/campaigns/:id', async (c) => {
 
 // Launch campaign — Real launch flow with platform integration
 marketingEngineRouter.post('/company/:companyId/campaigns/:id/launch', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.launch');
   const id = c.req.param('id');
 
   // Check has approved creatives
@@ -377,10 +389,11 @@ marketingEngineRouter.post('/company/:companyId/campaigns/:id/launch', async (c)
 
 // Pause campaign
 marketingEngineRouter.post('/company/:companyId/campaigns/:id/pause', async (c) => {
+  const { companyId } = await requireCompanyPermission(c, 'campaign.launch');
   const id = c.req.param('id');
   const [updated] = await db.update(campaigns)
     .set({ status: 'paused', updatedAt: new Date() })
-    .where(eq(campaigns.id, id)).returning();
+    .where(and(eq(campaigns.id, id), eq(campaigns.companyId, companyId))).returning();
   return c.json(updated);
 });
 
@@ -388,10 +401,11 @@ marketingEngineRouter.post('/company/:companyId/campaigns/:id/pause', async (c) 
 marketingEngineRouter.post('/company/:companyId/campaigns/:id/ai-mode', zValidator('json', z.object({
   enabled: z.boolean(),
 })), async (c) => {
+  const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
   const id = c.req.param('id');
   const { enabled } = c.req.valid('json');
 
-  const campaign = await db.query.campaigns.findFirst({ where: eq(campaigns.id, id) });
+  const campaign = await db.query.campaigns.findFirst({ where: and(eq(campaigns.id, id), eq(campaigns.companyId, companyId)) });
   if (!campaign) return c.json({ error: 'Not found' }, 404);
 
   const aiDecisions = (campaign.aiDecisions as any[]) || [];
@@ -405,14 +419,14 @@ marketingEngineRouter.post('/company/:companyId/campaigns/:id/ai-mode', zValidat
 
   const [updated] = await db.update(campaigns)
     .set({ aiMode: enabled, aiDecisions: aiDecisions as any, updatedAt: new Date() })
-    .where(eq(campaigns.id, id)).returning();
+    .where(and(eq(campaigns.id, id), eq(campaigns.companyId, companyId))).returning();
 
   return c.json(updated);
 });
 
 // AI Suggestions — returns opportunities detected by Growth Brain
 marketingEngineRouter.get('/company/:companyId/campaigns/ai-suggestions', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.generate_ai');
 
   try {
     const ctx = await buildBusinessContext(companyId);
@@ -463,7 +477,7 @@ marketingEngineRouter.post('/company/:companyId/campaigns/ai-suggestions/run', z
   suggestedBudget: z.number().optional(),
   channel: z.string().optional(),
 })), async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.generate_ai');
   const opportunity = c.req.valid('json');
 
   try {
@@ -490,7 +504,7 @@ marketingEngineRouter.post(
     language: z.string().default('en'),
   })),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.generate_ai');
     const { campaignId, size, variants, language } = c.req.valid('json');
 
     const LANG_NAMES: Record<string, string> = {
@@ -615,7 +629,7 @@ Return ONLY JSON:
       const layout = variant.layout || 'center';
       const theme = applyBrandKitToBannerTheme({
         backgroundValue: '',
-        colors: angleThemes[angle] || angleThemes.benefit,
+        colors: angleThemes[angle] ?? angleThemes.benefit!,
         layout: 'left-text',
       }, brandKit, index);
 
@@ -706,7 +720,7 @@ Return ONLY JSON:
 marketingEngineRouter.post(
   '/company/:companyId/banners/:bannerId/generate-background',
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId, userId } = await requireCompanyPermission(c, 'campaign.generate_ai');
     const bannerId = c.req.param('bannerId');
 
     const body = await c.req.json().catch(() => ({}));
@@ -734,6 +748,7 @@ marketingEngineRouter.post(
     }
 
     const ctx = await buildBusinessContext(companyId);
+    const brandKit = await buildBrandCreativeKit(companyId);
     const b = banner[0];
     const design = b.design as any;
     const previousBackgroundObjectUrls = [
@@ -803,6 +818,7 @@ marketingEngineRouter.post(
           tier: imageResult.providerKey,
           refKind: 'banner_bg',
           refId: bannerId,
+          actor: `user:${userId}`,
           note: `Banner background via ${imageResult.providerKey}`,
         });
       }
@@ -850,7 +866,7 @@ marketingEngineRouter.post(
 marketingEngineRouter.get(
   '/company/:companyId/banners/:bannerId/explain',
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.view');
     const bannerId = c.req.param('bannerId');
     const row = await db
       .select()
@@ -879,7 +895,7 @@ marketingEngineRouter.get(
 marketingEngineRouter.get(
   '/company/:companyId/banners/:bannerId',
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.view');
     const bannerId = c.req.param('bannerId');
     const [banner] = await db.select().from(banners).where(and(
       eq(banners.id, bannerId),
@@ -893,6 +909,7 @@ marketingEngineRouter.get(
 marketingEngineRouter.patch(
   '/company/:companyId/banners/:bannerId',
   async (c) => {
+    const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
     const bannerId = c.req.param('bannerId');
     const body = await c.req.json();
 
@@ -903,7 +920,7 @@ marketingEngineRouter.patch(
 
     const [updated] = await db.update(banners)
       .set(updates)
-      .where(eq(banners.id, bannerId))
+      .where(and(eq(banners.id, bannerId), eq(banners.companyId, companyId)))
       .returning();
 
     return c.json(updated);
@@ -911,7 +928,7 @@ marketingEngineRouter.patch(
 );
 
 marketingEngineRouter.post('/company/:companyId/campaigns/:campaignId/banners/custom', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
   const campaignId = c.req.param('campaignId');
   const formData = await c.req.formData();
   const file = formData.get('file') as File | null;
@@ -993,7 +1010,7 @@ marketingEngineRouter.post('/company/:companyId/campaigns/:campaignId/banners/cu
 });
 
 marketingEngineRouter.delete('/company/:companyId/campaigns/:campaignId/banners/:bannerId', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
   const campaignId = c.req.param('campaignId');
   const bannerId = c.req.param('bannerId');
   const [banner] = await db.select().from(banners).where(and(
@@ -1060,7 +1077,7 @@ marketingEngineRouter.delete('/company/:companyId/campaigns/:campaignId/banners/
 });
 
 marketingEngineRouter.post('/company/:companyId/banners/:bannerId/imgly-export', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
   const bannerId = c.req.param('bannerId');
   const formData = await c.req.formData();
   const file = formData.get('file') as File | null;
@@ -1225,7 +1242,7 @@ marketingEngineRouter.patch(
   '/company/:companyId/campaigns/:campaignId/social-post-media',
   zValidator('json', applyCampaignBannerMediaSchema),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
     const campaignId = c.req.param('campaignId');
     const { bannerIds, platforms } = c.req.valid('json');
 
@@ -1379,7 +1396,7 @@ marketingEngineRouter.patch(
   '/company/:companyId/campaigns/:campaignId/social-post-video',
   zValidator('json', applyCampaignVideoMediaSchema),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
     const campaignId = c.req.param('campaignId');
     const { videoId, platforms, remove } = c.req.valid('json');
 
@@ -1481,7 +1498,7 @@ marketingEngineRouter.patch(
 
 // List banners
 marketingEngineRouter.get('/company/:companyId/banners', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.view');
   const campaignId = c.req.query('campaignId');
 
   const conditions = [eq(banners.companyId, companyId)];
@@ -1495,16 +1512,18 @@ marketingEngineRouter.get('/company/:companyId/banners', async (c) => {
 
 // Approve/reject banner
 marketingEngineRouter.post('/company/:companyId/banners/:id/approve', async (c) => {
+  const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
   const [updated] = await db.update(banners)
     .set({ status: 'approved' })
-    .where(eq(banners.id, c.req.param('id'))).returning();
+    .where(and(eq(banners.id, c.req.param('id')), eq(banners.companyId, companyId))).returning();
   return c.json(updated);
 });
 
 marketingEngineRouter.post('/company/:companyId/banners/:id/reject', async (c) => {
+  const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
   const [updated] = await db.update(banners)
     .set({ status: 'rejected' })
-    .where(eq(banners.id, c.req.param('id'))).returning();
+    .where(and(eq(banners.id, c.req.param('id')), eq(banners.companyId, companyId))).returning();
   return c.json(updated);
 });
 
@@ -1512,7 +1531,7 @@ marketingEngineRouter.post('/company/:companyId/banners/:id/reject', async (c) =
 marketingEngineRouter.post(
   '/company/:companyId/banners/:bannerId/export-sizes',
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
     const bannerId = c.req.param('bannerId');
 
     // Find the source banner
@@ -1601,7 +1620,7 @@ marketingEngineRouter.post(
     language: z.string().default('en'),
   })),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.generate_ai');
     const { campaignId, platforms, variants, language } = c.req.valid('json');
 
     const LANG_NAMES: Record<string, string> = {
@@ -1675,7 +1694,7 @@ Generate ${variants} posts per platform.`,
 
 // List posts
 marketingEngineRouter.get('/company/:companyId/posts', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.view');
   const items = await db.select().from(socialPosts)
     .where(eq(socialPosts.companyId, companyId))
     .orderBy(desc(socialPosts.createdAt));
@@ -1690,7 +1709,7 @@ marketingEngineRouter.patch(
     mediaUrls: z.array(z.string()).optional(),
   })),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
     const id = c.req.param('id');
     const body = c.req.valid('json');
     const existing = await db.query.socialPosts.findFirst({
@@ -1720,17 +1739,18 @@ marketingEngineRouter.post(
   '/company/:companyId/posts/:id/schedule',
   zValidator('json', z.object({ scheduledAt: z.string() })),
   async (c) => {
+    const { companyId } = await requireCompanyPermission(c, 'campaign.launch');
     const { scheduledAt } = c.req.valid('json');
     const [updated] = await db.update(socialPosts)
       .set({ status: 'scheduled', scheduledAt: new Date(scheduledAt) })
-      .where(eq(socialPosts.id, c.req.param('id'))).returning();
+      .where(and(eq(socialPosts.id, c.req.param('id')), eq(socialPosts.companyId, companyId))).returning();
     return c.json(updated);
   }
 );
 
 // Publish post — actually send to connected platform
 marketingEngineRouter.post('/company/:companyId/posts/:id/publish', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.publish_social');
   const postId = c.req.param('id');
 
   // 1. Get the post
@@ -1741,7 +1761,7 @@ marketingEngineRouter.post('/company/:companyId/posts/:id/publish', async (c) =>
   if (!post) return c.json({ error: 'Post not found' }, 404);
 
   // 2. Map platform name (our schema uses 'facebook', 'linkedin', etc.)
-  const platform = post.platform;
+  const platform = post.platform || 'facebook';
 
   const platformNames: Record<string, string> = {
     facebook: 'Facebook', instagram: 'Instagram', linkedin: 'LinkedIn',
@@ -1753,7 +1773,7 @@ marketingEngineRouter.post('/company/:companyId/posts/:id/publish', async (c) =>
   const connection = await db.query.socialConnections.findFirst({
     where: and(
       eq(socialConnections.companyId, companyId),
-      eq(socialConnections.platform, platform),
+      eq(socialConnections.platform, platform as any),
       eq(socialConnections.status, 'connected')
     ),
   });
@@ -1788,7 +1808,6 @@ marketingEngineRouter.post('/company/:companyId/posts/:id/publish', async (c) =>
       await db.update(socialPosts).set({
         status: 'published',
         publishedAt: new Date(),
-        updatedAt: new Date(),
       }).where(eq(socialPosts.id, postId));
 
       return c.json({
@@ -1823,7 +1842,7 @@ marketingEngineRouter.post(
     goal: z.string().default('nurture leads'),
   })),
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.generate_ai');
     const { campaignId, goal } = c.req.valid('json');
     const ctx = await buildBusinessContext(companyId);
 
@@ -1881,7 +1900,7 @@ Rules:
 marketingEngineRouter.post(
   '/company/:companyId/keyword-clusters',
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.generate_ai');
     const ctx = await buildBusinessContext(companyId);
 
     const { text } = await llmGenerate([{
@@ -1919,7 +1938,7 @@ Generate 3 clusters with 4-5 spokes each. Be specific to this business.`,
 // ===============================================================
 
 marketingEngineRouter.get('/company/:companyId/recommendations', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.generate_ai');
 
   // Load FULL business context
   const ctx = await buildBusinessContext(companyId);
@@ -1964,7 +1983,7 @@ Return ONLY JSON array:
 // ===============================================================
 
 marketingEngineRouter.post('/company/:companyId/auto-campaigns', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.generate_ai');
   const ctx = await buildBusinessContext(companyId);
 
   // Load landing pages (DEPLOYMENT layer)
@@ -2046,6 +2065,7 @@ Generate 2-3 campaigns. Each must be traceable to system intelligence.`,
         landingPageUrl: matchedPage?.slug ? `/${matchedPage.slug}` : undefined,
         status: 'draft',
       }).returning();
+      if (!campaign) continue;
 
       // Auto-generate banners for this campaign
       try {
@@ -2085,7 +2105,7 @@ Generate 2-3 campaigns. Each must be traceable to system intelligence.`,
 // ===============================================================
 
 marketingEngineRouter.post('/company/:companyId/banners/:bannerId/validate', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
   const bannerId = c.req.param('bannerId');
 
   const banner = await db.select().from(banners)
@@ -2141,8 +2161,7 @@ marketingEngineRouter.post(
     }).optional(),
   })),
   async (c) => {
-    const companyId = c.req.param('companyId');
-    const { userId } = c.get('user');
+    const { companyId, userId } = await requireCompanyPermission(c, 'campaign.generate_ai');
     const { campaignId, format, aspectRatio, render, creativeNotes, forceNew, language, referenceImage } = c.req.valid('json');
 
     try {
@@ -2219,7 +2238,7 @@ marketingEngineRouter.post(
 );
 
 marketingEngineRouter.get('/company/:companyId/videos/:id', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.view');
   const id = c.req.param('id');
   const [project] = await db.select().from(videoProjects)
     .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
@@ -2229,7 +2248,7 @@ marketingEngineRouter.get('/company/:companyId/videos/:id', async (c) => {
 });
 
 marketingEngineRouter.delete('/company/:companyId/videos/:id', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
   const id = c.req.param('id');
   const [project] = await db.select().from(videoProjects)
     .where(and(eq(videoProjects.id, id), eq(videoProjects.companyId, companyId)))
@@ -2253,7 +2272,7 @@ marketingEngineRouter.delete('/company/:companyId/videos/:id', async (c) => {
 
 // List video projects
 marketingEngineRouter.get('/company/:companyId/videos', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.view');
   const items = await db.select().from(videoProjects)
     .where(eq(videoProjects.companyId, companyId))
     .orderBy(desc(videoProjects.createdAt));
@@ -2264,7 +2283,7 @@ marketingEngineRouter.get('/company/:companyId/videos', async (c) => {
 marketingEngineRouter.patch(
   '/company/:companyId/videos/:id',
   async (c) => {
-    const companyId = c.req.param('companyId');
+    const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
     const id = c.req.param('id');
     const body = await c.req.json();
 
@@ -2285,7 +2304,7 @@ marketingEngineRouter.patch(
 );
 
 marketingEngineRouter.post('/company/:companyId/videos/:id/imgly-export', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.edit');
   const id = c.req.param('id');
   const formData = await c.req.formData();
   const file = formData.get('file') as File | null;
@@ -2338,7 +2357,7 @@ marketingEngineRouter.post('/company/:companyId/videos/:id/imgly-export', async 
 // ===============================================================
 
 marketingEngineRouter.get('/company/:companyId/campaigns/:id/tracking-links', async (c) => {
-  const companyId = c.req.param('companyId');
+  const { companyId } = await requireCompanyPermission(c, 'campaign.view');
   const id = c.req.param('id');
 
   const campaign = await db.query.campaigns.findFirst({

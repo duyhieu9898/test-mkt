@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../lib/db';
 import { chatbotChannels } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
+import { authorizeCompanyAccess } from '../lib/company-access';
 
 const channelsRouter = new Hono();
 
@@ -41,6 +42,8 @@ const authed = new Hono();
 authed.use('*', authMiddleware);
 
 authed.get('/:companyId/bot/:botId', async (c) => {
+  const { userId } = c.get('user');
+  await authorizeCompanyAccess(userId, c.req.param('companyId'), 'chatbot.view_conversations');
   const channels = await db.select().from(chatbotChannels).where(eq(chatbotChannels.botId, c.req.param('botId')));
   return c.json({ data: channels });
 });
@@ -49,12 +52,16 @@ authed.post('/:companyId/bot/:botId/connect', zValidator('json', z.object({
   platform: z.enum(['messenger', 'zalo_oa', 'instagram']),
   config: z.record(z.unknown()).default({}),
 })), async (c) => {
+  const { userId } = c.get('user');
+  await authorizeCompanyAccess(userId, c.req.param('companyId'), 'channels.connect');
   const { platform, config } = c.req.valid('json');
   const [ch] = await db.insert(chatbotChannels).values({ botId: c.req.param('botId'), platform, config, connectedBy: (c.get('user') as any).userId }).returning();
   return c.json(ch);
 });
 
 authed.delete('/:companyId/bot/:botId/:channelId', async (c) => {
+  const { userId } = c.get('user');
+  await authorizeCompanyAccess(userId, c.req.param('companyId'), 'channels.connect');
   await db.delete(chatbotChannels).where(eq(chatbotChannels.id, c.req.param('channelId')));
   return c.json({ deleted: true });
 });
@@ -62,6 +69,8 @@ authed.delete('/:companyId/bot/:botId/:channelId', async (c) => {
 authed.post('/:companyId/bot/:botId/zalo/connect', zValidator('json', z.object({
   oaId: z.string().min(1), refreshToken: z.string().min(1),
 })), async (c) => {
+  const { userId } = c.get('user');
+  await authorizeCompanyAccess(userId, c.req.param('companyId'), 'channels.connect');
   const { oaId, refreshToken } = c.req.valid('json');
   let accessToken = refreshToken;
   const zaloAppId = process.env.ZALO_APP_ID, zaloSecret = process.env.ZALO_APP_SECRET;

@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useCompanies, useGrowthScore, useStreak } from '@/lib/api/hooks';
-import { appT, type AppMessageKey } from '@/lib/app-language';
+import { appT, normalizeAppLanguage, type AppMessageKey } from '@/lib/app-language';
 import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 
 const TESTING_UNLOCK_ALL = true;
@@ -126,6 +126,7 @@ const navigationGroups: NavigationGroup[] = [
       { name: 'Brain', href: '/brain', icon: Brain, unlockLevel: 2 },
       { name: 'Trust', href: '/ai-brain', icon: Shield, unlockLevel: 1 },
       { name: 'Credits & Billing', href: '/settings/credits', icon: Wallet, unlockLevel: 1 },
+      { name: 'Team Access', href: '/settings/team', icon: Users, unlockLevel: 1 },
       { name: 'Settings', href: '/settings', icon: Settings, unlockLevel: 1, exact: true },
       { name: 'Admin', href: '/admin', icon: Shield, global: true, unlockLevel: 1 },
     ],
@@ -168,6 +169,15 @@ const itemTranslationKeys: Record<string, AppMessageKey> = {
   Settings: 'settings',
   Admin: 'navAdmin',
 };
+
+function localNavLabel(language: string, name: string) {
+  const locale = normalizeAppLanguage(language);
+  if (name === 'Team Access') {
+    if (locale === 'ja') return 'チーム権限';
+    if (locale === 'vi') return 'Quyền truy cập';
+  }
+  return name;
+}
 
 export function Sidebar() {
   const router = useRouter();
@@ -273,7 +283,7 @@ export function Sidebar() {
     const href = itemHref(item);
     const active = isItemActive(item);
     const translationKey = itemTranslationKeys[item.name];
-    const label = translationKey ? appT(language, translationKey) : item.name;
+    const label = translationKey ? appT(language, translationKey) : localNavLabel(language, item.name);
     const locked = !TESTING_UNLOCK_ALL
       && hasCompany
       && (item.unlockLevel ?? 1) > currentLevel;

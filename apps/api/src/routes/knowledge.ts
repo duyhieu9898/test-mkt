@@ -15,7 +15,7 @@ import { documents, knowledgeBase } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { queueTaskExecution } from '../lib/queue';
 import { knowledgeExtractionService } from '../services/knowledge-extraction';
-import { assertCompanyAccess } from '../lib/company-access';
+import { assertCompanyAccess, authorizeCompanyAccess } from '../lib/company-access';
 import { llmGenerate } from '../lib/llm';
 import { semanticSearch } from '../services/embedding-service';
 import {
@@ -94,6 +94,7 @@ async function deleteStoredDocumentFile(companyId: string, fileUrl?: string | nu
 // Upload file (PDF, doc, image)
 knowledgeRouter.post('/company/:companyId/upload', async (c) => {
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.upload');
   const body = await c.req.parseBody();
   const file = body['file'] as File | undefined;
 
@@ -242,6 +243,7 @@ knowledgeRouter.post(
   zValidator('json', z.object({ url: z.string().min(5), name: z.string().optional() })),
   async (c) => {
     const companyId = c.req.param('companyId');
+    await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.upload');
     const { url, name } = c.req.valid('json');
 
     const normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
@@ -295,6 +297,9 @@ knowledgeRouter.post(
 // become Knowledge documents.
 knowledgeRouter.get('/company/:companyId/crawl/discover', async (c) => {
   const companyId = c.req.param('companyId');
+  const { userId } = c.get('user');
+  await authorizeCompanyAccess(userId, companyId, 'knowledge.upload');
+  await authorizeCompanyAccess(userId, companyId, 'credits.spend');
   await ensureSufficientCredits(companyId, FIXED_CREDIT_COSTS.knowledgeCrawlDiscover);
   const result = await discoverKnowledgeCrawlData(companyId, {
     query: c.req.query('q')?.trim() || null,
@@ -305,6 +310,7 @@ knowledgeRouter.get('/company/:companyId/crawl/discover', async (c) => {
     featureKey: 'knowledge_crawl_discover',
     refKind: 'knowledge_crawl',
     refId: companyId,
+    actor: `user:${userId}`,
     note: 'Discovered public crawl sources for Knowledge',
   });
   return c.json(result);
@@ -335,6 +341,7 @@ knowledgeRouter.post(
   zValidator('json', crawlImportSchema),
   async (c) => {
     const companyId = c.req.param('companyId');
+    await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.upload');
     const { sources, visibility } = c.req.valid('json');
 
     const results: Array<{
@@ -441,6 +448,7 @@ knowledgeRouter.post(
   })),
   async (c) => {
     const companyId = c.req.param('companyId');
+    await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.upload');
     const { title, content, category, tags, visibility } = c.req.valid('json');
 
     // Create document
@@ -483,6 +491,7 @@ knowledgeRouter.post(
 // List documents
 knowledgeRouter.get('/company/:companyId/documents', async (c) => {
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.view_internal');
   const status = c.req.query('status');
 
   const conditions = [eq(documents.companyId, companyId)];
@@ -501,6 +510,7 @@ knowledgeRouter.get('/company/:companyId/documents', async (c) => {
 // Get document detail
 knowledgeRouter.get('/company/:companyId/documents/:id', async (c) => {
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.view_internal');
   const docId = c.req.param('id');
 
   const doc = await db.query.documents.findFirst({
@@ -521,6 +531,7 @@ knowledgeRouter.patch(
   async (c) => {
     const docId = c.req.param('docId');
     const companyId = c.req.param('companyId');
+    await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.upload');
     const body = c.req.valid('json');
     const [updated] = await db.update(documents).set({
       ...(body.visibility ? { visibility: body.visibility as any } : {}),
@@ -550,6 +561,7 @@ knowledgeRouter.patch('/company/:companyId/documents/:id/approve', async (c) => 
   const companyId = c.req.param('companyId');
   const docId = c.req.param('id');
   const { userId } = c.get('user');
+  await authorizeCompanyAccess(userId, companyId, 'knowledge.approve');
 
   const doc = await db.query.documents.findFirst({
     where: and(eq(documents.id, docId), eq(documents.companyId, companyId)),
@@ -602,6 +614,7 @@ knowledgeRouter.patch('/company/:companyId/documents/:id/approve', async (c) => 
 knowledgeRouter.patch('/company/:companyId/documents/:id/reject', async (c) => {
   const companyId = c.req.param('companyId');
   const docId = c.req.param('id');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.approve');
 
   const doc = await db.query.documents.findFirst({
     where: and(eq(documents.id, docId), eq(documents.companyId, companyId)),
@@ -622,6 +635,7 @@ knowledgeRouter.patch('/company/:companyId/documents/:id/reject', async (c) => {
 knowledgeRouter.delete('/company/:companyId/documents/:id', async (c) => {
   const companyId = c.req.param('companyId');
   const docId = c.req.param('id');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.upload');
   const doc = await db.query.documents.findFirst({
     where: and(eq(documents.id, docId), eq(documents.companyId, companyId)),
   });
@@ -636,6 +650,7 @@ knowledgeRouter.delete('/company/:companyId/documents/:id', async (c) => {
 // Search knowledge
 knowledgeRouter.get('/company/:companyId/search', async (c) => {
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.view_internal');
   const q = c.req.query('q') || '';
   const category = c.req.query('category');
 
@@ -673,6 +688,7 @@ knowledgeRouter.post(
   zValidator('json', z.object({ question: z.string().trim().min(3).max(2000) })),
   async (c) => {
     const companyId = c.req.param('companyId');
+    await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.view_internal');
     const { question } = c.req.valid('json');
     await ensureApprovedKnowledgeIndexed(companyId);
     const hits = await semanticSearch(companyId, question, {

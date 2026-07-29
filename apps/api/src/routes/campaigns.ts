@@ -31,6 +31,7 @@ import { eventBus, type Event as BusEvent } from '../services/event-bus';
 import { snapshotToPromptBlock } from '@1person/ai-tenant';
 import { getTenantAI, ensureTenantForCompany } from '../lib/tenant-ai';
 import { ensureSufficientCredits, chargeForLLMCall, chargeFixedCredits } from '../lib/credits';
+import { FIXED_CREDIT_COSTS } from '../lib/credit-costs';
 import { resolveFeature, resolveImageProvider } from '../lib/config-resolver';
 import { llmGenerate, extractJSON } from '../lib/llm';
 import {
@@ -65,6 +66,7 @@ import {
   localizedDefault,
   normalizeContentLanguage,
 } from '../lib/language';
+import { authorizeCompanyAccess } from '../lib/company-access';
 
 const campaignsRouter = new Hono();
 
@@ -339,9 +341,10 @@ function normalizeAdvisorCampaignBridge(parsed: any, fallback: {
 async function buildAdvisorCampaignSourceContext(args: {
   companyId: string;
   companyName: string;
+  userId: string;
   input: GenerateCampaignInput;
 }): Promise<string | undefined> {
-  const { companyId, companyName, input } = args;
+  const { companyId, companyName, userId, input } = args;
   if (!input.advisorBriefId || typeof input.advisorActionIndex !== 'number') return undefined;
 
   const tenantId = await ensureTenantForCompany(companyId, companyName);
@@ -418,6 +421,7 @@ Return ONLY JSON:
       featureKey: 'campaign_advisor_bridge',
       refKind: 'ceo_advisor_action',
       refId: input.advisorBriefId,
+      actor: `user:${userId}`,
     });
 
     const bridge = normalizeAdvisorCampaignBridge(extractJSON(llmRes.text), {
@@ -639,6 +643,8 @@ campaignsRouter.post(
     const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
     const input = c.req.valid('json');
+    await authorizeCompanyAccess(userId, companyId, 'campaign.generate_ai');
+    await authorizeCompanyAccess(userId, companyId, 'credits.spend');
 
     const company = await db.query.companies.findFirst({
       where: eq(companies.id, companyId),
@@ -681,6 +687,7 @@ campaignsRouter.post(
       buildAdvisorCampaignSourceContext({
         companyId,
         companyName: company.name,
+        userId,
         input,
       }),
     ]);
@@ -698,7 +705,7 @@ campaignsRouter.post(
         ...input,
         language: normalizeContentLanguage(input.language ?? company.settings?.language),
         sourceContext,
-      });
+      }, userId);
       return c.json({
         campaignId,
         estimatedCost,
@@ -732,6 +739,7 @@ campaignsRouter.post(
 async function createCampaignWithStream(
   companyId: string,
   input: GenerateCampaignInput,
+  userId: string,
 ): Promise<string> {
   // 1. Insert the shell campaign row immediately so the client can
   // subscribe to SSE with a known ID.
@@ -813,6 +821,7 @@ async function createCampaignWithStream(
         companyId,
         campaign.id,
         input,
+        userId,
         emit,
       );
 
@@ -859,6 +868,7 @@ async function generateForExisting(
   companyId: string,
   campaignId: string,
   input: GenerateCampaignInput,
+  userId: string,
   emit: (ev: CampaignStepEvent) => Promise<void>,
 ) {
   const { buildBusinessContext } = await import('../services/business-context');
@@ -985,6 +995,7 @@ async function generateForExisting(
       featureKey: 'campaign_banner_copy',
       refKind: 'banner_copy',
       refId: campaignId,
+      actor: `user:${userId}`,
     });
 
     const parsed = (extractJSON(text) as { variants?: any[] }) || {};
@@ -1118,6 +1129,7 @@ async function generateForExisting(
             tier: creative.backgroundImageProvider === 'dalle' ? 'premium' : 'balanced',
             refKind: 'banner_bg',
             refId: banner.id,
+            actor: `user:${userId}`,
             note: `Campaign banner background via ${creative.backgroundImageProvider ?? 'image provider'}`,
           });
         }
@@ -1171,6 +1183,7 @@ async function generateForExisting(
       featureKey: 'campaign_social_post',
       refKind: 'social_post',
       refId: campaignId,
+      actor: `user:${userId}`,
     });
     for (const post of generated.posts) {
       await db.insert(socialPosts).values({
@@ -1209,6 +1222,7 @@ async function generateForExisting(
       featureKey: 'campaign_social_post',
       refKind: 'social_post',
       refId: campaignId,
+      actor: `user:${userId}`,
     });
 
     const parsed = extractJSON(text) || [];
@@ -1266,8 +1280,10 @@ function mapGoalType(goal: string): 'traffic' | 'leads' | 'conversions' | 'aware
 // we don't build our own lineage UI — Langfuse already renders prompt,
 // model, sources, timings, tokens.
 campaignsRouter.get('/:companyId/:id/explain', async (c) => {
+  const { userId } = c.get('user');
   const campaignId = c.req.param('id');
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(userId, companyId, 'campaign.view');
   const campaign = await db.query.campaigns.findFirst({
     where: and(eq(campaigns.id, campaignId), eq(campaigns.companyId, companyId)),
   });
@@ -1290,8 +1306,10 @@ campaignsRouter.get('/:companyId/:id/explain', async (c) => {
 // went live.
 
 campaignsRouter.post('/:companyId/:id/launch', async (c) => {
+  const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const campaignId = c.req.param('id');
+  await authorizeCompanyAccess(userId, companyId, 'campaign.launch');
   const parsedBody = launchCampaignBodySchema.safeParse(
     await c.req.json().catch(() => ({})),
   );
@@ -1335,6 +1353,20 @@ campaignsRouter.post('/:companyId/:id/launch', async (c) => {
       message: 'Select at least one ready banner or social post action before launching.',
     });
   }
+
+  const selectedFacebookPosts = canSchedulePosts
+    ? selectedPostRows.filter((post) => normalizeCampaignSocialPlatform(post.platform) === 'facebook')
+    : [];
+  const facebookConnection = selectedFacebookPosts.length > 0
+    ? await findActiveFbConnection(companyId)
+    : null;
+  const facebookPublishCreditEstimate = facebookConnection
+    ? selectedFacebookPosts.length * FIXED_CREDIT_COSTS.socialPostPublish
+    : 0;
+  if (facebookPublishCreditEstimate > 0) {
+    await authorizeCompanyAccess(userId, companyId, 'credits.spend');
+  }
+  await ensureSufficientCredits(companyId, facebookPublishCreditEstimate);
 
   const targeting = (campaign.targeting ?? {}) as Record<string, unknown>;
   const blogPostId = typeof targeting.blogPostId === 'string' ? targeting.blogPostId : null;
@@ -1443,11 +1475,6 @@ campaignsRouter.post('/:companyId/:id/launch', async (c) => {
       });
       if (canSchedulePosts) {
         const scheduledAt = new Date();
-        const facebookConnection = selectedPostRows.some((post) => (
-          normalizeCampaignSocialPlatform(post.platform) === 'facebook'
-        ))
-          ? await findActiveFbConnection(companyId)
-          : null;
 
         for (const post of selectedPostRows) {
           const mediaUrls = [...((post.mediaUrls ?? []) as string[])];
@@ -1484,6 +1511,16 @@ campaignsRouter.post('/:companyId/:id/launch', async (c) => {
                   eq(socialPosts.id, post.id),
                   eq(socialPosts.campaignId, campaignId),
                 ));
+              await chargeFixedCredits(companyId, FIXED_CREDIT_COSTS.socialPostPublish, {
+                featureKey: 'social_post_publish',
+                tier: 'facebook',
+                refKind: 'social_post',
+                refId: post.id,
+                actor: `user:${userId}`,
+                note: 'Published campaign social post to Facebook',
+              }).catch((error) => {
+                console.error('[campaigns.launch] credit charge failed after Facebook publish:', error);
+              });
               publishedPostCount += 1;
               continue;
             } catch (error) {
@@ -1618,8 +1655,11 @@ campaignsRouter.post('/:companyId/:id/launch', async (c) => {
 // ─── POST /:companyId/:id/publish-facebook — publish campaign posts to FB ──
 
 campaignsRouter.post('/:companyId/:id/publish-facebook', async (c) => {
+  const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const campaignId = c.req.param('id');
+  await authorizeCompanyAccess(userId, companyId, 'campaign.publish_social');
+  await authorizeCompanyAccess(userId, companyId, 'credits.spend');
   const parsedBody = publishCampaignFacebookBodySchema.safeParse(
     await c.req.json().catch(() => ({})),
   );
@@ -1660,6 +1700,10 @@ campaignsRouter.post('/:companyId/:id/publish-facebook', async (c) => {
         : 'This campaign has no Facebook social posts to publish.',
     });
   }
+  await ensureSufficientCredits(
+    companyId,
+    postsToPublish.length * FIXED_CREDIT_COSTS.socialPostPublish,
+  );
 
   const results: Array<{
     postId: string;
@@ -1705,6 +1749,16 @@ campaignsRouter.post('/:companyId/:id/publish-facebook', async (c) => {
           eq(socialPosts.companyId, companyId),
           eq(socialPosts.campaignId, campaignId),
         ));
+      await chargeFixedCredits(companyId, FIXED_CREDIT_COSTS.socialPostPublish, {
+        featureKey: 'social_post_publish',
+        tier: 'facebook',
+        refKind: 'social_post',
+        refId: post.id,
+        actor: `user:${userId}`,
+        note: 'Published campaign social post to Facebook',
+      }).catch((error) => {
+        console.error('[campaigns.publish-facebook] credit charge failed after Facebook publish:', error);
+      });
       results.push({
         postId: post.id,
         ok: true,
@@ -1759,8 +1813,10 @@ campaignsRouter.post('/:companyId/:id/publish-facebook', async (c) => {
 // and refresh endpoints separate lets the detail page load cached results
 // immediately while the user controls when an external API call is made.
 campaignsRouter.get('/:companyId/:id/performance', async (c) => {
+  const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const campaignId = c.req.param('id');
+  await authorizeCompanyAccess(userId, companyId, 'campaign.view');
   const performance = await getCampaignPerformance(companyId, campaignId);
   if (!performance) {
     throw new HTTPException(404, { message: 'Campaign not found' });
@@ -1769,8 +1825,10 @@ campaignsRouter.get('/:companyId/:id/performance', async (c) => {
 });
 
 campaignsRouter.post('/:companyId/:id/performance/sync', async (c) => {
+  const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const campaignId = c.req.param('id');
+  await authorizeCompanyAccess(userId, companyId, 'campaign.view');
   try {
     const performance = await syncCampaignFacebookPerformance(companyId, campaignId);
     if (!performance) {
@@ -1795,7 +1853,9 @@ campaignsRouter.post('/:companyId/:id/performance/sync', async (c) => {
 });
 
 campaignsRouter.get('/:companyId', async (c) => {
+  const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(userId, companyId, 'campaign.view');
   const rows = await db
     .select()
     .from(campaigns)
@@ -1808,8 +1868,10 @@ campaignsRouter.get('/:companyId', async (c) => {
 // ─── GET /:companyId/:id — detail with children ─────────────────────
 
 campaignsRouter.get('/:companyId/:id', async (c) => {
+  const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const id = c.req.param('id');
+  await authorizeCompanyAccess(userId, companyId, 'campaign.view');
 
   const campaign = await db.query.campaigns.findFirst({
     where: and(eq(campaigns.id, id), eq(campaigns.companyId, companyId)),
@@ -1961,8 +2023,10 @@ campaignsRouter.get('/:companyId/:id', async (c) => {
 // ─── GET /:companyId/:id/stream — SSE progress events ───────────────
 
 campaignsRouter.get('/:companyId/:id/stream', async (c) => {
+  const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
   const campaignId = c.req.param('id');
+  await authorizeCompanyAccess(userId, companyId, 'campaign.view');
 
   return streamSSE(c, async (stream) => {
     // Send any buffered historical events for this campaign first so a

@@ -134,6 +134,13 @@
       "when": 1784700180000,
       "tag": "0018_oauth_integrations",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785312000000,
+      "tag": "0019_company_members",
+      "breakpoints": true
     }
   ]
 }

@@ -143,6 +143,21 @@ function nextMonthEnd(): Date {
   return d;
 }
 
+function getFreePlanGrant(plan?: CreditPlan | null): number {
+  const grant = Number(plan?.monthlyGrant ?? 0);
+  return Number.isFinite(grant) && grant > 0 ? grant : INITIAL_FREE_CREDITS;
+}
+
+function needsInitialFreeCreditRepair(balance: CreditBalance): boolean {
+  return (
+    balance.plan === 'free' &&
+    balance.monthlyGrant <= 0 &&
+    balance.monthlyBalance <= 0 &&
+    balance.rolloverBalance <= 0 &&
+    balance.topupBalance <= 0
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Plan management (admin)
 // ---------------------------------------------------------------------------
@@ -233,11 +248,42 @@ export async function getOrCreateBalance(
     .from(creditBalances)
     .where(eq(creditBalances.tenantId, tenantId))
     .limit(1);
-  if (existing[0]) return rowToBalance(existing[0]);
+  if (existing[0]) {
+    const balance = rowToBalance(existing[0]);
+    if (!needsInitialFreeCreditRepair(balance)) return balance;
+
+    // Repair legacy wallets created while the Free plan grant was stored as 0.
+    // Only empty Free wallets are repaired, so users who have legitimately
+    // spent their monthly credits are not granted a second balance.
+    const freePlan = await getPlan(db, 'free');
+    const grant = getFreePlanGrant(freePlan);
+    const [repaired] = await db
+      .update(creditBalances)
+      .set({
+        monthlyGrant: grant,
+        monthlyBalance: grant,
+        billingPeriodEnd: balance.billingPeriodEnd ?? nextMonthEnd(),
+        updatedAt: new Date(),
+      })
+      .where(eq(creditBalances.id, balance.id))
+      .returning();
+
+    await db.insert(creditTransactions).values({
+      tenantId,
+      kind: 'grant',
+      amount: grant,
+      balanceAfter: grant,
+      refKind: 'signup_grant_repair',
+      actor: 'system',
+      note: 'Initial Free plan credits repaired',
+    });
+
+    return rowToBalance(repaired ?? existing[0]);
+  }
 
   // Bootstrap with Free plan defaults
   const freePlan = await getPlan(db, 'free');
-  const grant = freePlan?.monthlyGrant ?? INITIAL_FREE_CREDITS;
+  const grant = getFreePlanGrant(freePlan);
 
   const [created] = await db
     .insert(creditBalances)
@@ -663,6 +709,13 @@ export async function seedDefaultPlans(db: Database): Promise<{ created: number;
     const seed = seeds[i]!;
     const existing = await getPlan(db, seed.key);
     if (existing) {
+      if (seed.key === 'free' && existing.monthlyGrant < INITIAL_FREE_CREDITS) {
+        await upsertPlan(db, {
+          ...seed,
+          monthlyGrant: INITIAL_FREE_CREDITS,
+          sortOrder: existing.sortOrder,
+        });
+      }
       skipped++;
       continue;
     }

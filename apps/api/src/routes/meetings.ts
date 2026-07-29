@@ -15,7 +15,7 @@ import { authMiddleware } from '../middleware/auth';
 import { llmGenerate, extractJSON } from '../lib/llm';
 import { buildBusinessContext } from '../services/business-context';
 import { resolveTranscriptionProvider } from '../lib/config-resolver';
-import { assertCompanyAccess } from '../lib/company-access';
+import { assertCompanyAccess, authorizeCompanyAccess } from '../lib/company-access';
 import { replaceApprovedKnowledge } from '../services/knowledge-lifecycle';
 import {
   deleteObjectByStorageReference,
@@ -88,6 +88,7 @@ async function deleteStoredAudio(companyId: string, audioUrl?: string | null): P
 // Upload audio file
 meetingsRouter.post('/company/:companyId/upload', async (c) => {
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.upload');
   const body = await c.req.parseBody();
   const file = body['file'] as File | undefined;
   const title = (body['title'] as string) || 'Untitled Meeting';
@@ -185,6 +186,7 @@ meetingsRouter.post(
   ),
   async (c) => {
     const companyId = c.req.param('companyId');
+    await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.upload');
     const { meetingId, title, transcript } = c.req.valid('json');
 
     let id = meetingId;
@@ -247,6 +249,7 @@ meetingsRouter.post(
 // List meetings
 meetingsRouter.get('/company/:companyId', async (c) => {
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.view_internal');
 
   const data = await db
     .select()
@@ -261,6 +264,7 @@ meetingsRouter.get('/company/:companyId', async (c) => {
 // Fetch a private recording for authenticated in-dashboard playback.
 meetingsRouter.get('/company/:companyId/:id/audio', async (c) => {
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.view_internal');
   const meetingId = c.req.param('id');
   const meeting = await db.query.meetings.findFirst({
     where: and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)),
@@ -289,6 +293,7 @@ meetingsRouter.get('/company/:companyId/:id/audio', async (c) => {
 // Get meeting detail
 meetingsRouter.get('/company/:companyId/:id', async (c) => {
   const companyId = c.req.param('companyId');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.view_internal');
   const meetingId = c.req.param('id');
 
   const meeting = await db.query.meetings.findFirst({
@@ -303,6 +308,7 @@ meetingsRouter.get('/company/:companyId/:id', async (c) => {
 meetingsRouter.delete('/company/:companyId/:id', async (c) => {
   const companyId = c.req.param('companyId');
   const meetingId = c.req.param('id');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.upload');
   const meeting = await db.query.meetings.findFirst({
     where: and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)),
   });
@@ -328,6 +334,7 @@ meetingsRouter.delete('/company/:companyId/:id', async (c) => {
 meetingsRouter.patch('/company/:companyId/:id/approve', async (c) => {
   const companyId = c.req.param('companyId');
   const meetingId = c.req.param('id');
+  await authorizeCompanyAccess(c.get('user').userId, companyId, 'knowledge.approve');
 
   const meeting = await db.query.meetings.findFirst({
     where: and(eq(meetings.id, meetingId), eq(meetings.companyId, companyId)),

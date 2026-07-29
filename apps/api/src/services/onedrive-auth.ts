@@ -29,6 +29,7 @@ type StoredOneDriveToken = {
   accountName?: string;
   accountEmail?: string;
   accountId?: string;
+  metadata?: OneDriveIntegrationMetadata;
 };
 
 export type OneDriveFile = {
@@ -58,6 +59,19 @@ type GraphDriveItem = {
   '@microsoft.graph.downloadUrl'?: string;
   file?: { mimeType?: string };
   folder?: unknown;
+  parentReference?: { driveId?: string };
+};
+
+type OneDriveIntegrationMetadata = {
+  source?: string;
+  selectedFiles?: Array<{
+    id: string;
+    driveId?: string;
+    name?: string;
+    mimeType?: string;
+    webUrl?: string;
+    selectedAt?: string;
+  }>;
 };
 
 export function isOneDriveConfigured(): boolean {
@@ -132,7 +146,7 @@ export async function disconnectOneDrive(companyId: string, userId: string): Pro
 }
 
 export async function listOneDriveFiles(companyId: string, userId: string, query?: string): Promise<OneDriveFile[]> {
-  const accessToken = await getValidAccessToken(companyId, userId);
+  const { accessToken } = await getValidAccessContext(companyId, userId);
   const trimmed = query?.trim();
   const url = trimmed
     ? `${GRAPH_BASE}/me/drive/root/search(q='${encodeURIComponent(trimmed.replace(/'/g, "''"))}')?$top=20`
@@ -154,8 +168,8 @@ export async function listOneDriveFiles(companyId: string, userId: string, query
 }
 
 export async function readOneDriveFileText(companyId: string, userId: string, fileId: string): Promise<OneDriveReadResult> {
-  const accessToken = await getValidAccessToken(companyId, userId);
-  const metadata = await getDriveItemMetadata(accessToken, fileId);
+  const { accessToken, driveId } = await getValidAccessContext(companyId, userId, fileId);
+  const metadata = await getDriveItemMetadata(accessToken, fileId, driveId);
   const { buffer, mimeType } = await downloadDriveItem(accessToken, metadata);
   const text = normalizeText(await extractOneDriveText(buffer, mimeType, metadata.name)).slice(0, MAX_SOURCE_CHARS);
 
@@ -171,8 +185,8 @@ export async function readOneDriveImageFile(
   userId: string,
   fileId: string,
 ): Promise<OneDriveBinaryResult> {
-  const accessToken = await getValidAccessToken(companyId, userId);
-  const metadata = await getDriveItemMetadata(accessToken, fileId);
+  const { accessToken, driveId } = await getValidAccessContext(companyId, userId, fileId);
+  const metadata = await getDriveItemMetadata(accessToken, fileId, driveId);
   const { buffer, mimeType } = await downloadDriveItem(accessToken, metadata);
   if (!isSupportedOneDriveImage(metadata.name, mimeType)) {
     throw new Error('Choose a JPG or PNG image from OneDrive.');
@@ -229,6 +243,14 @@ async function saveOneDriveToken(companyId: string, userId: string, token: Store
     ),
   });
 
+  const existingMetadata = (existing?.metadata || {}) as OneDriveIntegrationMetadata;
+  const incomingFiles = token.metadata?.selectedFiles || [];
+  const existingFiles = existingMetadata.selectedFiles || [];
+  const selectedFiles = [
+    ...incomingFiles,
+    ...existingFiles.filter((file) => !incomingFiles.some((incoming) => incoming.id === file.id)),
+  ].slice(0, 20);
+
   const values = {
     status: 'connected',
     accessToken: token.accessToken,
@@ -240,7 +262,12 @@ async function saveOneDriveToken(companyId: string, userId: string, token: Store
     scopes: token.scope?.split(/\s+/).filter(Boolean) || [],
     connectedAt: new Date(token.connectedAt),
     lastError: null,
-    metadata: { source: 'campaign_launcher_onedrive' },
+    metadata: {
+      ...existingMetadata,
+      ...(token.metadata || {}),
+      source: token.metadata?.source || existingMetadata.source || 'campaign_launcher_onedrive',
+      selectedFiles,
+    },
     updatedAt: new Date(),
   };
 
@@ -276,17 +303,29 @@ async function getStoredOneDriveToken(companyId: string, userId: string): Promis
     accountName: integration.providerAccountName || undefined,
     accountEmail: integration.providerAccountEmail || undefined,
     accountId: integration.providerAccountId || undefined,
+    metadata: (integration.metadata || {}) as OneDriveIntegrationMetadata,
   };
 }
 
 async function getValidAccessToken(companyId: string, userId: string): Promise<string> {
+  return (await getValidAccessContext(companyId, userId)).accessToken;
+}
+
+async function getValidAccessContext(
+  companyId: string,
+  userId: string,
+  fileId?: string,
+): Promise<{ accessToken: string; driveId?: string }> {
   const token = await getStoredOneDriveToken(companyId, userId);
   if (!token) throw new Error('OneDrive is not connected for this user in this company.');
 
+  const driveId = fileId
+    ? token.metadata?.selectedFiles?.find((file) => file.id === fileId)?.driveId
+    : undefined;
   const accessToken = decryptMaybe(token.accessToken);
   const expiresAt = token.expiresAt ? new Date(token.expiresAt).getTime() : 0;
   if (accessToken && expiresAt > Date.now() + 60_000) {
-    return accessToken;
+    return { accessToken, driveId };
   }
 
   const refreshToken = decryptMaybe(token.refreshToken);
@@ -303,7 +342,7 @@ async function getValidAccessToken(companyId: string, userId: string): Promise<s
     expiresAt: refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000).toISOString() : token.expiresAt,
   });
 
-  return refreshed.access_token;
+  return { accessToken: refreshed.access_token, driveId };
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
@@ -321,8 +360,11 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
   return res.json() as Promise<TokenResponse>;
 }
 
-async function getDriveItemMetadata(accessToken: string, fileId: string): Promise<GraphDriveItem> {
-  const res = await fetch(`${GRAPH_BASE}/me/drive/items/${encodeURIComponent(fileId)}`, {
+async function getDriveItemMetadata(accessToken: string, fileId: string, driveId?: string): Promise<GraphDriveItem> {
+  const path = driveId
+    ? `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(fileId)}`
+    : `/me/drive/items/${encodeURIComponent(fileId)}`;
+  const res = await fetch(`${GRAPH_BASE}${path}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
     signal: AbortSignal.timeout(30000),
   });

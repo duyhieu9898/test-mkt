@@ -9,11 +9,9 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
-import { db } from '../lib/db';
-import { companies } from '@1person/core/db';
 import { authMiddleware } from '../middleware/auth';
 import { HTTPException } from 'hono/http-exception';
+import { authorizeCompanyAccess, type CompanyPermission } from '../lib/company-access';
 import {
   getActiveBrandIq,
   updateBrandIqFacet,
@@ -25,14 +23,9 @@ const autoGenerationByCompany = new Map<string, Promise<Awaited<ReturnType<typeo
 
 brandIqRouter.use('*', authMiddleware);
 
-async function verifyOwnership(companyId: string, userId: string) {
-  const company = await db.query.companies.findFirst({
-    where: eq(companies.id, companyId),
-    columns: { id: true, ownerId: true, name: true },
-  });
-  if (!company) throw new HTTPException(404, { message: 'Company not found' });
-  if (company.ownerId !== userId) throw new HTTPException(403, { message: 'Access denied' });
-  return company;
+async function authorizeBrandIq(companyId: string, userId: string, permission: CompanyPermission) {
+  const access = await authorizeCompanyAccess(userId, companyId, permission);
+  return access.company;
 }
 
 /* ─── Read ───────────────────────────────────────────────────────── */
@@ -40,7 +33,7 @@ async function verifyOwnership(companyId: string, userId: string) {
 brandIqRouter.get('/:companyId/active', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  await verifyOwnership(companyId, userId);
+  await authorizeBrandIq(companyId, userId, 'brand_iq.view');
   const profile = await getActiveBrandIq(companyId);
   return c.json({ data: profile });
 });
@@ -48,7 +41,7 @@ brandIqRouter.get('/:companyId/active', async (c) => {
 brandIqRouter.post('/:companyId/auto-generate', async (c) => {
   const { userId } = c.get('user');
   const companyId = c.req.param('companyId');
-  const company = await verifyOwnership(companyId, userId);
+  const company = await authorizeBrandIq(companyId, userId, 'brand_iq.edit');
   const existing = await getActiveBrandIq(companyId);
   if (existing) return c.json({ data: existing, created: false });
 
@@ -83,7 +76,7 @@ brandIqRouter.post(
   async (c) => {
     const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
-    const company = await verifyOwnership(companyId, userId);
+    const company = await authorizeBrandIq(companyId, userId, 'brand_iq.edit');
     const body = c.req.valid('json');
     try {
       const profile = await generateGroundedBrandIq(companyId, company.name, body);
@@ -177,7 +170,7 @@ brandIqRouter.put(
   async (c) => {
     const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
-    await verifyOwnership(companyId, userId);
+    await authorizeBrandIq(companyId, userId, 'brand_iq.edit');
     const patch = c.req.valid('json');
     try {
       const updated = await updateBrandIqFacet(companyId, patch);

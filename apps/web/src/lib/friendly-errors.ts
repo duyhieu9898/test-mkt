@@ -1,3 +1,65 @@
+import { APP_LANGUAGE_STORAGE_KEY } from '@/lib/app-language';
+import { translatePermissionErrorCode } from '@/lib/permission-error-messages';
+
+type CodedError = Error & { code?: string; status?: number };
+
+type ApiErrorPayload = {
+  code?: unknown;
+  message?: unknown;
+  error?: unknown;
+};
+
+function getPreferredLanguage() {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    return window.localStorage.getItem(APP_LANGUAGE_STORAGE_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readApiErrorCode(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const payload = value as ApiErrorPayload;
+  if (typeof payload.code === 'string') return payload.code;
+  if (payload.error && typeof payload.error === 'object') {
+    const nested = payload.error as ApiErrorPayload;
+    if (typeof nested.code === 'string') return nested.code;
+  }
+  return undefined;
+}
+
+function readApiErrorMessage(value: unknown, fallback: string) {
+  if (!value || typeof value !== 'object') return fallback;
+  const payload = value as ApiErrorPayload;
+  if (typeof payload.message === 'string') return payload.message;
+  if (typeof payload.error === 'string') return payload.error;
+  if (payload.error && typeof payload.error === 'object') {
+    const nested = payload.error as ApiErrorPayload;
+    if (typeof nested.message === 'string') return nested.message;
+  }
+  return fallback;
+}
+
+export function apiErrorFromPayload(
+  payload: unknown,
+  status?: number,
+  fallback = 'Request failed',
+): CodedError {
+  const error = new Error(readApiErrorMessage(payload, fallback)) as CodedError;
+  error.code = readApiErrorCode(payload);
+  error.status = status;
+  return error;
+}
+
+export async function apiErrorFromResponse(
+  response: Response,
+  fallback = 'Request failed',
+): Promise<CodedError> {
+  const payload = await response.json().catch(() => ({}));
+  return apiErrorFromPayload(payload, response.status, fallback);
+}
+
 /**
  * Translate technical errors into friendly, non-technical messages.
  *
@@ -10,6 +72,12 @@ export function friendlyError(
   fallback = 'Something went wrong — try again in a moment.',
 ): string {
   if (typeof err === 'string') return err;
+
+  const translatedPermissionMessage = translatePermissionErrorCode(
+    readApiErrorCode(err),
+    getPreferredLanguage(),
+  );
+  if (translatedPermissionMessage) return translatedPermissionMessage;
 
   if (err instanceof Error) {
     const msg = err.message || '';

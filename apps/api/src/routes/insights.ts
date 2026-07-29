@@ -28,6 +28,7 @@ import {
   assignAdvisorTeamTasks,
   mergeCampaignReviewActions,
 } from '../services/ceo-advisor';
+import { authorizeCompanyAccess } from '../lib/company-access';
 
 const insightsRouter = new Hono();
 insightsRouter.use('*', authMiddleware);
@@ -117,6 +118,7 @@ insightsRouter.post('/:companyId/advisor/refresh', async (c) => {
   const companyId = c.req.param('companyId');
   const body = await c.req.json().catch(() => ({})) as { language?: string };
   try {
+    await authorizeCompanyAccess(userId, companyId, 'ceo_advisor.refresh');
     const { company } = await requireOwnedCompany(companyId);
     const saved = await generateAndSaveCeoBrief({
       companyId,

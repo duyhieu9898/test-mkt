@@ -38,7 +38,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { KnowledgeTabs } from '@/components/knowledge/knowledge-tabs';
 import { api } from '@/lib/api/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { friendlyError } from '@/lib/friendly-errors';
+import { apiErrorFromResponse, friendlyError } from '@/lib/friendly-errors';
 
 const statusConfig: Record<string, { icon: React.ElementType; color: string; label: string }> = {
   uploading: { icon: Clock, color: 'text-blue-600', label: 'Awaiting Transcript' },
@@ -105,7 +105,10 @@ export default function MeetingsPage() {
           body: formData,
         }
       );
-      const data = await res.json();
+      if (!res.ok) {
+        throw await apiErrorFromResponse(res, 'Upload failed');
+      }
+      const data = await res.json().catch(() => ({}));
 
       if (data.needsTranscript) {
         toast.info('Audio uploaded. Please add transcript manually (no Whisper API key).');
@@ -116,8 +119,8 @@ export default function MeetingsPage() {
         toast.success('Meeting uploaded and analyzed!');
       }
       queryClient.invalidateQueries({ queryKey: ['meetings'] });
-    } catch {
-      toast.error('Upload failed');
+    } catch (error) {
+      toast.error(friendlyError(error, 'Upload failed'));
     } finally {
       setIsUploading(false);
     }

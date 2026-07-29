@@ -25,7 +25,7 @@ import { TrustBanner } from '@/components/trust-banner';
 import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { friendlyError } from '@/lib/friendly-errors';
+import { apiErrorFromResponse, friendlyError } from '@/lib/friendly-errors';
 import { KnowledgeTabs } from '@/components/knowledge/knowledge-tabs';
 
 export default function KnowledgePage() {
@@ -90,10 +90,9 @@ export default function KnowledgePage() {
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
         toast.error(
           friendlyError(
-            new Error(err.error?.message || err.error || err.message || String(res.status)),
+            await apiErrorFromResponse(res, "We couldn't upload that file. Please try again."),
             "We couldn't upload that file. Please try again.",
           ),
         );

@@ -12,6 +12,16 @@ export interface ErrorResponse {
   };
 }
 
+function fallbackHttpErrorCode(err: HTTPException) {
+  const code = err.message
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return code || `HTTP_${err.status}`;
+}
+
 export const errorHandler: ErrorHandler = (err: Error, c: Context): Response => {
   const requestId = nanoid();
   console.error(`[${requestId}] Error:`, err);
@@ -33,10 +43,13 @@ export const errorHandler: ErrorHandler = (err: Error, c: Context): Response => 
 
   // Handle HTTP exceptions
   if (err instanceof HTTPException) {
+    const stableCode = (err as HTTPException & { code?: unknown }).code;
     return c.json<ErrorResponse>(
       {
         error: {
-          code: err.message.toUpperCase().replace(/ /g, '_'),
+          code: typeof stableCode === 'string' && stableCode.length > 0
+            ? stableCode
+            : fallbackHttpErrorCode(err),
           message: err.message,
           requestId,
         },

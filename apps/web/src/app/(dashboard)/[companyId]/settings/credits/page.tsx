@@ -19,6 +19,8 @@ import {
 import { api } from '@/lib/api/client';
 import { useAuthStore } from '@/stores/auth-store';
 import { cn } from '@/lib/utils';
+import { useMyCompanyAccess } from '@/lib/api/company-access-hooks';
+import { hasCompanyPermission } from '@/lib/company-access';
 
 interface CreditBalance {
   totalAvailable: number;
@@ -42,6 +44,12 @@ interface CreditPlan {
 interface CreditResponse {
   balance: CreditBalance;
   plan: CreditPlan;
+  access?: {
+    scope: 'company';
+    label: string;
+    canSpend: boolean;
+    canManage: boolean;
+  };
 }
 
 interface Transaction {
@@ -53,6 +61,7 @@ interface Transaction {
   tier?: 'fast' | 'balanced' | 'premium';
   refKind?: string;
   refId?: string;
+  actor?: string | null;
   createdAt: string;
   note?: string;
 }
@@ -94,11 +103,23 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+function formatActor(actor?: string | null): string {
+  if (!actor) return 'System';
+  if (actor.startsWith('user:')) {
+    const id = actor.slice(5);
+    return id ? `User ${id.slice(0, 8)}` : 'User';
+  }
+  if (actor.startsWith('admin:')) return 'Admin';
+  return actor;
+}
+
 export default function CreditsSettingsPage() {
   const params = useParams();
   const router = useRouter();
   const companyId = params.companyId as string;
   const token = useAuthStore((s) => s.token);
+  const access = useMyCompanyAccess(companyId);
+  const canManageCredits = hasCompanyPermission(access.data, 'credits.manage');
 
   const { data: creditsData, isLoading: loadingCredits } = useQuery({
     queryKey: ['credits', companyId],
@@ -115,7 +136,7 @@ export default function CreditsSettingsPage() {
         `/credits/${companyId}/transactions?limit=50`,
         { token: token! },
       ),
-    enabled: !!token,
+    enabled: !!token && canManageCredits,
     refetchInterval: 30_000,
   });
 
@@ -131,10 +152,10 @@ export default function CreditsSettingsPage() {
     <div className="max-w-6xl mx-auto space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2">
-          <Wallet className="w-6 h-6 text-indigo-500" /> Credits & Billing
+          <Wallet className="w-6 h-6 text-indigo-500" /> Company Credits
         </h1>
         <p className="text-sm text-slate-600 mt-1">
-          Manage your plan, balance, and see where every credit goes.
+          View the shared AI credit balance for this company. Owners and Admins manage billing and top-ups.
         </p>
       </div>
 
@@ -172,9 +193,11 @@ export default function CreditsSettingsPage() {
             </div>
             <Button
               onClick={() => router.push('/pricing')}
+              disabled={!canManageCredits}
               className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2"
+              title={!canManageCredits ? 'Only the company Owner or Admin can change plans.' : undefined}
             >
-              <ArrowUpCircle className="w-4 h-4" /> Change plan
+              <ArrowUpCircle className="w-4 h-4" /> {canManageCredits ? 'Change plan' : 'Managed by Owner/Admin'}
             </Button>
           </div>
         </CardContent>
@@ -194,13 +217,15 @@ export default function CreditsSettingsPage() {
             <Card>
               <CardContent className="p-4">
                 <div className="text-xs uppercase tracking-wide text-slate-500">
-                  Available
+                  Company credits
                 </div>
                 <div className="text-3xl font-bold text-slate-900 mt-1 flex items-center gap-1.5">
                   <Gem className="w-6 h-6 text-indigo-500" />
                   {formatNumber(balance?.totalAvailable ?? 0)}
                 </div>
-                <div className="text-xs text-slate-500 mt-1">All buckets combined</div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Shared by roles allowed to use AI
+                </div>
               </CardContent>
             </Card>
             <Card>
@@ -253,9 +278,11 @@ export default function CreditsSettingsPage() {
                 size="sm"
                 variant="outline"
                 onClick={() => router.push('/pricing#topup')}
+                disabled={!canManageCredits}
+                title={!canManageCredits ? 'Only the company Owner or Admin can top up credits.' : undefined}
                 className="gap-1.5"
               >
-                <Zap className="w-3.5 h-3.5" /> Top up
+                <Zap className="w-3.5 h-3.5" /> {canManageCredits ? 'Top up' : 'Owner/Admin only'}
               </Button>
             </div>
           </CardContent>
@@ -267,7 +294,11 @@ export default function CreditsSettingsPage() {
         <h2 className="text-sm font-semibold text-slate-900 mb-3">Usage history</h2>
         <Card>
           <CardContent className="p-0">
-            {loadingTx ? (
+            {!canManageCredits ? (
+              <div className="p-8 text-center text-sm text-slate-500">
+                You can see the company credit balance. Detailed billing history is available to the Owner and Admins.
+              </div>
+            ) : loadingTx ? (
               <div className="p-6 space-y-2">
                 <div className="h-8 bg-slate-100 rounded animate-pulse" />
                 <div className="h-8 bg-slate-100 rounded animate-pulse" />
@@ -284,6 +315,7 @@ export default function CreditsSettingsPage() {
                     <tr>
                       <th className="text-left px-4 py-2">Date</th>
                       <th className="text-left px-4 py-2">Action</th>
+                      <th className="text-left px-4 py-2">Used by</th>
                       <th className="text-left px-4 py-2">Tier</th>
                       <th className="text-right px-4 py-2">Amount</th>
                       <th className="text-right px-4 py-2">Balance</th>
@@ -305,6 +337,9 @@ export default function CreditsSettingsPage() {
                             {relativeTime(tx.createdAt)}
                           </td>
                           <td className="px-4 py-2 text-slate-900">{label}</td>
+                          <td className="px-4 py-2 text-slate-600 whitespace-nowrap">
+                            {formatActor(tx.actor)}
+                          </td>
                           <td className="px-4 py-2">
                             {tierInfo && TIcon ? (
                               <span
@@ -327,7 +362,7 @@ export default function CreditsSettingsPage() {
                             )}
                           >
                             {isDebit ? '-' : '+'}
-                            {formatNumber(tx.amount)}
+                            {formatNumber(Math.abs(tx.amount))}
                           </td>
                           <td className="px-4 py-2 text-right font-mono text-slate-600">
                             {formatNumber(tx.balanceAfter)}

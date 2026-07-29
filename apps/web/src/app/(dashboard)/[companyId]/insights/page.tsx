@@ -21,6 +21,8 @@ import { cn } from '@/lib/utils';
 import { FirstVisitTip } from '@/components/first-visit-tip';
 import { OutOfCreditsModal } from '@/components/out-of-credits-modal';
 import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
+import { useMyCompanyAccess } from '@/lib/api/company-access-hooks';
+import { hasCompanyPermission } from '@/lib/company-access';
 
 type Severity = 'critical' | 'high' | 'medium' | 'low';
 type Priority = 'urgent' | 'high' | 'medium' | 'low';
@@ -261,6 +263,10 @@ export default function CeoAdvisorPage() {
   const [outOfCreditsRequired, setOutOfCreditsRequired] = useState<number | undefined>();
   const [outOfCreditsAvailable, setOutOfCreditsAvailable] = useState<number | undefined>();
   const [language] = usePreferredAppLanguage('en');
+  const accessQ = useMyCompanyAccess(companyId);
+  const canRefreshAdvice = hasCompanyPermission(accessQ.data, 'ceo_advisor.refresh');
+  const refreshPermissionMessage =
+    'Only the company Owner or Admin can generate or refresh CEO advice.';
 
   const latestQ = useQuery({
     queryKey: ['ceo-advisor', 'latest', companyId],
@@ -285,11 +291,14 @@ export default function CeoAdvisorPage() {
     typeof availableCredits !== 'number' || availableCredits >= advisorCampaignCreditCost;
 
   const refreshM = useMutation({
-    mutationFn: () => api.post<{ brief: AdvisorBrief }>(
-      `/insights/${companyId}/advisor/refresh`,
-      { language },
-      { token: token! },
-    ),
+    mutationFn: () => {
+      if (!canRefreshAdvice) throw new Error(refreshPermissionMessage);
+      return api.post<{ brief: AdvisorBrief }>(
+        `/insights/${companyId}/advisor/refresh`,
+        { language },
+        { token: token! },
+      );
+    },
     onSuccess: (data) => {
       toast.success(hasAdvice ? 'Advice refreshed' : 'Your first advice is ready');
       qc.setQueryData(['ceo-advisor', 'latest', companyId], data);
@@ -375,6 +384,8 @@ export default function CeoAdvisorPage() {
       !token
       || !companyId
       || !latestQ.isSuccess
+      || !accessQ.isSuccess
+      || !canRefreshAdvice
       || latestQ.data.brief !== null
       || autoGenerateAttemptedFor.current === companyId
     ) {
@@ -383,12 +394,19 @@ export default function CeoAdvisorPage() {
 
     autoGenerateAttemptedFor.current = companyId;
     refreshM.mutate();
-  }, [companyId, latestQ.data?.brief, latestQ.isSuccess, refreshM.mutate, token]);
+  }, [accessQ.isSuccess, canRefreshAdvice, companyId, latestQ.data?.brief, latestQ.isSuccess, refreshM.mutate, token]);
 
   const AdviceActionButton = (
     <Button
-      onClick={() => refreshM.mutate()}
-      disabled={refreshing || !token}
+      onClick={() => {
+        if (!canRefreshAdvice) {
+          toast.error(refreshPermissionMessage);
+          return;
+        }
+        refreshM.mutate();
+      }}
+      disabled={refreshing || !token || accessQ.isLoading || !canRefreshAdvice}
+      title={!canRefreshAdvice ? refreshPermissionMessage : undefined}
       className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white w-full sm:w-auto"
     >
       {refreshing ? (
@@ -400,7 +418,7 @@ export default function CeoAdvisorPage() {
       )}
       {refreshing
         ? hasAdvice ? 'Refreshing...' : 'Creating advice...'
-        : hasAdvice ? 'Refresh advice' : 'Generate advice'}
+        : !canRefreshAdvice ? 'Owner/Admin only' : hasAdvice ? 'Refresh advice' : 'Generate advice'}
       <Badge className="ml-1 bg-indigo-500 text-white gap-1 hover:bg-indigo-500">
         <Coins className="w-3 h-3" /> 10
       </Badge>

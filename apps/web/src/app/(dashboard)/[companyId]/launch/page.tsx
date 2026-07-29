@@ -54,13 +54,17 @@ import {
 } from '@/lib/api/launches-hooks';
 import { useCompany } from '@/lib/api/hooks';
 import { useBrandIq } from '@/lib/api/brand-iq-hooks';
+import { useMyCompanyAccess } from '@/lib/api/company-access-hooks';
+import { hasCompanyPermission } from '@/lib/company-access';
 import { api } from '@/lib/api/client';
+import { apiErrorFromResponse, friendlyError } from '@/lib/friendly-errors';
 import { usePreferredAppLanguage } from '@/lib/use-preferred-app-language';
 import { useAuthStore } from '@/stores/auth-store';
 import { ImglyBannerEditor } from '@/components/marketing/imgly-banner-editor';
 import {
   DriveSourcePicker,
   driveSourceRequestBody,
+  type DriveFile,
   type DriveSourceSelection,
 } from '@/components/marketing/drive-source-picker';
 import {
@@ -72,6 +76,22 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 const CAMPAIGN_FOCUS_MAX_LENGTH = 1200;
 const CAMPAIGN_LAUNCHER_VIDEO_ENABLED = false;
+const TEXT_SOURCE_GOOGLE_PICKER_MIME_TYPES = [
+  'application/vnd.google-apps.document',
+  'application/vnd.google-apps.spreadsheet',
+  'application/vnd.google-apps.presentation',
+  'application/pdf',
+  'text/plain',
+  'text/csv',
+  'text/markdown',
+  'application/json',
+  'application/msword',
+  'application/vnd.ms-excel',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+].join(',');
 
 interface CreditResponse {
   balance: { totalAvailable: number };
@@ -92,6 +112,33 @@ const STATUS_ICON: Record<LaunchStepStatus, { icon: typeof CheckCircle2; color: 
 
 function isLaunchActive(launch?: CampaignLaunch | null) {
   return launch?.status === 'queued' || launch?.status === 'running';
+}
+
+function isTextSourceFile(file: DriveFile) {
+  const mimeType = (file.mimeType || '').toLowerCase();
+  const name = (file.name || '').toLowerCase();
+  if (mimeType.startsWith('image/') || mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
+    return false;
+  }
+  if (mimeType.startsWith('text/')) {
+    return true;
+  }
+  return (
+    [
+      'application/pdf',
+      'application/json',
+      'application/msword',
+      'application/vnd.ms-excel',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.google-apps.document',
+      'application/vnd.google-apps.spreadsheet',
+      'application/vnd.google-apps.presentation',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ].includes(mimeType) ||
+    /\.(txt|md|markdown|csv|json|pdf|doc|docx|xls|xlsx|ppt|pptx)$/.test(name)
+  );
 }
 
 function StepRow({ step }: { step: LaunchStep }) {
@@ -170,8 +217,25 @@ type UploadedCampaignImage = {
   mimeType?: string | null;
 };
 
+type SubmittedLaunchSummary = {
+  keyword: string;
+  brief?: string;
+  sourceLabel: string;
+  imageLabel: string;
+  socialLabels: string[];
+  submittedAt: string;
+};
+
+function driveSourceSelectionLabel(selection: DriveSourceSelection) {
+  if (selection.googleDriveFileName) return `Google Drive: ${selection.googleDriveFileName}`;
+  if (selection.oneDriveFileName) return `OneDrive: ${selection.oneDriveFileName}`;
+  if (selection.googleDriveUrl) return 'Public document link';
+  return 'No source file';
+}
+
 function BannerLaunchReview({ companyId, campaignId }: { companyId: string; campaignId: string }) {
   const token = useAuthStore((s) => s.token);
+  const access = useMyCompanyAccess(companyId);
   const [banners, setBanners] = useState<BannerRecord[]>([]);
   const [socialPosts, setSocialPosts] = useState<CampaignSocialPost[]>([]);
   const [socialIntro, setSocialIntro] = useState('');
@@ -179,6 +243,7 @@ function BannerLaunchReview({ companyId, campaignId }: { companyId: string; camp
   const [editingBanner, setEditingBanner] = useState<BannerRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
+  const canLaunchCampaign = hasCompanyPermission(access.data, 'campaign.launch');
 
   useEffect(() => {
     if (!token || !companyId || !campaignId) return;
@@ -211,6 +276,10 @@ function BannerLaunchReview({ companyId, campaignId }: { companyId: string; camp
 
   const publishSelected = async () => {
     if (!token) return;
+    if (!canLaunchCampaign) {
+      toast.error('You can review this campaign, but only an Owner, Admin, or Marketing Lead can launch it.');
+      return;
+    }
     if (selected.length === 0) {
       toast.error('Select at least one banner to publish.');
       return;
@@ -270,7 +339,13 @@ function BannerLaunchReview({ companyId, campaignId }: { companyId: string; camp
           <div className="text-sm font-semibold">Advertising banner drafts</div>
           <p className="text-xs text-muted-foreground">Select the banners you want to approve and push to the selected social channels.</p>
         </div>
-        <Button size="sm" onClick={publishSelected} disabled={publishing} className="gap-2">
+        <Button
+          size="sm"
+          onClick={publishSelected}
+          disabled={publishing || !canLaunchCampaign}
+          title={!canLaunchCampaign ? 'Your role can review campaigns, but cannot launch them.' : undefined}
+          className="gap-2"
+        >
           {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
           Approve & Publish
         </Button>
@@ -283,6 +358,7 @@ function BannerLaunchReview({ companyId, campaignId }: { companyId: string; camp
           onChange={(event) => setSocialIntro(event.target.value)}
           rows={4}
           maxLength={500}
+          disabled={!canLaunchCampaign}
           placeholder="Write the text that will appear with the selected advertising banner on social posts."
         />
         <p className="text-[11px] text-muted-foreground">
@@ -502,6 +578,7 @@ export default function LaunchPage() {
     instagram: false,
     video: false,
   });
+  const [lastSubmittedLaunch, setLastSubmittedLaunch] = useState<SubmittedLaunchSummary | null>(null);
   const [activeLaunchId, setActiveLaunchId] = useState<string | null>(null);
   const [optimisticRunningLaunchId, setOptimisticRunningLaunchId] = useState<string | null>(null);
 
@@ -511,6 +588,7 @@ export default function LaunchPage() {
   const suggestions = useLaunchSuggestions(companyId);
   const brandIq = useBrandIq(companyId);
   const company = useCompany(companyId);
+  const access = useMyCompanyAccess(companyId);
   const queryClient = useQueryClient();
   const credits = useQuery({
     queryKey: ['credits', companyId],
@@ -558,6 +636,10 @@ export default function LaunchPage() {
 
   const uploadCampaignImages = async (files: FileList | null) => {
     if (!files?.length || !token) return;
+    if (!canStartLaunch) {
+      toast.error('Your role can review campaigns, but cannot create campaigns or spend AI credits.');
+      return;
+    }
     const remainingSlots = 3 - campaignImages.length;
     if (remainingSlots <= 0) {
       toast.error('You can upload up to 3 campaign images.');
@@ -597,10 +679,10 @@ export default function LaunchPage() {
               body: formData,
             },
           );
-          const data = await response.json();
           if (!response.ok) {
-            throw new Error(data?.message || data?.error || `Failed to upload ${file.name}`);
+            throw await apiErrorFromResponse(response, `Failed to upload ${file.name}`);
           }
+          const data = await response.json();
           if (data?.data?.id && data?.data?.url) {
             uploaded.push({
               id: data.data.id,
@@ -610,7 +692,7 @@ export default function LaunchPage() {
             });
           }
         } catch (error) {
-          failed.push(`${file.name}: ${(error as Error).message || 'Upload failed'}`);
+          failed.push(`${file.name}: ${friendlyError(error, 'Upload failed')}`);
         }
       }
       if (uploaded.length > 0) {
@@ -622,7 +704,7 @@ export default function LaunchPage() {
         toast.error(failed.length === 1 ? failed[0] : `${failed.length} images could not be uploaded.`);
       }
     } catch (error) {
-      toast.error((error as Error).message || 'Failed to upload campaign images');
+      toast.error(friendlyError(error, 'Failed to upload campaign images'));
     } finally {
       setUploadingImages(false);
     }
@@ -635,6 +717,10 @@ export default function LaunchPage() {
   const submit = async () => {
     if (launchInProgress) {
       toast.error('A launch is already running. Please wait for it to finish.');
+      return;
+    }
+    if (!canStartLaunch) {
+      toast.error('Your role can review campaigns, but cannot create campaigns or spend AI credits.');
       return;
     }
     if (keyword.trim().length < 3) {
@@ -675,14 +761,20 @@ export default function LaunchPage() {
       });
       setActiveLaunchId(res.data.launchId);
       setOptimisticRunningLaunchId(res.data.launchId);
-      setKeyword('');
-      setBrief('');
-      setSelectedSuggestionId(null);
-      setSourceSelection({});
-      setImageMode('ai');
-      setCampaignImages([]);
-      setVideoReferenceImage({ type: 'none' });
-      setTargets((current) => ({ ...current, video: false }));
+      setLastSubmittedLaunch({
+        keyword: keyword.trim(),
+        brief: brief.trim() || undefined,
+        sourceLabel: driveSourceSelectionLabel(sourceSelection),
+        imageLabel: imageMode === 'uploaded'
+          ? `${campaignImages.length} uploaded image${campaignImages.length === 1 ? '' : 's'}`
+          : 'AI-generated images',
+        socialLabels: [
+          launchTargets.linkedin ? 'LinkedIn' : null,
+          launchTargets.facebook ? 'Facebook' : null,
+          launchTargets.instagram ? 'Instagram' : null,
+        ].filter(Boolean) as string[],
+        submittedAt: new Date().toISOString(),
+      });
       queryClient.invalidateQueries({ queryKey: ['credits', companyId] });
       toast.success('Launch queued. Watch the progress below.');
     } catch (e) {
@@ -702,12 +794,13 @@ export default function LaunchPage() {
     : credits.data?.costs?.launchCampaignBase ?? 120;
   const launchCreditCost = baseLaunchCost + (
     CAMPAIGN_LAUNCHER_VIDEO_ENABLED && targets.video
-      ? credits.data?.costs?.campaignVideo ?? 300
+      ? credits.data?.costs?.campaignVideo ?? 50
       : 0
   );
   const availableCredits = credits.data?.balance.totalAvailable;
   const hasEnoughLaunchCredits =
     typeof availableCredits !== 'number' || availableCredits >= launchCreditCost;
+  const canStartLaunch = hasCompanyPermission(access.data, 'campaign.generate_ai');
 
   const applySuggestion = (suggestion: LaunchSuggestion) => {
     setKeyword(suggestion.keyword);
@@ -898,6 +991,10 @@ export default function LaunchPage() {
             token={token}
             value={sourceSelection}
             onChange={setSourceSelection}
+            description="Choose a document, PDF, spreadsheet, or text file for AI context. Images and videos are not supported here."
+            dialogDescription="Select source files that contain readable text. Images and videos should be uploaded in the campaign image or video sections."
+            fileFilter={isTextSourceFile}
+            googlePickerMimeTypes={TEXT_SOURCE_GOOGLE_PICKER_MIME_TYPES}
           />
 
           <div className="space-y-3">
@@ -936,7 +1033,7 @@ export default function LaunchPage() {
                   imageMode === 'uploaded'
                     ? 'border-indigo-300 bg-indigo-50'
                     : 'border-slate-200 bg-white hover:bg-slate-50'
-                } ${campaignImages.length >= 3 || uploadingImages ? 'cursor-not-allowed opacity-70' : ''}`}
+                } ${campaignImages.length >= 3 || uploadingImages || !canStartLaunch ? 'cursor-not-allowed opacity-70' : ''}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
                   {imageMode === 'uploaded' ? <CheckCircle2 className="h-4 w-4 text-indigo-600" /> : <UploadCloud className="h-4 w-4 text-slate-500" />}
@@ -950,7 +1047,7 @@ export default function LaunchPage() {
                   accept="image/png,image/jpeg,image/webp"
                   multiple
                   className="hidden"
-                  disabled={campaignImages.length >= 3 || uploadingImages}
+                  disabled={campaignImages.length >= 3 || uploadingImages || !canStartLaunch}
                   onChange={(event) => {
                     void uploadCampaignImages(event.target.files);
                     event.target.value = '';
@@ -1046,7 +1143,7 @@ export default function LaunchPage() {
                     <Video className="h-4 w-4 text-indigo-500" />
                     Create one AI video
                     <Badge variant="secondary" className="bg-indigo-50 text-[10px] text-indigo-700">
-                      {credits.data?.costs?.campaignVideo ?? 300} credits
+                      {credits.data?.costs?.campaignVideo ?? 50} credits
                     </Badge>
                   </span>
                   <span className="mt-1 block text-xs text-muted-foreground">
@@ -1085,8 +1182,12 @@ export default function LaunchPage() {
 
           <Button
             onClick={submit}
-            disabled={launchInProgress || uploadingImages || !hasEnoughLaunchCredits}
-            title={!hasEnoughLaunchCredits ? 'Not enough credits. Contact support to add more.' : undefined}
+            disabled={launchInProgress || uploadingImages || !canStartLaunch || !hasEnoughLaunchCredits}
+            title={!canStartLaunch
+              ? 'Your role can review campaigns, but cannot create campaigns.'
+              : !hasEnoughLaunchCredits
+                ? 'Not enough credits. Contact support to add more.'
+                : undefined}
             className="w-full gap-2"
           >
             {launchInProgress ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
@@ -1096,6 +1197,41 @@ export default function LaunchPage() {
                 ? 'Launch in progress'
                 : `Launch campaign · ${launchCreditCost} credits`}
           </Button>
+
+          {lastSubmittedLaunch && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 text-sm">
+              <div className="flex items-start gap-2">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-emerald-950">Submitted launch</p>
+                    <span className="text-xs text-emerald-700">
+                      {new Date(lastSubmittedLaunch.submittedAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <p className="break-words text-slate-900">{lastSubmittedLaunch.keyword}</p>
+                  {lastSubmittedLaunch.brief && (
+                    <p className="line-clamp-2 text-xs leading-5 text-slate-600">
+                      {lastSubmittedLaunch.brief}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <Badge variant="secondary" className="bg-white/80 text-slate-700">
+                      {lastSubmittedLaunch.sourceLabel}
+                    </Badge>
+                    <Badge variant="secondary" className="bg-white/80 text-slate-700">
+                      {lastSubmittedLaunch.imageLabel}
+                    </Badge>
+                    <Badge variant="secondary" className="bg-white/80 text-slate-700">
+                      {lastSubmittedLaunch.socialLabels.length
+                        ? lastSubmittedLaunch.socialLabels.join(', ')
+                        : 'No social drafts'}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

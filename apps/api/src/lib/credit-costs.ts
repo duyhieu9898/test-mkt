@@ -6,8 +6,9 @@ export const CREDIT_SUPPORT_MESSAGE =
   'You do not have enough credits for this action. Please contact support to add more credits.';
 
 export const FIXED_CREDIT_COSTS = {
-  launchCampaignBase: 120,
-  campaignVideo: 300,
+  launchCampaignBase: 50,
+  campaignVideo: 50,
+  socialPostPublish: 2,
   contentHubGenerateAllTopic: 80,
   knowledgeCrawlDiscover: 20,
   fallbackOpenAiCall: 5,
@@ -56,6 +57,7 @@ export async function getUsageCreditCosts() {
     launchCampaignBase: FIXED_CREDIT_COSTS.launchCampaignBase,
     launchCampaignUploadedImages: getLaunchCampaignCost({ imageMode: 'uploaded' }),
     campaignVideo: FIXED_CREDIT_COSTS.campaignVideo,
+    socialPostPublish: FIXED_CREDIT_COSTS.socialPostPublish,
     contentHubGenerateAllTopic: FIXED_CREDIT_COSTS.contentHubGenerateAllTopic,
     knowledgeCrawlDiscover: FIXED_CREDIT_COSTS.knowledgeCrawlDiscover,
     openAiCall: FIXED_CREDIT_COSTS.fallbackOpenAiCall,

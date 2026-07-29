@@ -58,12 +58,19 @@ import {
 } from '@/lib/api/brand-iq-hooks';
 import { useAuthStore } from '@/stores/auth-store';
 import { uploadImageAsset } from '@/lib/assets-library';
+import { useMyCompanyAccess } from '@/lib/api/company-access-hooks';
+import { hasCompanyPermission } from '@/lib/company-access';
+
+const BRAND_IQ_EDIT_PERMISSION_MESSAGE =
+  'Only the company Owner, Admin, or Marketing Lead can edit Brand IQ.';
 
 /* ─── Setup Wizard (empty state) ─────────────────────────────────── */
 
 function SetupWizard({
   companyId,
   onDone,
+  canEdit,
+  permissionMessage = BRAND_IQ_EDIT_PERMISSION_MESSAGE,
   initialUrl = '',
   initialSamples = [],
   title = 'Add context to improve Brand IQ',
@@ -71,6 +78,8 @@ function SetupWizard({
 }: {
   companyId: string;
   onDone: () => void;
+  canEdit: boolean;
+  permissionMessage?: string;
   initialUrl?: string;
   initialSamples?: string[];
   title?: string;
@@ -81,6 +90,10 @@ function SetupWizard({
   const generate = useGenerateBrandIq(companyId);
 
   const handleSubmit = async () => {
+    if (!canEdit) {
+      toast.error(permissionMessage);
+      return;
+    }
     const cleanSamples = samples.map((s) => s.trim()).filter((s) => s.length >= 50);
     const cleanUrl = url.trim();
     try {
@@ -112,6 +125,7 @@ function SetupWizard({
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://your-domain.com"
               type="url"
+              disabled={!canEdit}
             />
           </div>
           <p className="text-[11px] text-muted-foreground mt-1">
@@ -134,12 +148,14 @@ function SetupWizard({
                 }
                 rows={3}
                 placeholder={`Context ${idx + 1} - tell AI what to preserve or improve.`}
+                disabled={!canEdit}
               />
               {samples.length > 1 && (
                 <Button
                   size="icon"
                   variant="ghost"
                   onClick={() => setSamples((arr) => arr.filter((_, i) => i !== idx))}
+                  disabled={!canEdit}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
@@ -151,6 +167,7 @@ function SetupWizard({
               size="sm"
               variant="outline"
               onClick={() => setSamples((arr) => [...arr, ''])}
+              disabled={!canEdit}
               className="gap-1"
             >
               <Plus className="w-3 h-3" /> Add sample
@@ -158,7 +175,7 @@ function SetupWizard({
           )}
         </div>
 
-        <Button onClick={handleSubmit} disabled={generate.isPending} className="gap-2 w-full">
+        <Button onClick={handleSubmit} disabled={generate.isPending || !canEdit} className="gap-2 w-full">
           {generate.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
           {submitLabel}
         </Button>
@@ -182,12 +199,26 @@ function ChipList({ items, empty }: { items: string[]; empty?: string }) {
   );
 }
 
-function VoiceCard({ profile, companyId }: { profile: BrandIqProfile; companyId: string }) {
+function VoiceCard({
+  profile,
+  companyId,
+  canEdit,
+  permissionMessage = BRAND_IQ_EDIT_PERMISSION_MESSAGE,
+}: {
+  profile: BrandIqProfile;
+  companyId: string;
+  canEdit: boolean;
+  permissionMessage?: string;
+}) {
   const [editing, setEditing] = useState(false);
   const update = useUpdateBrandIq(companyId);
   const [draft, setDraft] = useState<BrandIqVoice>(profile.voice);
 
   const save = async () => {
+    if (!canEdit) {
+      toast.error(permissionMessage);
+      return;
+    }
     try {
       await update.mutateAsync({ voice: draft });
       toast.success('Voice updated');
@@ -203,9 +234,11 @@ function VoiceCard({ profile, companyId }: { profile: BrandIqProfile; companyId:
         <CardTitle className="text-base flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-primary" /> Voice
         </CardTitle>
-        <Button size="sm" variant="ghost" onClick={() => setEditing(true)} className="gap-1">
-          <Pencil className="w-3 h-3" /> Edit
-        </Button>
+        {canEdit && (
+          <Button size="sm" variant="ghost" onClick={() => setEditing(true)} className="gap-1">
+            <Pencil className="w-3 h-3" /> Edit
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <div>
@@ -373,7 +406,17 @@ function isHexColor(value: string): boolean {
   return /^#[0-9a-fA-F]{6}$/.test(value.trim());
 }
 
-function VisualCard({ profile, companyId }: { profile: BrandIqProfile; companyId: string }) {
+function VisualCard({
+  profile,
+  companyId,
+  canEdit,
+  permissionMessage = BRAND_IQ_EDIT_PERMISSION_MESSAGE,
+}: {
+  profile: BrandIqProfile;
+  companyId: string;
+  canEdit: boolean;
+  permissionMessage?: string;
+}) {
   const v = profile.visualIdentity;
   const token = useAuthStore((s) => s.token);
   const update = useUpdateBrandIq(companyId);
@@ -383,12 +426,20 @@ function VisualCard({ profile, companyId }: { profile: BrandIqProfile; companyId
   const [accentDraft, setAccentDraft] = useState(v.accentColors.join('\n'));
 
   const openEditor = () => {
+    if (!canEdit) {
+      toast.error(permissionMessage);
+      return;
+    }
     setDraft(profile.visualIdentity);
     setAccentDraft(profile.visualIdentity.accentColors.join('\n'));
     setEditing(true);
   };
 
   const save = async () => {
+    if (!canEdit) {
+      toast.error(permissionMessage);
+      return;
+    }
     const accentColors = normalizeVisualColors(accentDraft);
     if (!isHexColor(draft.primaryColor) || !isHexColor(draft.secondaryColor) || accentColors.some((color) => !isHexColor(color))) {
       toast.error('Please use hex colors like #6366F1.');
@@ -415,6 +466,10 @@ function VisualCard({ profile, companyId }: { profile: BrandIqProfile; companyId
   };
 
   const uploadLogo = async (file?: File | null) => {
+    if (!canEdit) {
+      toast.error(permissionMessage);
+      return;
+    }
     if (!file || !token || uploadingLogo) return;
     if (!['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'].includes(file.type)) {
       toast.error('Please upload a PNG, JPG, WebP, or SVG logo.');
@@ -443,9 +498,11 @@ function VisualCard({ profile, companyId }: { profile: BrandIqProfile; companyId
         <CardTitle className="text-base flex items-center gap-2">
           <Palette className="w-4 h-4 text-primary" /> Visual identity
         </CardTitle>
-        <Button size="sm" variant="ghost" onClick={openEditor} className="gap-1">
-          <Pencil className="w-3 h-3" /> Edit
-        </Button>
+        {canEdit && (
+          <Button size="sm" variant="ghost" onClick={openEditor} className="gap-1">
+            <Pencil className="w-3 h-3" /> Edit
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <div className="flex items-center gap-3 flex-wrap">
@@ -646,12 +703,26 @@ function VisualCard({ profile, companyId }: { profile: BrandIqProfile; companyId
   );
 }
 
-function OkrsCard({ profile, companyId }: { profile: BrandIqProfile; companyId: string }) {
+function OkrsCard({
+  profile,
+  companyId,
+  canEdit,
+  permissionMessage = BRAND_IQ_EDIT_PERMISSION_MESSAGE,
+}: {
+  profile: BrandIqProfile;
+  companyId: string;
+  canEdit: boolean;
+  permissionMessage?: string;
+}) {
   const update = useUpdateBrandIq(companyId);
   const [draft, setDraft] = useState<QuarterlyOkr[]>(profile.okrs);
   const [editing, setEditing] = useState(false);
 
   const save = async () => {
+    if (!canEdit) {
+      toast.error(permissionMessage);
+      return;
+    }
     try {
       await update.mutateAsync({ okrs: draft });
       toast.success('OKRs updated');
@@ -667,9 +738,11 @@ function OkrsCard({ profile, companyId }: { profile: BrandIqProfile; companyId: 
         <CardTitle className="text-base flex items-center gap-2">
           <Target className="w-4 h-4 text-primary" /> Quarterly OKRs ({profile.okrs.length})
         </CardTitle>
-        <Button size="sm" variant="ghost" onClick={() => { setDraft(profile.okrs); setEditing(true); }} className="gap-1">
-          <Pencil className="w-3 h-3" /> Edit
-        </Button>
+        {canEdit && (
+          <Button size="sm" variant="ghost" onClick={() => { setDraft(profile.okrs); setEditing(true); }} className="gap-1">
+            <Pencil className="w-3 h-3" /> Edit
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         {profile.okrs.length === 0 && (
@@ -869,17 +942,19 @@ function PositioningCard({ profile }: { profile: BrandIqProfile }) {
 export default function BrandIqPage() {
   const { companyId } = useParams<{ companyId: string }>();
   const { data: profile, isLoading } = useBrandIq(companyId);
+  const accessQ = useMyCompanyAccess(companyId);
   const autoGenerate = useAutoGenerateBrandIq(companyId);
   const autoStarted = useRef(false);
   const [improveExpanded, setImproveExpanded] = useState(false);
+  const canEditBrandIq = hasCompanyPermission(accessQ.data, 'brand_iq.edit');
 
   useEffect(() => {
-    if (isLoading || profile || autoStarted.current) return;
+    if (isLoading || accessQ.isLoading || !accessQ.isSuccess || !canEditBrandIq || profile || autoStarted.current) return;
     autoStarted.current = true;
     autoGenerate.mutate();
-  }, [autoGenerate, isLoading, profile]);
+  }, [accessQ.isLoading, accessQ.isSuccess, autoGenerate, canEditBrandIq, isLoading, profile]);
 
-  if (isLoading || (!profile && !autoGenerate.isError)) {
+  if (isLoading || accessQ.isLoading || (!profile && canEditBrandIq && !autoGenerate.isError)) {
     return (
       <div className="py-20 text-center text-sm text-muted-foreground">
         <Loader2 className="w-6 h-6 animate-spin mx-auto mb-3" />
@@ -902,7 +977,22 @@ export default function BrandIqPage() {
         </p>
       </div>
 
-      {!profile && autoGenerate.isError && (
+      {!profile && !canEditBrandIq && (
+        <Card className="border-amber-200 bg-amber-50/50">
+          <CardContent className="flex items-start gap-3 p-4 text-sm text-amber-900">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-medium">Brand IQ has not been set up yet.</p>
+              <p className="mt-1">
+                {BRAND_IQ_EDIT_PERMISSION_MESSAGE} Ask someone with that role to build the first
+                Brand IQ profile for this company.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!profile && canEditBrandIq && autoGenerate.isError && (
         <div className="space-y-3">
           <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -913,6 +1003,7 @@ export default function BrandIqPage() {
           <SetupWizard
             companyId={companyId}
             onDone={() => {}}
+            canEdit={canEditBrandIq}
             title="Build your Brand IQ"
             submitLabel="Try again"
           />
@@ -931,30 +1022,45 @@ export default function BrandIqPage() {
                   · last updated {new Date(profile.updatedAt).toLocaleDateString()}
                 </span>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setImproveExpanded((expanded) => !expanded)}
-                className="gap-1.5"
-                aria-expanded={improveExpanded}
-                aria-controls="brand-iq-improvement-panel"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                {improveExpanded ? 'Hide improvement form' : 'Improve with more context'}
-                <ChevronDown
-                  className={`w-3.5 h-3.5 transition-transform ${
-                    improveExpanded ? 'rotate-180' : ''
-                  }`}
-                />
-              </Button>
+              {canEditBrandIq && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setImproveExpanded((expanded) => !expanded)}
+                  className="gap-1.5"
+                  aria-expanded={improveExpanded}
+                  aria-controls="brand-iq-improvement-panel"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  {improveExpanded ? 'Hide improvement form' : 'Improve with more context'}
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform ${
+                      improveExpanded ? 'rotate-180' : ''
+                    }`}
+                  />
+                </Button>
+              )}
             </CardContent>
           </Card>
 
-          {improveExpanded && (
+          {!canEditBrandIq && (
+            <Card className="border-slate-200 bg-slate-50/70">
+              <CardContent className="flex items-start gap-3 p-4 text-sm text-slate-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <p className="font-medium text-slate-900">Read-only Brand IQ</p>
+                  <p className="mt-1">{BRAND_IQ_EDIT_PERMISSION_MESSAGE}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {improveExpanded && canEditBrandIq && (
             <div id="brand-iq-improvement-panel">
               <SetupWizard
                 companyId={companyId}
                 onDone={() => setImproveExpanded(false)}
+                canEdit={canEditBrandIq}
                 initialUrl={profile.sourceUrl ?? ''}
                 title="Improve Brand IQ"
                 submitLabel="Update Brand IQ"
@@ -971,12 +1077,12 @@ export default function BrandIqPage() {
             </Card>
           )}
 
-          <VoiceCard profile={profile} companyId={companyId} />
+          <VoiceCard profile={profile} companyId={companyId} canEdit={canEditBrandIq} />
           <PersonasCard profile={profile} />
           <PositioningCard profile={profile} />
           <StyleCard profile={profile} />
-          <VisualCard profile={profile} companyId={companyId} />
-          <OkrsCard profile={profile} companyId={companyId} />
+          <VisualCard profile={profile} companyId={companyId} canEdit={canEditBrandIq} />
+          <OkrsCard profile={profile} companyId={companyId} canEdit={canEditBrandIq} />
         </>
       )}
     </div>

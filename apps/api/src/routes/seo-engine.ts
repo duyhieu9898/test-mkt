@@ -106,6 +106,7 @@ seoEngineRouter.post(
     language: z.string().default('en'),
   })),
   async (c) => {
+    const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
     const body = c.req.valid('json');
 
@@ -172,6 +173,7 @@ seoEngineRouter.post(
     })).min(1),
   })),
   async (c) => {
+    const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
     const { products } = c.req.valid('json');
 
@@ -463,6 +465,7 @@ seoEngineRouter.post(
     status: z.enum(['draft', 'publish']).default('draft'),
   })),
   async (c) => {
+    const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
     const body = c.req.valid('json');
     const { blogPostIds } = body;
@@ -803,6 +806,7 @@ seoEngineRouter.post(
     language: z.string().default('en'),
   })),
   async (c) => {
+    const { userId } = c.get('user');
     const companyId = c.req.param('companyId');
     const body = c.req.valid('json');
     const language = body.language;
@@ -966,6 +970,7 @@ seoEngineRouter.post(
           featureKey: 'content_hub_generate_all',
           refKind: 'content_hub',
           refId: companyId,
+          actor: `user:${userId}`,
           note: `Generated Content Hub assets for ${results.length} topics`,
         });
       }

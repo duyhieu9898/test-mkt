@@ -15,7 +15,6 @@ import { authMiddleware } from '../middleware/auth';
 import {
   channelConnections,
   omnichannelMessages,
-  companies,
   socialConnections,
 } from '@1person/core/db';
 import { encryptSecret, maskSecret, decryptSecret } from '../lib/crypto';
@@ -36,6 +35,7 @@ import {
   getFacebookClientId,
 } from '../services/platforms/providers/facebook';
 import { env } from '../lib/env';
+import { authorizeCompanyAccess, type CompanyPermission } from '../lib/company-access';
 
 const router = new Hono();
 const facebookOAuthProvider = new FacebookOAuthProvider();
@@ -96,10 +96,7 @@ function facebookPopupHtml(
 }
 
 async function assertUserCompanyAccess(userId: string, companyId: string) {
-  const company = await db.query.companies.findFirst({
-    where: and(eq(companies.id, companyId), eq(companies.ownerId, userId)),
-  });
-  if (!company) throw new HTTPException(404, { message: 'Company not found' });
+  await authorizeCompanyAccess(userId, companyId, 'channels.connect');
 }
 
 // ---------- Public webhook (NO auth — Meta calls this) ----------
@@ -202,9 +199,13 @@ router.get('/facebook/oauth/callback', async (c) => {
 // ---------- Authenticated routes ----------
 router.use('*', authMiddleware);
 
-async function assertCompanyAccess(c: any, companyId: string) {
+async function assertCompanyAccess(
+  c: any,
+  companyId: string,
+  permission: CompanyPermission = 'company.view',
+) {
   const userId = (c.get('user') as any).userId;
-  await assertUserCompanyAccess(userId, companyId);
+  await authorizeCompanyAccess(userId, companyId, permission);
 }
 
 function sanitize(conn: typeof channelConnections.$inferSelect) {
@@ -242,7 +243,7 @@ router.get('/company/:companyId', async (c) => {
 
 router.post('/company/:companyId/facebook/oauth/start', async (c) => {
   const { companyId } = c.req.param();
-  await assertCompanyAccess(c, companyId);
+  await assertCompanyAccess(c, companyId, 'channels.connect');
   if (!facebookOAuthProvider.isConfigured()) {
     throw new HTTPException(503, { message: 'Facebook connection is not configured.' });
   }
@@ -265,7 +266,7 @@ router.post(
   })),
   async (c) => {
     const { companyId } = c.req.param();
-    await assertCompanyAccess(c, companyId);
+    await assertCompanyAccess(c, companyId, 'channels.connect');
     const body = c.req.valid('json');
     const session = decodeSecurePayload<FacebookPageSession>(body.session);
     const userId = (c.get('user') as any).userId as string;
@@ -370,7 +371,7 @@ router.patch(
     const id = c.req.param('id');
     const conn = await db.query.channelConnections.findFirst({ where: eq(channelConnections.id, id) });
     if (!conn) throw new HTTPException(404, { message: 'Connection not found' });
-    await assertCompanyAccess(c, conn.companyId);
+    await assertCompanyAccess(c, conn.companyId, 'channels.connect');
     const [updated] = await db.update(channelConnections)
       .set({ aiAutoReply: c.req.valid('json').enabled })
       .where(eq(channelConnections.id, id))
@@ -384,7 +385,7 @@ router.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const conn = await db.query.channelConnections.findFirst({ where: eq(channelConnections.id, id) });
   if (!conn) throw new HTTPException(404, { message: 'Connection not found' });
-  await assertCompanyAccess(c, conn.companyId);
+  await assertCompanyAccess(c, conn.companyId, 'channels.connect');
   const data = conn.connectionData as Record<string, unknown>;
   await db.delete(channelConnections).where(eq(channelConnections.id, id));
   if (conn.channel === 'fb_messenger' && data.pageId) {
@@ -402,7 +403,7 @@ router.delete('/:id', async (c) => {
 // List messages (unified inbox)
 router.get('/company/:companyId/messages', async (c) => {
   const { companyId } = c.req.param();
-  await assertCompanyAccess(c, companyId);
+  await assertCompanyAccess(c, companyId, 'chatbot.view_conversations');
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 200);
   const ccId = c.req.query('channelConnectionId');
   const conds = [eq(omnichannelMessages.companyId, companyId)];
@@ -422,7 +423,7 @@ router.post(
     const id = c.req.param('id');
     const msg = await db.query.omnichannelMessages.findFirst({ where: eq(omnichannelMessages.id, id) });
     if (!msg) throw new HTTPException(404, { message: 'Message not found' });
-    await assertCompanyAccess(c, msg.companyId);
+    await assertCompanyAccess(c, msg.companyId, 'channels.publish');
     if (msg.direction !== 'inbound') {
       throw new HTTPException(400, { message: 'Can only reply to inbound messages' });
     }

@@ -48,6 +48,8 @@ import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api/client';
 import { useCompany } from '@/lib/api/hooks';
+import { useMyCompanyAccess } from '@/lib/api/company-access-hooks';
+import { hasCompanyPermission } from '@/lib/company-access';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { friendlyError } from '@/lib/friendly-errors';
 import { campaignDisplayTitle } from '@/lib/campaign-title';
@@ -132,6 +134,7 @@ interface CreditResponse {
   balance: { totalAvailable: number };
   costs?: {
     campaignVideo?: number;
+    socialPostPublish?: number;
     supportMessage?: string;
   };
 }
@@ -1186,6 +1189,7 @@ export default function CampaignDetailPage() {
   const queryClient = useQueryClient();
   const [language] = usePreferredAppLanguage('en');
   const { data: company } = useCompany(companyId);
+  const companyAccess = useMyCompanyAccess(companyId);
   const [progressDone, setProgressDone] = useState(false);
   const [editingBanner, setEditingBanner] = useState<Banner | null>(null);
   const [loadingBannerId, setLoadingBannerId] = useState<string | null>(null);
@@ -1411,7 +1415,8 @@ export default function CampaignDetailPage() {
   const readyVideos = videos.filter((video) => video.status === 'ready' && Boolean(video.outputUrl));
   const selectedVideo = readyVideos.find((video) => video.id === selectedVideoId) ?? null;
   const currentVideoPhase = videoGenerationPhase(videoProgress);
-  const videoCreditCost = creditsData?.costs?.campaignVideo ?? 300;
+  const videoCreditCost = creditsData?.costs?.campaignVideo ?? 50;
+  const socialPostPublishCreditCost = creditsData?.costs?.socialPostPublish ?? 2;
   const availableCredits = creditsData?.balance.totalAvailable;
   const hasEnoughVideoCredits =
     typeof availableCredits !== 'number' || availableCredits >= videoCreditCost;
@@ -1502,6 +1507,19 @@ export default function CampaignDetailPage() {
       connection.platformPageId,
     ),
   );
+  const selectedFacebookLaunchPostCount = selectedLaunchPosts.filter((post) => {
+    const platform = post.platform.toLowerCase();
+    return platform === 'facebook' || platform === 'fb';
+  }).length;
+  const launchPublishCreditCost = hasFacebookPageConnection
+    ? selectedFacebookLaunchPostCount * socialPostPublishCreditCost
+    : 0;
+  const selectedQueuedLaunchPostCount = Math.max(
+    0,
+    selectedLaunchPosts.length - selectedFacebookLaunchPostCount,
+  );
+  const hasEnoughLaunchPublishCredits =
+    typeof availableCredits !== 'number' || availableCredits >= launchPublishCreditCost;
   const fallbackCampaignPlan = buildFallbackCampaignPlan(campaign, banners, socialPosts, blogPost);
   const storedCampaignPlan = campaign.targeting?.campaignPlan;
   const campaignPlan: CampaignPlan = storedCampaignPlan
@@ -1530,9 +1548,18 @@ export default function CampaignDetailPage() {
   });
   const readinessReadyCount = readinessItems.filter((item) => item.state === 'ready').length;
   const blogRole = assetRole(campaignPlan, 'blog');
+  const canEditCampaign = hasCompanyPermission(companyAccess.data, 'campaign.edit');
+  const canGenerateCampaignAi = hasCompanyPermission(companyAccess.data, 'campaign.generate_ai');
+  const canLaunchCampaign = hasCompanyPermission(companyAccess.data, 'campaign.launch');
+  const readOnlyPermissionMessage =
+    'You can review this campaign, but your role cannot edit campaign assets or social posts.';
+  const generatePermissionMessage =
+    'Your role can review campaigns, but cannot create AI assets or spend credits.';
   const canSubmitLaunch =
     (isReady || isLive) &&
+    canLaunchCampaign &&
     !launchPending &&
+    hasEnoughLaunchPublishCredits &&
     (shouldActivateBanners || shouldScheduleSocialPosts);
 
   const refreshPerformance = async () => {
@@ -1565,6 +1592,10 @@ export default function CampaignDetailPage() {
 
   const generateCampaignVideo = async (options?: { forceNew?: boolean; creativeNotes?: string }) => {
     if (!token || isVideoWorking) return;
+    if (!canGenerateCampaignAi) {
+      toast.error(generatePermissionMessage);
+      return;
+    }
     if (!hasEnoughVideoCredits) {
       toast.error(
         `This AI video needs ${videoCreditCost} credits, but you only have ${availableCredits ?? 0}. Please contact support to add more credits.`,
@@ -1627,6 +1658,10 @@ export default function CampaignDetailPage() {
 
   const deleteFailedVideo = async (videoId: string) => {
     if (!token || deletingVideoId) return;
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
     setDeletingVideoId(videoId);
     try {
       await api.delete<DeleteVideoResponse>(
@@ -1652,6 +1687,10 @@ export default function CampaignDetailPage() {
   };
 
   const openLaunchDialog = () => {
+    if (!canLaunchCampaign) {
+      toast.error('You can review this campaign, but only an Owner, Admin, or Marketing Lead can launch it.');
+      return;
+    }
     setLaunchActivateBanners(!isLive);
     setSelectedLaunchPostIds(
       socialPosts
@@ -1684,6 +1723,10 @@ export default function CampaignDetailPage() {
   };
 
   const openSocialPostEditor = (post: SocialPost) => {
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
     if (isPublishedPost(post)) {
       const url = facebookPostUrl(post);
       if (url) {
@@ -1724,6 +1767,10 @@ export default function CampaignDetailPage() {
 
   const saveSocialPostEdit = async () => {
     if (!token || !editingSocialPost || savingSocialPostEdit) return;
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
     if (isPublishedPost(editingSocialPost)) {
       toast.info('This post is already published. Open it on the social platform to make changes.');
       closeSocialPostEditor();
@@ -1768,6 +1815,10 @@ export default function CampaignDetailPage() {
 
   const openBannerEditor = async (banner: Banner) => {
     if (!token || loadingBannerId) return;
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
     setLoadingBannerId(banner.id);
     try {
       const fullBanner = await api.get<Banner>(
@@ -1784,6 +1835,10 @@ export default function CampaignDetailPage() {
 
   const uploadCustomBanner = async (file?: File | null) => {
     if (!file || !token || customBannerUploading) return;
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       toast.error('Please choose a JPG, PNG, or WebP image.');
       return;
@@ -1837,6 +1892,10 @@ export default function CampaignDetailPage() {
 
   const deleteBanner = async () => {
     if (!token || !bannerToDelete || deletingBannerId) return;
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
     const bannerId = bannerToDelete.id;
     setDeletingBannerId(bannerId);
     try {
@@ -1869,6 +1928,10 @@ export default function CampaignDetailPage() {
   };
 
   const openApplyDialog = () => {
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
     if (selectedBannerIds.length === 0 || !hasEditableSocialPosts) return;
     setSelectedApplyPlatforms(availableApplyPlatforms);
     setApplyDialogOpen(true);
@@ -1884,6 +1947,10 @@ export default function CampaignDetailPage() {
 
   const applySelectedBannersToPosts = async () => {
     if (!token || !hasEditableSocialPosts || selectedApplyPlatforms.length === 0) return;
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
 
     const platformNames = selectedApplyPlatforms
       .map((platform) => SOCIAL_IMAGE_PRESETS[platform].label)
@@ -1931,6 +1998,10 @@ export default function CampaignDetailPage() {
   };
 
   const openVideoApplyDialog = () => {
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
     if (!selectedVideo || !hasEditableSocialPosts) return;
     setSelectedVideoApplyPlatforms(availableApplyPlatforms);
     setVideoApplyDialogOpen(true);
@@ -1946,6 +2017,10 @@ export default function CampaignDetailPage() {
 
   const applySelectedVideoToPosts = async () => {
     if (!token || !selectedVideo || !hasEditableSocialPosts || selectedVideoApplyPlatforms.length === 0) return;
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
 
     const platformNames = selectedVideoApplyPlatforms
       .map((platform) => SOCIAL_IMAGE_PRESETS[platform].label)
@@ -1989,6 +2064,10 @@ export default function CampaignDetailPage() {
 
   const removeCampaignVideoFromPosts = async () => {
     if (!token || !hasEditableSocialPosts || !hasAppliedCampaignVideo) return;
+    if (!canEditCampaign) {
+      toast.error(readOnlyPermissionMessage);
+      return;
+    }
 
     setSavingPostVideo(true);
     const toastId = toast.loading('Removing video from draft social posts...');
@@ -2027,6 +2106,10 @@ export default function CampaignDetailPage() {
 
   const onLaunch = async () => {
     if (!token) return;
+    if (!canLaunchCampaign) {
+      toast.error('You can review this campaign, but only an Owner, Admin, or Marketing Lead can launch it.');
+      return;
+    }
     if (!canSubmitLaunch) {
       toast.error('Select at least one launch action.');
       return;
@@ -2084,6 +2167,9 @@ export default function CampaignDetailPage() {
         { token },
       );
       await refetch();
+      window.setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ['credits', companyId] });
+      }, 3000);
     } catch (err) {
       if (previousCampaign) {
         queryClient.setQueryData(queryKey, previousCampaign);
@@ -2148,7 +2234,9 @@ export default function CampaignDetailPage() {
           {(isReady || isLive) && (
             <Button
               onClick={openLaunchDialog}
+              disabled={!canLaunchCampaign}
               className="bg-green-600 hover:bg-green-700 text-white gap-2"
+              title={!canLaunchCampaign ? 'Your role can review campaigns, but cannot launch them.' : undefined}
             >
               <Rocket className="w-4 h-4" /> {isLive ? 'Launch items...' : 'Launch...'}
             </Button>
@@ -2160,6 +2248,13 @@ export default function CampaignDetailPage() {
           )}
         </div>
       </div>
+
+      {companyAccess.data && !canEditCampaign && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          <span className="font-medium text-slate-900">Read-only access.</span>{' '}
+          You can review this campaign, but editing, AI generation, and launch actions require a higher role.
+        </div>
+      )}
 
       {showLivePanel && token && (
         <WorkflowProgressPanel
@@ -2272,7 +2367,8 @@ export default function CampaignDetailPage() {
                 variant="outline"
                 size="sm"
                 className="gap-1.5"
-                disabled={customBannerUploading}
+                disabled={customBannerUploading || !canEditCampaign}
+                title={!canEditCampaign ? readOnlyPermissionMessage : undefined}
                 onClick={() => customBannerInputRef.current?.click()}
               >
                 {customBannerUploading ? (
@@ -2316,7 +2412,8 @@ export default function CampaignDetailPage() {
                   variant="outline"
                   size="sm"
                   className="w-full gap-1.5 bg-white sm:min-w-[180px]"
-                  disabled={customBannerUploading}
+                  disabled={customBannerUploading || !canEditCampaign}
+                  title={!canEditCampaign ? readOnlyPermissionMessage : undefined}
                   onClick={() => customBannerInputRef.current?.click()}
                 >
                   {customBannerUploading ? (
@@ -2331,14 +2428,17 @@ export default function CampaignDetailPage() {
                   size="sm"
                   className="w-full gap-1.5 sm:min-w-[180px]"
                   disabled={
-                    !hasSelectableBanners
+                    !canEditCampaign
+                    || !hasSelectableBanners
                     || selectedBannerIds.length === 0
                     || !hasEditableSocialPosts
                     || savingPostMedia
                   }
-                  title={!hasEditableSocialPosts
-                    ? 'Published posts are read-only. Create a new draft post to apply images.'
-                    : undefined}
+                  title={!canEditCampaign
+                    ? readOnlyPermissionMessage
+                    : !hasEditableSocialPosts
+                      ? 'Published posts are read-only. Create a new draft post to apply images.'
+                      : undefined}
                   onClick={openApplyDialog}
                 >
                   {savingPostMedia ? (
@@ -2396,8 +2496,10 @@ export default function CampaignDetailPage() {
                         variant="secondary"
                         size="icon"
                         className="absolute right-2 top-2 z-10 h-8 w-8 bg-white/95 text-slate-600 shadow-sm hover:bg-red-50 hover:text-red-600"
-                        disabled={!canDeleteBanner || deletingBannerId === b.id}
-                        title={canDeleteBanner
+                        disabled={!canEditCampaign || !canDeleteBanner || deletingBannerId === b.id}
+                        title={!canEditCampaign
+                          ? readOnlyPermissionMessage
+                          : canDeleteBanner
                           ? 'Delete banner'
                           : 'Active banners are kept for performance history'}
                         onClick={() => setBannerToDelete(b)}
@@ -2470,7 +2572,8 @@ export default function CampaignDetailPage() {
                           variant={isSelected ? 'default' : 'outline'}
                           size="sm"
                           className="h-8 w-full gap-1 text-xs"
-                          disabled={!b.imageUrl || savingPostMedia}
+                          disabled={!canEditCampaign || !b.imageUrl || savingPostMedia}
+                          title={!canEditCampaign ? readOnlyPermissionMessage : undefined}
                           onClick={() => toggleBannerSelection(b.id)}
                         >
                           {isSelected ? (
@@ -2485,7 +2588,8 @@ export default function CampaignDetailPage() {
                           variant="outline"
                           size="sm"
                           className="h-8 w-full text-xs"
-                          disabled={loadingBannerId === b.id}
+                          disabled={!canEditCampaign || loadingBannerId === b.id}
+                          title={!canEditCampaign ? readOnlyPermissionMessage : undefined}
                           onClick={() => void openBannerEditor(b)}
                         >
                           {loadingBannerId === b.id ? (
@@ -2525,7 +2629,7 @@ export default function CampaignDetailPage() {
                       : 'text-slate-600 hover:bg-slate-50',
                   )}
                   onClick={() => setVideoAspectRatio(option.value)}
-                  disabled={isVideoWorking}
+                  disabled={isVideoWorking || !canGenerateCampaignAi}
                 >
                   {option.label}
                 </button>
@@ -2536,8 +2640,12 @@ export default function CampaignDetailPage() {
               size="sm"
               className="gap-2"
               onClick={() => setVideoRegenerateDialogOpen(true)}
-              disabled={!token || isVideoWorking || isGenerating || isLaunching || !hasEnoughVideoCredits}
-              title={!hasEnoughVideoCredits ? 'Not enough credits. Contact support to add more.' : undefined}
+              disabled={!token || !canGenerateCampaignAi || isVideoWorking || isGenerating || isLaunching || !hasEnoughVideoCredits}
+              title={!canGenerateCampaignAi
+                ? generatePermissionMessage
+                : !hasEnoughVideoCredits
+                  ? 'Not enough credits. Contact support to add more.'
+                  : undefined}
             >
               {isVideoWorking ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -2582,10 +2690,12 @@ export default function CampaignDetailPage() {
                     type="button"
                     size="sm"
                     className="w-full gap-1.5 sm:min-w-[180px]"
-                    disabled={!selectedVideo || !hasEditableSocialPosts || savingPostVideo}
-                    title={!hasEditableSocialPosts
-                      ? 'Published posts are read-only. Create a new draft post to apply videos.'
-                      : undefined}
+                    disabled={!canEditCampaign || !selectedVideo || !hasEditableSocialPosts || savingPostVideo}
+                    title={!canEditCampaign
+                      ? readOnlyPermissionMessage
+                      : !hasEditableSocialPosts
+                        ? 'Published posts are read-only. Create a new draft post to apply videos.'
+                        : undefined}
                     onClick={openVideoApplyDialog}
                   >
                     {savingPostVideo ? (
@@ -2600,10 +2710,12 @@ export default function CampaignDetailPage() {
                     size="sm"
                     variant="outline"
                     className="w-full gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800 sm:min-w-[150px]"
-                    disabled={!hasAppliedCampaignVideo || !hasEditableSocialPosts || savingPostVideo}
-                    title={!hasAppliedCampaignVideo
-                      ? 'No campaign video is applied to draft posts yet.'
-                      : undefined}
+                    disabled={!canEditCampaign || !hasAppliedCampaignVideo || !hasEditableSocialPosts || savingPostVideo}
+                    title={!canEditCampaign
+                      ? readOnlyPermissionMessage
+                      : !hasAppliedCampaignVideo
+                        ? 'No campaign video is applied to draft posts yet.'
+                        : undefined}
                     onClick={removeCampaignVideoFromPosts}
                   >
                     {savingPostVideo ? (
@@ -2735,7 +2847,8 @@ export default function CampaignDetailPage() {
                             variant="outline"
                             size="sm"
                             className="w-full gap-2 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
-                            disabled={deletingVideoId === video.id}
+                            disabled={!canEditCampaign || deletingVideoId === video.id}
+                            title={!canEditCampaign ? readOnlyPermissionMessage : undefined}
                             onClick={() => void deleteFailedVideo(video.id)}
                           >
                             {deletingVideoId === video.id ? (
@@ -2752,7 +2865,8 @@ export default function CampaignDetailPage() {
                               variant={isSelectedVideo ? 'default' : 'outline'}
                               size="sm"
                               className="w-full gap-2"
-                              disabled={!isReadyVideo || savingPostVideo}
+                              disabled={!canEditCampaign || !isReadyVideo || savingPostVideo}
+                              title={!canEditCampaign ? readOnlyPermissionMessage : undefined}
                               onClick={() => setSelectedVideoId(video.id)}
                             >
                               {isSelectedVideo ? (
@@ -2884,7 +2998,7 @@ export default function CampaignDetailPage() {
                           Published
                         </Badge>
                       )
-                    ) : (
+                    ) : canEditCampaign ? (
                       <Button
                         type="button"
                         size="sm"
@@ -2895,6 +3009,10 @@ export default function CampaignDetailPage() {
                         <FileEdit className="h-3.5 w-3.5" />
                         Edit
                       </Button>
+                    ) : (
+                      <Badge className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100">
+                        Read-only
+                      </Badge>
                     )}
                   />
                 </div>
@@ -3197,7 +3315,7 @@ export default function CampaignDetailPage() {
             token={token}
             value={videoReferenceImage}
             onChange={setVideoReferenceImage}
-            disabled={isVideoWorking}
+            disabled={isVideoWorking || !canGenerateCampaignAi}
           />
 
           <DialogFooter className="gap-2 sm:gap-0">
@@ -3212,8 +3330,12 @@ export default function CampaignDetailPage() {
             <Button
               type="button"
               className="gap-1.5"
-              disabled={isVideoWorking || !hasEnoughVideoCredits}
-              title={!hasEnoughVideoCredits ? 'Not enough credits. Contact support to add more.' : undefined}
+              disabled={isVideoWorking || !canGenerateCampaignAi || !hasEnoughVideoCredits}
+              title={!canGenerateCampaignAi
+                ? generatePermissionMessage
+                : !hasEnoughVideoCredits
+                  ? 'Not enough credits. Contact support to add more.'
+                  : undefined}
               onClick={() => void generateCampaignVideo({
                 forceNew: hasCampaignVideo,
                 creativeNotes: videoCreativeNotes,
@@ -3298,6 +3420,7 @@ export default function CampaignDetailPage() {
               className="gap-1.5"
               disabled={
                 savingPostVideo
+                || !canEditCampaign
                 || !selectedVideo
                 || selectedVideoApplyPlatforms.length === 0
               }
@@ -3381,6 +3504,7 @@ export default function CampaignDetailPage() {
               className="gap-1.5"
               disabled={
                 savingPostMedia
+                || !canEditCampaign
                 || selectedBannerIds.length === 0
                 || selectedApplyPlatforms.length === 0
               }
@@ -3469,7 +3593,7 @@ export default function CampaignDetailPage() {
             <label className={`flex items-start gap-3 rounded-lg border p-3 ${selectedBannerIds.length > 0 ? 'border-slate-200' : 'border-slate-200 bg-slate-50'}`}>
               <Checkbox
                 checked={shouldActivateBanners}
-                disabled={selectedBannerIds.length === 0}
+                disabled={!canLaunchCampaign || selectedBannerIds.length === 0}
                 onCheckedChange={(checked) => setLaunchActivateBanners(checked === true)}
                 className="mt-0.5"
               />
@@ -3494,9 +3618,25 @@ export default function CampaignDetailPage() {
                   <div className="text-sm font-semibold text-slate-900">Social posts</div>
                   <p className="text-xs text-slate-500">Select only the posts you want to move forward.</p>
                 </div>
-                <Badge variant="secondary">
-                  {selectedLaunchPosts.length} of {socialPosts.length}
-                </Badge>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {launchPublishCreditCost > 0 ? (
+                    <Badge className="bg-amber-50 text-amber-700">
+                      {launchPublishCreditCost} credits
+                    </Badge>
+                  ) : shouldScheduleSocialPosts ? (
+                    <Badge className="bg-emerald-50 text-emerald-700">
+                      0 credits now
+                    </Badge>
+                  ) : null}
+                  {hasFacebookPageConnection && selectedFacebookLaunchPostCount === 0 && (
+                    <Badge variant="outline" className="text-slate-500">
+                      Facebook: {socialPostPublishCreditCost} credits/post
+                    </Badge>
+                  )}
+                  <Badge variant="secondary">
+                    {selectedLaunchPosts.length} of {socialPosts.length}
+                  </Badge>
+                </div>
               </div>
 
               {socialPosts.length === 0 ? (
@@ -3510,7 +3650,7 @@ export default function CampaignDetailPage() {
                     const isFacebook = platform === 'facebook' || platform === 'fb';
                     const isPublished = post.status === 'published';
                     const needsFacebookConnection = isFacebook && !hasFacebookPageConnection;
-                    const isDisabled = isPublished || needsFacebookConnection;
+                    const isDisabled = !canLaunchCampaign || isPublished || needsFacebookConnection;
                     const platformName = isFacebook
                       ? 'Facebook'
                       : platform === 'instagram' || platform === 'ig'
@@ -3523,8 +3663,8 @@ export default function CampaignDetailPage() {
                       : needsFacebookConnection
                         ? 'Connect a Facebook Page first'
                         : isFacebook
-                          ? 'Publish to Facebook Page'
-                          : 'Add to publishing queue';
+                          ? `Publish to Facebook Page - ${socialPostPublishCreditCost} credits`
+                          : 'Add to publishing queue - 0 credits now';
 
                     return (
                       <div
@@ -3606,9 +3746,20 @@ export default function CampaignDetailPage() {
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
               <div className="font-semibold">Publishing note</div>
               <p className="mt-1">
-                Facebook posts publish immediately when a Page is connected. Instagram and LinkedIn posts are prepared in the publishing queue until those channel publishers are connected. WordPress publishing stays in the blog review screen.
+                Facebook posts publish immediately when a Page is connected and cost {socialPostPublishCreditCost} credits per post. Instagram and LinkedIn posts are prepared in the publishing queue and do not spend credits yet. WordPress publishing stays in the blog review screen.
               </p>
+              {selectedQueuedLaunchPostCount > 0 && (
+                <p className="mt-1 text-xs">
+                  {selectedQueuedLaunchPostCount} selected post{selectedQueuedLaunchPostCount === 1 ? '' : 's'} will be queued for later publishing at 0 credits now.
+                </p>
+              )}
             </div>
+
+            {!hasEnoughLaunchPublishCredits && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                This launch needs {launchPublishCreditCost} credits to publish selected Facebook posts, but you only have {availableCredits ?? 0}. Please contact support to add more credits.
+              </div>
+            )}
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
@@ -3625,13 +3776,16 @@ export default function CampaignDetailPage() {
               className="gap-2 bg-green-600 hover:bg-green-700"
               onClick={onLaunch}
               disabled={!canSubmitLaunch}
+              title={!hasEnoughLaunchPublishCredits ? 'Not enough credits. Contact support to add more.' : undefined}
             >
               {launchPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Send className="h-4 w-4" />
               )}
-              Launch selected items
+              {shouldScheduleSocialPosts
+                ? `Launch selected items - ${launchPublishCreditCost} credits`
+                : 'Launch selected items'}
             </Button>
           </DialogFooter>
         </DialogContent>
