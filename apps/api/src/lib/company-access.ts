@@ -65,6 +65,8 @@ export const COMPANY_ROLE_PERMISSIONS = {
     'channels.publish',
     'chatbot.configure',
     'chatbot.view_conversations',
+    'deliverable.view',
+    'deliverable.review',
     'credits.view',
     'credits.spend',
     'credits.manage',
@@ -90,6 +92,8 @@ export const COMPANY_ROLE_PERMISSIONS = {
     'landing_page.publish_request',
     'channels.publish',
     'chatbot.view_conversations',
+    'deliverable.view',
+    'deliverable.review',
     'credits.view',
     'credits.spend',
   ],
@@ -109,6 +113,7 @@ export const COMPANY_ROLE_PERMISSIONS = {
     'landing_page.edit',
     'landing_page.publish_request',
     'chatbot.view_conversations',
+    'deliverable.view',
     'credits.view',
     'credits.spend',
   ],
@@ -121,6 +126,7 @@ export const COMPANY_ROLE_PERMISSIONS = {
     'market.view',
     'campaign.view',
     'chatbot.view_conversations',
+    'deliverable.view',
     'credits.view',
   ],
   viewer: [
@@ -130,6 +136,7 @@ export const COMPANY_ROLE_PERMISSIONS = {
     'growth_plan.view',
     'market.view',
     'campaign.view',
+    'deliverable.view',
     'credits.view',
   ],
 } satisfies Record<CompanyRole, string[]>;
@@ -165,6 +172,8 @@ export type CompanyPermission =
   | 'channels.publish'
   | 'chatbot.configure'
   | 'chatbot.view_conversations'
+  | 'deliverable.view'
+  | 'deliverable.review'
   | 'credits.view'
   | 'credits.spend'
   | 'credits.manage';

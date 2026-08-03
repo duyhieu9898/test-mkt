@@ -82,3 +82,6 @@ export * from './launches';
 
 // Brain Hub Phase A — source-agnostic data plane (sources + events)
 export * from './brain-hub';
+
+// AI Work Outputs
+export * from './deliverables';

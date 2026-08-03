@@ -19,6 +19,7 @@ type PermissionMessageKey =
   | 'landing_page.edit'
   | 'landing_page.publish_request'
   | 'landing_page.publish_direct'
+  | 'deliverable.review'
   | 'credits.spend'
   | 'credits.manage'
   | 'credits.view';
@@ -42,6 +43,7 @@ const permissionMessages: Record<PermissionMessageKey, string> = {
   'landing_page.edit': 'You can review landing pages, but your role cannot edit them.',
   'landing_page.publish_request': 'Your role cannot request landing page publishing.',
   'landing_page.publish_direct': 'Only an Owner or Admin can publish or take landing pages offline directly.',
+  'deliverable.review': 'You can view AI outputs, but only an Owner, Admin, or Marketing Lead can approve or archive them.',
   'credits.spend': 'Your role cannot spend company credits. Ask an Owner or Admin to change your access.',
   'credits.manage': 'Only the company Owner or Admin can manage company credits and billing.',
   'credits.view': 'You do not have access to view company credits.',

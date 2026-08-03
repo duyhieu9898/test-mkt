@@ -41,6 +41,7 @@ import { MilestoneToast } from '@/components/dashboard/milestone-toast';
 import { AchievementsPanel } from '@/components/dashboard/achievements-panel';
 import { AiTeamOverview } from '@/components/dashboard/ai-team-overview';
 import { GettingStartedHub } from '@/components/dashboard/getting-started-hub';
+import { ReadyOutputs } from '@/components/dashboard/ready-outputs';
 
 // === Types (kept for backward compat with advisor brief query) ===
 
@@ -162,6 +163,8 @@ export default function DashboardPage() {
         externalStatusLoading={briefQ.isLoading || competitorsQ.isLoading}
         externalStatusError={briefQ.isError || competitorsQ.isError}
       />
+
+      <ReadyOutputs companyId={companyId} advisorBriefId={briefQ.data?.brief?.id} />
 
       {/* Growth Score + Today's Focus */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
