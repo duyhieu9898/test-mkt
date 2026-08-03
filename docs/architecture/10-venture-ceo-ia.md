@@ -319,12 +319,18 @@ These are written back to:
 
 ## §8 — CEO Advisor (rename /insights, expand)
 
-### Current: only campaigns
+> **Implementation note (2026-08):** This section records the original IA and
+> design decision. The current evidence-grounded implementation, including
+> Knowledge Hub, strategic gaps, market pulse, weekly actions, team ownership,
+> and output materialization, is documented in
+> [16-ceo-advisor-intelligence.md](./16-ceo-advisor-intelligence.md).
+
+### Original baseline (superseded): campaigns only
 
 Reads from `campaigns` + `brain_campaign_learnings`. Shows recommendations
 scoped to marketing.
 
-### New: cross-domain
+### Original target design: cross-domain
 
 Data sources aggregated for each brief:
 - Campaigns (performance + anomalies)

@@ -573,6 +573,17 @@ docker image prune -a
 | **Google (optional)** | | | |
 | `GOOGLE_CLIENT_ID` | No | - | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | No | - | Google OAuth secret |
+| **Meta (optional)** | | | |
+| `FACEBOOK_APP_ID` | No | - | Meta application ID for Facebook Page OAuth |
+| `FACEBOOK_APP_SECRET` | No | - | Meta application secret; server-side only |
+| **Microsoft (optional)** | | | |
+| `MICROSOFT_TENANT_ID` | No | `common` | OAuth authority; use `common` for multi-tenant and personal accounts |
+| `MICROSOFT_CLIENT_ID` | No | - | Microsoft Entra application client ID |
+| `MICROSOFT_CLIENT_SECRET` | No | - | Microsoft Entra client secret value |
+
+Provider console setup, callback URLs, scopes, App Review, and credential
+rotation are documented in
+[`guides/oauth-provider-console-setup.md`](./guides/oauth-provider-console-setup.md).
 
 ---
 

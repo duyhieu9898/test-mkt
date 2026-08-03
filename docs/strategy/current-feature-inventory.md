@@ -99,10 +99,11 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 - DALL-E 3, Gemini Imagen, Banana, Banana Pro. Admin-configured quality tiers, DB-driven provider selection, credit cost per provider.
 - **Gaps**: No batch API, no style library.
 
-### Video Generation — 🟡 PARTIAL
-- Files: `apps/api/src/services/video-engine.ts:1-100`
-- Script gen (hook/body/CTA), scene breakdown (15/30/60s), animation options, 9:16/16:9/1:1.
-- **Gaps**: No actual video rendering, no music/voiceover.
+### Video Generation — ✅ YES (campaign flow)
+- Files: `apps/api/src/services/campaign-video-creative.ts`, `apps/api/src/workers/video-render-cron.ts`, `apps/api/src/routes/marketing-engine.ts`
+- Campaign-grounded script/creative brief, Brand IQ context, optional Asset Library/Google Drive/OneDrive reference image, and OpenRouter video rendering.
+- Async job-ID flow avoids request timeouts; completed video is copied to AWS S3, charged only on success, and can be applied to draft social posts.
+- **Gaps**: No primary IMG.LY video editor or social-specific transcode/resize pipeline yet. See `docs/architecture/14-campaign-ai-video-pipeline.md`.
 
 ### Banner / Creative System (Multi-Size) — ✅ YES
 - Files: `apps/api/src/routes/seo-engine.ts:714-743`, `apps/api/src/services/creative-adapter.ts`, `apps/api/src/routes/marketing-engine.ts`
@@ -289,7 +290,7 @@ Legend: ✅ YES (shipped) · 🟡 PARTIAL (skeleton or limited) · ❌ NO (not i
 9. ~~**AI Employees with personalities** (Sintra UX).~~ ✅ shipped 2026-05-18 (Block 3 — 7 named employees with DM chat)
 10. **Programmatic SEO at scale with editorial gates**.
 11. 🟡 **Cross-channel chat** — FB Messenger shipped 2026-05-17 (Block 6); Zalo/WhatsApp/IG/voice still missing.
-12. 🟡 **Visual/video integrated with SEO pipeline** — Block 8 shipped Campaign Launcher (blog + hero/in-content images + WP publish + social drafts + GEO seed) 2026-05-18. Real video rendering (Runway/Pika) still deferred.
+12. ✅ **Visual/video campaign execution** — Campaign Launcher produces image/content assets; Campaign Detail now renders AI video asynchronously through OpenRouter, stores it in AWS S3, and applies it to draft social posts. Video editing/transcoding remains future work.
 13. **Real-time WebSocket updates** (currently polling).
 14. **Studio (no-code agent builder)**.
 15. **Mobile native app**.
