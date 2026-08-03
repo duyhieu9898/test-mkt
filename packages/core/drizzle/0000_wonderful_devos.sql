@@ -1,3 +1,4 @@
+CREATE EXTENSION IF NOT EXISTS vector;--> statement-breakpoint
 CREATE TYPE "public"."company_status" AS ENUM('setup', 'active', 'paused', 'archived');--> statement-breakpoint
 CREATE TYPE "public"."agent_role" AS ENUM('ceo', 'marketing_manager', 'sales_manager', 'content_creator', 'ads_specialist', 'analyst', 'support', 'developer', 'custom');--> statement-breakpoint
 CREATE TYPE "public"."agent_status" AS ENUM('created', 'active', 'ready', 'running', 'idle', 'paused', 'waiting', 'error', 'archived', 'terminated');--> statement-breakpoint

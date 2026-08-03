@@ -1,203 +1,357 @@
 # Local Setup
 
-Step-by-step guide to get 1Person running on your machine. Target: ~15 minutes end-to-end.
+This guide gets a new developer from a fresh clone to a working 1Person Web,
+API, Worker, and database on Windows, macOS, or Linux.
 
-## Prerequisites
+## 1. Prerequisites
 
-| Tool | Version | Why |
-|------|---------|-----|
-| Node.js | `>=20.0.0` | Runtime for API, web, worker |
-| pnpm | `9.0.0` (pinned) | Monorepo package manager |
-| Docker Desktop | Latest | Postgres, Redis, Qdrant, etc. |
-| Git | Any | Obviously |
+| Tool | Supported version | Purpose |
+| --- | --- | --- |
+| Node.js | 20 or newer | API, Web, Worker, and scripts |
+| pnpm | 9.x | Monorepo package manager |
+| Docker Desktop/Engine | Current stable | PostgreSQL, Redis, Qdrant, Meilisearch |
+| Docker Compose | V2 (`docker compose`) | Local service orchestration |
+| Git | Current stable | Source control |
 
-Verify:
+Verify the toolchain:
 
 ```bash
-node -v      # should be 20.x or newer
-pnpm -v      # should be 9.x
-docker -v    # any recent version
+node --version
+pnpm --version
+docker --version
+docker compose version
 ```
 
-If `pnpm` is missing: `npm install -g pnpm@9.0.0`.
-
-## 1. Clone & install
+If pnpm is missing:
 
 ```bash
-git clone <your-repo-url>
+corepack enable
+corepack prepare pnpm@9.0.0 --activate
+```
+
+Alternatively: `npm install -g pnpm@9.0.0`.
+
+## 2. Clone and install
+
+```bash
+git clone <repository-url>
 cd 1person
 pnpm install
 ```
 
-This installs all workspaces (apps + packages) in one shot. Expect ~2 minutes on a cold cache.
+Always run root commands from the repository root. pnpm installs every app and
+package in the workspace from the committed `pnpm-lock.yaml`.
 
-## 2. Configure environment
+## 3. Configure `.env`
+
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+macOS/Linux/Git Bash:
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and fill these minimum required keys:
+Minimum local values:
 
-```bash
-# AI providers — you NEED at least one of these for AI features to work
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/oneperson
+REDIS_URL=redis://localhost:6379
+QDRANT_URL=http://localhost:6333
 
-# Everything else has sensible defaults, but review:
+JWT_SECRET=replace-with-a-long-random-local-secret
 ADMIN_EMAIL=admin@1person.ai
-ADMIN_PASSWORD=Admin@1Person2025   # change before deploying anywhere public
-JWT_SECRET=...                     # replace the placeholder
+ADMIN_PASSWORD=Admin@1Person2025
+
+OPENAI_API_KEY=your-openai-key
+ANTHROPIC_API_KEY=
+
+NEXT_PUBLIC_API_URL=http://localhost:8004/api/v1
+WEB_URL=http://localhost:3004
+LANGFUSE_ENABLED=false
 ```
 
-Optional but useful:
-- `SENTRY_DSN` — error tracking
-- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` — LLM trace observability (local Langfuse at http://localhost:5050)
+Notes:
 
-## 3. Start infrastructure services
+- The default feature configuration uses OpenAI. Configure Anthropic too only
+  if a selected feature/provider needs it.
+- Uploaded/generated assets require the AWS S3 variables in `.env`. Basic
+  login, navigation, and non-asset flows can run without them.
+- Meta, Google, and Microsoft values are optional until their Connect flows are
+  tested. See the [OAuth provider setup guide](../guides/oauth-provider-console-setup.md).
+- Never commit `.env`.
+
+The API and Worker load the root `.env`. The Next.js configuration also loads
+the monorepo root `.env`, so a second `apps/web/.env` file is not required.
+
+## 4. Start required Docker services
+
+Start Docker Desktop first. Then run:
 
 ```bash
-pnpm docker:up
+pnpm docker:up:core
 ```
 
-This boots 6 containers via `docker-compose.yml`:
+This starts the lightweight, required development services:
 
 | Container | Port | Purpose |
-|-----------|------|---------|
-| `1person-postgres` | 5432 | Primary DB (Postgres 16 + pgvector) |
-| `1person-redis` | 6379 | Cache + BullMQ task queue |
-| `1person-qdrant` | 6333 | Vector DB for embeddings |
-| `viethome-meilisearch` (shared) | 7700 | Full-text search |
-| `1person-langfuse` | 5050 | LLM observability UI |
-| `faster-whisper-server` | 8005 | Local speech-to-text |
+| --- | --- | --- |
+| `1person-postgres` | 5432 | PostgreSQL 16 with pgvector |
+| `1person-redis` | 6379 | BullMQ queues and cache |
+| `1person-qdrant` | 6333/6334 | Vector search |
+| `1person-meilisearch` | 7700 | Full-text search |
 
-Verify:
+Check their state:
 
 ```bash
-docker ps | grep 1person
+docker compose ps
+docker exec 1person-postgres pg_isready -U postgres -d oneperson
+docker exec 1person-redis redis-cli ping
 ```
 
-You should see postgres, redis, qdrant, langfuse. If you already have conflicting services on these ports (e.g. another Postgres on 5432), stop them first.
+PostgreSQL should report `accepting connections`; Redis should return `PONG`.
 
-## 4. Apply database schema
+### Optional local services
+
+`docker-compose.yml` also defines Langfuse and a CPU Whisper server. They are
+larger and are not required for the first application run. Start only the
+specific optional service after configuring it; `pnpm docker:up` starts every
+service in the Compose file.
+
+## 5. Apply the database schema
+
+Wait until PostgreSQL is healthy, then run:
 
 ```bash
-pnpm --filter @1person/core build        # build the core package (emits types)
-pnpm --filter @1person/core db:push      # push schema directly (fast, dev only)
+pnpm db:migrate:all
 ```
 
-`db:push` writes all Drizzle schemas straight to the DB without generating migration files — perfect for local dev. For production, use `db:generate` + `db:migrate`.
+This command is intentionally plural. The repository has two migration owners
+with separate Drizzle migration tables:
 
-If `db:push` warns about duplicate index names (pre-existing bug in `blog_posts`), you can create tables manually via:
+1. `@1person/core` owns product/company tables.
+2. `@1person/ai-tenant` owns `trustai_*` tables.
 
-```bash
-docker exec 1person-postgres psql -U postgres -d oneperson -c "SELECT 1"
-```
+The first core migration enables the `vector` extension. The Docker image must
+remain `pgvector/pgvector:pg16`; a plain PostgreSQL image does not provide this
+extension.
 
-(The `db:push` warning doesn't block the rest of the schema.)
+Use these commands correctly:
 
-## 5. Start the dev stack
+| Command | Use |
+| --- | --- |
+| `pnpm db:migrate:all` | Apply every committed migration. Use for setup and deployment. |
+| `pnpm db:generate` | Generate a new core migration after a schema change. Do not use for setup. |
+| `pnpm --filter @1person/core db:push` | Development-only schema synchronization. Avoid on a shared or production DB. |
+| `pnpm db:studio` | Open Drizzle Studio for local data inspection. |
+
+## 6. Start the application
+
+Recommended:
 
 ```bash
 pnpm dev
 ```
 
-Turbo starts all three apps in parallel:
-- **API** (`apps/api`) — http://localhost:8004 (Hono, `tsx watch`, auto-reloads on save)
-- **Web** (`apps/web`) — http://localhost:3004 (Next.js App Router)
-- **Worker** (`apps/worker`) — BullMQ consumer for background jobs
+Turbo starts and watches:
 
-On API startup you'll see:
+- `@1person/core`, `@1person/ai-tenant`, and `@1person/workflow`
+- API at http://localhost:8004
+- Web at http://localhost:3004
+- Background Worker and schedulers
 
-```
-🚀 AI Company OS API
-📍 Server:  http://localhost:8004
-📚 API:     http://localhost:8004/api/v1
-❤️  Health:  http://localhost:8004/health
-```
+Verify the API before opening the UI:
 
-The API also auto-seeds an admin account on first boot (see `apps/api/src/lib/seed.ts`).
-
-## 6. Log in
-
-Open http://localhost:3004 and log in with:
-
-- Email: `admin@1person.ai`
-- Password: `Admin@1Person2025` (from `.env`)
-
-You'll land on the companies picker. Create a company via the FTUX flow at `/welcome`, then you'll be redirected to the dashboard.
-
-## Common commands
-
-```bash
-# Dev
-pnpm dev                                    # start everything
-pnpm --filter @1person/api dev              # just API
-pnpm --filter @1person/web dev              # just web
-
-# DB
-pnpm --filter @1person/core db:push         # push schema (dev)
-pnpm --filter @1person/core db:generate     # generate migration files
-pnpm --filter @1person/core db:migrate      # apply migration files
-pnpm --filter @1person/core db:studio       # Drizzle Studio GUI (http://localhost:5173)
-
-# Quality
-pnpm typecheck                              # tsc --noEmit across all packages
-pnpm lint                                   # ESLint
-pnpm test                                   # Vitest across packages
-pnpm format                                 # Prettier
-
-# Build
-pnpm build                                  # build all packages/apps
-pnpm clean                                  # remove dist/ + node_modules
+```text
+http://localhost:8004/health
 ```
 
-## Troubleshooting
+Then open http://localhost:3004. On first API startup, the admin user is seeded
+from `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
 
-### "Port 3004 / 8004 already in use"
+## 7. Run BE, FE, and Worker separately
 
-Another dev server is running. Find and kill:
-
-```bash
-lsof -ti:3004 | xargs kill -9
-lsof -ti:8004 | xargs kill -9
-```
-
-### "Can't reach database / ECONNREFUSED 5432"
-
-Docker containers not up. Run `pnpm docker:up` and wait 10 seconds for Postgres to accept connections.
-
-### "Module not found: @1person/core"
-
-You added code that imports from `@1person/core` but never built it. Run:
+The root command is safer for everyday work because it watches shared packages.
+If separate terminals are required, build shared packages first:
 
 ```bash
 pnpm --filter @1person/core build
+pnpm --filter @1person/ai-tenant build
+pnpm --filter @1person/workflow build
 ```
 
-The core package is built to `dist/` and consumed as a compiled package (faster type-checking across the monorepo).
-
-### API crashes with "JWT_SECRET required"
-
-Your `.env` is missing or incomplete. Re-copy `.env.example` and fill the required keys.
-
-### "No credits available" in UI
-
-The admin account seed gives you a starting credit balance. If it's exhausted, top up via admin panel (`/admin`) or reset with:
+Terminal 1, backend API:
 
 ```bash
-docker exec -it 1person-postgres psql -U postgres -d oneperson \
-  -c "UPDATE credit_balances SET monthly_remaining = 10000 WHERE company_id = '<your-company-id>';"
+pnpm --filter @1person/api dev
 ```
 
-### TypeScript errors in files I didn't touch
+Terminal 2, frontend Web:
 
-The codebase has some known pre-existing `tsc` errors in `apps/api/src/routes/marketing-engine.ts` and `marketplace.ts`. They don't block dev. If you see errors in files you DID touch, fix them before committing.
+```bash
+pnpm --filter @1person/web dev
+```
 
-### FTUX / AI features fail silently
+Terminal 3, background Worker:
 
-Check your API keys in `.env`. Also check Langfuse at http://localhost:5050 — it traces every LLM call and shows failures with the full prompt + error.
+```bash
+pnpm --filter @1person/worker dev
+```
+
+The Web can render without the Worker, but queued tasks, schedulers, and some
+publishing workflows will not complete. Run all three for end-to-end testing.
+
+## 8. Production build check
+
+To test production builds locally:
+
+```bash
+pnpm build
+```
+
+After the build succeeds, start API, Worker, and Web in separate terminals:
+
+```bash
+pnpm --filter @1person/api start
+```
+
+```bash
+pnpm --filter @1person/worker start
+```
+
+```bash
+pnpm --filter @1person/web start
+```
+
+`next start` does not build the Web app. If `.next/BUILD_ID` is missing, run
+`pnpm build` first.
+
+## 9. Common development commands
+
+```bash
+pnpm dev
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+pnpm db:migrate:all
+pnpm db:studio
+docker compose ps
+docker compose logs -f postgres
+docker compose down
+```
+
+## 10. Troubleshooting
+
+### Docker API is unavailable
+
+Typical error:
+
+```text
+failed to connect to the docker API at npipe:////./pipe/docker_engine
+```
+
+Start Docker Desktop and wait until the engine reports that it is running.
+
+### Redis `ECONNREFUSED` on port 6379
+
+The API and Worker require Redis. Start it and verify `PONG`:
+
+```bash
+docker compose up -d redis
+docker exec 1person-redis redis-cli ping
+```
+
+### PostgreSQL connection refused on port 5432
+
+```bash
+docker compose up -d postgres
+docker exec 1person-postgres pg_isready -U postgres -d oneperson
+```
+
+Wait until the health check passes before migrating or starting the API.
+
+### Migration says `type "vector" does not exist`
+
+Confirm `docker-compose.yml` uses `pgvector/pgvector:pg16`, then enable the
+extension in the local database and rerun migrations:
+
+```bash
+docker exec 1person-postgres psql -U postgres -d oneperson -c "CREATE EXTENSION IF NOT EXISTS vector;"
+pnpm db:migrate:all
+```
+
+### Migration says an enum/table already exists
+
+The database schema and Drizzle migration history are out of sync. Do not run
+`db:generate` to repair a runtime database.
+
+For a disposable local database only, reset all local Docker volumes and apply
+the committed migrations again:
+
+```bash
+docker compose down -v
+pnpm docker:up:core
+pnpm db:migrate:all
+```
+
+Warning: `docker compose down -v` permanently deletes local database, queue,
+and search data. Never use it against shared or production infrastructure.
+
+### Port 3004 or 8004 is already in use
+
+PowerShell:
+
+```powershell
+Get-NetTCPConnection -LocalPort 3004 -State Listen
+Get-NetTCPConnection -LocalPort 8004 -State Listen
+Stop-Process -Id <PID>
+```
+
+macOS/Linux:
+
+```bash
+lsof -i :3004
+lsof -i :8004
+kill <PID>
+```
+
+Only stop the process after confirming that it belongs to an old 1Person dev
+server.
+
+### `navigator is not defined`
+
+This usually means a browser-only library such as IMG.LY was imported during
+Next.js server rendering. Use the existing client-only dynamic import pattern
+for editor components. Clearing `.next` alone does not fix a server-side import.
+
+### `Could not find a production build in the .next directory`
+
+`pnpm --filter @1person/web start` was run before the Web build. Run:
+
+```bash
+pnpm --filter @1person/web build
+pnpm --filter @1person/web start
+```
+
+### OAuth redirects to an old localhost or tunnel URL
+
+Update `NEXT_PUBLIC_API_URL`, restart the API, and rebuild/restart the Web app
+when switching production URLs. The exact provider callbacks are documented in
+the [OAuth provider setup guide](../guides/oauth-provider-console-setup.md).
+
+### AI features fail while the UI still loads
+
+1. Confirm the selected provider has a real API key in `.env`.
+2. Keep unused provider variables empty instead of placeholder values.
+3. Check API logs for provider/model errors.
+4. If `LANGFUSE_ENABLED=true`, verify the Langfuse service and keys separately.
 
 ## Next
 
-Once everything runs, read **[architecture.md](./architecture.md)** to understand the system.
+Continue with [architecture.md](./architecture.md), then use the
+[codebase tour](./codebase-tour.md) to trace a feature from UI to API and DB.

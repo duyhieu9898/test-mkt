@@ -33,12 +33,12 @@ You'll see these terms in code and docs. Know them before you read any module.
 | **Company** | A business owned by a user. All data is scoped by `companyId`. | `packages/core/src/db/schema/companies.ts` |
 | **Tenant** | The AI-layer twin of a company — owns the Brain, RAG store, audit trail. One tenant per company. | `packages/ai-tenant/` |
 | **FTUX** | First-Time User Experience. The onboarding wizard that generates the entire company from a prompt or URL. | `apps/api/src/routes/ftux.ts`, `apps/web/src/app/(ftux)/` |
-| **CEO Advisor** | Daily AI brief telling the founder what to focus on. 10 credits per refresh. | `apps/api/src/services/ceo-advisor.ts`, `routes/insights.ts` |
+| **CEO Advisor** | Evidence-grounded CEO brief with market pulse, prioritized decisions, weekly actions, and execution owners. 10 credits per refresh. | `apps/api/src/services/{advisor-context-builder,ceo-advisor}.ts`, `routes/insights.ts` |
 | **Brain** | Tenant-scoped memory: brand voice, personas, products, market position, learnings. Every AI call reads from it; many write back. | `packages/ai-tenant/src/brain-store.ts` |
-| **Knowledge Base** | Versioned documents + extracted structured data (products, pricing, FAQs). Feeds RAG and content generation. | `packages/core/src/db/schema/memory.ts`, `apps/api/src/routes/knowledge.ts` |
+| **Knowledge Base** | Versioned documents + extracted structured data. Crawl Data discovers verified public sources before selected items enter the review lifecycle. | `packages/core/src/db/schema/memory.ts`, `apps/api/src/routes/knowledge.ts` |
 | **Agents** | Autonomous workers with roles, KPIs, budgets, and performance scores. The CEO manages a team of them. | `packages/core/src/db/schema/agents.ts` |
 | **Credits** | The currency. Every AI action costs credits, shown in UI before charge. | `apps/api/src/lib/credits.ts` |
-| **Campaign** | Marketing campaign (generates banners + social posts). State machine: draft→active→live→completed. | `packages/core/src/db/schema/marketing.ts` |
+| **Campaign** | Marketing execution unit for banners, social posts, blog, and async AI video. State machine: draft→active→live→completed. | `packages/core/src/db/schema/marketing.ts` |
 | **Landing Page** | AI-generated multi-block page, versioned, publishable, with analytics. | `apps/api/src/services/landing-page-service.ts` |
 | **Market Intelligence** | Competitor tracking + signals + weekly digest + positioning map + memory loop to Brain. | `apps/api/src/services/{suggest-competitors,competitor-brief,market-digest,positioning-map}.ts` |
 | **Growth Score** | 0–100 aggregate across Marketing/SEO/Automation/Revenue. Drives gamification. | `apps/api/src/services/growth-score.ts` |
@@ -61,7 +61,7 @@ You'll see these terms in code and docs. Know them before you read any module.
 ├── services/        Microservice placeholders (empty — future work)
 ├── docs/
 │   ├── onboarding/  You are here
-│   ├── architecture/  11 system design docs (01–11 + workflow)
+│   ├── architecture/  System design docs and current feature pipelines
 │   ├── brainstorm/  160+ detailed feature specs
 │   ├── guides/      CEO walkthrough, on-premise deploy
 │   └── screen-specs/  UX mockups
@@ -236,6 +236,11 @@ User completes action → clicks checkbox → streak increments
 
 When the brief is stale, user clicks "Refresh advice" (10 credits) on `/insights` → `generateCeoBrief()` → new brief stored → dashboard re-derives missions.
 
+The brief rebuilds a source-health-aware context from Company/Brand IQ, Brain
+and Knowledge Hub, campaigns and videos, content, landing pages, Market scans,
+sales, and Your AI Team. Every recommendation must cite evidence from that
+context. See `docs/architecture/16-ceo-advisor-intelligence.md`.
+
 ### 3. Market Intelligence loop
 
 ```
@@ -251,6 +256,30 @@ When the brief is stale, user clicks "Refresh advice" (10 credits) on `/insights
 ```
 
 Key files: all `apps/api/src/services/{market-memory,competitor-brief,market-digest,positioning-map,suggest-competitors}.ts`.
+
+### 4. Knowledge Crawl Data
+
+```
+1. User enters an optional website and/or topic
+2. AI expands the topic and public discovery finds candidate sources
+3. URL, identity, topic, and readable-content checks remove weak results
+4. User selects only useful sources (none are preselected)
+5. Selected URLs enter the normal Knowledge extraction and review lifecycle
+```
+
+Discovery costs 20 company credits; import has no second charge. See
+`docs/architecture/15-knowledge-crawl-data.md`.
+
+### 5. Campaign AI Video
+
+```
+Campaign Detail -> submit OpenRouter job -> return project/job ID
+                -> VideoRenderCron polls -> save completed file to AWS S3
+                -> charge 50 company credits -> apply to draft social posts
+```
+
+Failed video jobs are not charged. See
+`docs/architecture/14-campaign-ai-video-pipeline.md`.
 
 ## Tech stack (quick reference)
 
@@ -278,9 +307,9 @@ Key files: all `apps/api/src/services/{market-memory,competitor-brief,market-dig
 | FTUX wizard | `routes/ftux.ts`, `services/ftux-processor.ts` | `app/(ftux)/welcome/page.tsx`, `components/ftux/*` |
 | CEO Advisor | `services/ceo-advisor.ts`, `routes/insights.ts` | `app/(dashboard)/[companyId]/insights/page.tsx` |
 | Market Intelligence | `services/{market-*,competitor-*,positioning-*,suggest-*}.ts` | `app/(dashboard)/[companyId]/market/page.tsx`, `components/market/*` |
-| Campaigns | `services/marketing-autonomous.ts`, `routes/marketing-engine.ts` | `app/(dashboard)/[companyId]/campaigns/*` |
+| Campaigns + AI Video | `services/{marketing-autonomous,campaign-video-creative}.ts`, `workers/video-render-cron.ts`, `routes/marketing-engine.ts` | `app/(dashboard)/[companyId]/campaigns/*` |
 | Landing Pages | `services/landing-page-service.ts`, `routes/landing-pages.ts` | `app/(dashboard)/[companyId]/landing-pages/*` |
-| Knowledge Base | `routes/knowledge.ts`, `services/business-context.ts` | `app/(dashboard)/[companyId]/knowledge/page.tsx` |
+| Knowledge Base + Crawl Data | `routes/knowledge.ts`, `services/{business-context,knowledge-crawl-discovery,public-discovery}.ts` | `app/(dashboard)/[companyId]/knowledge/*` |
 | Brain editor | `routes/brain.ts`, `packages/ai-tenant/src/brain-store.ts` | `app/(dashboard)/[companyId]/brain/page.tsx` |
 | Chatbot | `routes/chatbot.ts`, `packages/ai-tenant/src/rag-pipeline.ts` | `app/(dashboard)/[companyId]/chatbot/page.tsx` |
 
@@ -294,6 +323,10 @@ Once this overview makes sense, the deep dives live in:
 - `docs/architecture/04-api-design.md` → REST conventions
 - `docs/architecture/05-frontend-structure.md` → Next.js layout details
 - `docs/architecture/10-venture-ceo-ia.md` → CEO Advisor interaction architecture
+- `docs/architecture/13-ai-work-outputs.md` → reviewable outputs from AI recommendations
+- `docs/architecture/14-campaign-ai-video-pipeline.md` → async campaign video generation
+- `docs/architecture/15-knowledge-crawl-data.md` → public discovery and Knowledge import
+- `docs/architecture/16-ceo-advisor-intelligence.md` → evidence-grounded CEO Advisor implementation
 - `docs/architecture/workflow-architecture.md` → 8-engine orchestration (future)
 - `docs/brainstorm/*.md` → 160+ feature specs (search by filename)
 - `CLAUDE.md` → project vision + principles (always up to date)

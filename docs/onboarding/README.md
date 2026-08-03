@@ -10,22 +10,27 @@ Welcome! This guide gets a new developer productive on the 1Person codebase in u
 2. **[architecture.md](./architecture.md)** — Understand what the system does, the main concepts (FTUX, Brain, CEO Advisor, Agents), and the folder layout.
 3. **[codebase-tour.md](./codebase-tour.md)** — Find your way around: where routes live, where UI lives, how AI features are wired.
 
+For third-party account connections, read
+**[OAuth provider console setup](../guides/oauth-provider-console-setup.md)** to
+configure or replace Meta, Google, and Microsoft developer applications.
+
 ## 60-second quick start
 
 ```bash
 # Prereqs: Node 20+, pnpm 9+, Docker Desktop
 git clone <repo>
 cd 1person
-cp .env.example .env            # fill in OPENAI_API_KEY + ANTHROPIC_API_KEY
 pnpm install
-pnpm docker:up                  # postgres, redis, qdrant, etc.
-pnpm --filter @1person/core db:push
-pnpm dev                        # runs api + web + worker in parallel
+cp .env.example .env            # set JWT_SECRET and OPENAI_API_KEY
+pnpm docker:up:core             # postgres, redis, qdrant, meilisearch
+pnpm db:migrate:all             # core + ai-tenant migrations
+pnpm dev                        # shared packages + api + web + worker
 ```
 
 Then open:
 - Web: http://localhost:3004
-- API: http://localhost:8004/api/v1 (health: `/health`)
+- API: http://localhost:8004/api/v1
+- Health: http://localhost:8004/health
 - Login: `admin@1person.ai` / `Admin@1Person2025`
 
 Something broken? See the troubleshooting section at the bottom of [local-setup.md](./local-setup.md).
@@ -50,10 +55,18 @@ If you want to ship your first PR today:
 
 ## Where to ask for help
 
-- Check existing docs first: `docs/architecture/` (11 system design docs), `docs/brainstorm/` (feature specs), `CLAUDE.md` (project vision).
+- Check existing docs first: `docs/architecture/` (system design and current feature pipelines), `docs/brainstorm/` (feature specs), `CLAUDE.md` (project vision).
 - Specific features: each has a detailed brainstorm doc — e.g. `docs/brainstorm/05-ceo-advisor.md`.
 - For UX questions: `docs/screen-specs/`.
 
+Recent implementation guides:
+
+- `docs/guides/oauth-provider-console-setup.md`
+- `docs/architecture/13-ai-work-outputs.md`
+- `docs/architecture/14-campaign-ai-video-pipeline.md`
+- `docs/architecture/15-knowledge-crawl-data.md`
+- `docs/architecture/16-ceo-advisor-intelligence.md`
+
 ---
 
-*Last updated: 2026-04-14. If setup breaks, open an issue — the reliable repro is more valuable than fixing it silently.*
+*Last updated: 2026-08-03. If setup breaks, open an issue — the reliable repro is more valuable than fixing it silently.*
