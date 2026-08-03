@@ -29,6 +29,7 @@ import {
   mergeCampaignReviewActions,
 } from '../services/ceo-advisor';
 import { authorizeCompanyAccess } from '../lib/company-access';
+import { syncAdvisorDeliverables } from '../services/deliverables';
 
 const insightsRouter = new Hono();
 insightsRouter.use('*', authMiddleware);
@@ -91,24 +92,44 @@ insightsRouter.get('/:companyId/advisor/latest', async (c) => {
     };
   });
 
+  const actions = assignAdvisorTeamTasks(
+    mergeCampaignReviewActions({
+      actions: brief.actions,
+      campaigns: campaignFacts,
+      companyId,
+    }),
+    teamRows.map((member) => ({
+      id: member.id,
+      name: member.name,
+      role: member.role,
+      title: member.title ?? undefined,
+      department: member.department ?? undefined,
+      capabilities: (member.capabilities ?? []).map((capability) => capability.name),
+    })),
+  );
+  const outputLinks = await syncAdvisorDeliverables({
+    companyId,
+    briefId: brief.id,
+    actions,
+  }).catch((error) => {
+    console.error('[insights.advisor.latest] deliverable sync failed:', {
+      companyId,
+      briefId: brief.id,
+      error,
+    });
+    return [];
+  });
+  const outputByAction = new Map(outputLinks.map((item) => [item.actionIndex, item]));
+
   return c.json({
     brief: {
       ...brief,
-      actions: assignAdvisorTeamTasks(
-        mergeCampaignReviewActions({
-          actions: brief.actions,
-          campaigns: campaignFacts,
-          companyId,
-        }),
-        teamRows.map((member) => ({
-          id: member.id,
-          name: member.name,
-          role: member.role,
-          title: member.title ?? undefined,
-          department: member.department ?? undefined,
-          capabilities: (member.capabilities ?? []).map((capability) => capability.name),
-        })),
-      ),
+      actions: actions.map((action, actionIndex) => ({
+        ...action,
+        deliverableId: outputByAction.get(actionIndex)?.deliverableId,
+        deliverableType: outputByAction.get(actionIndex)?.type,
+        deliverableStatus: outputByAction.get(actionIndex)?.status,
+      })),
     },
   });
 });
@@ -125,6 +146,19 @@ insightsRouter.post('/:companyId/advisor/refresh', async (c) => {
       companyName: company.name,
       actor: userId ?? 'system',
       language: body.language,
+    });
+    await syncAdvisorDeliverables({
+      companyId,
+      briefId: saved.id,
+      actions: saved.actions,
+      actorUserId: userId,
+      language: body.language,
+    }).catch((error) => {
+      console.error('[insights.advisor.refresh] deliverable sync failed:', {
+        companyId,
+        briefId: saved.id,
+        error,
+      });
     });
 
     return c.json({ brief: saved });

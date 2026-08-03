@@ -90,6 +90,7 @@ import visionRouter from './routes/vision-analyze';
 import autopilotRouter from './routes/autopilot';
 import publishingRouter from './routes/publishing';
 import accessRouter from './routes/access';
+import deliverablesRouter from './routes/deliverables';
 
 // Initialize platform registry (registers all providers at startup)
 import './services/platforms';
@@ -349,6 +350,7 @@ api.route('/vision', visionRouter);
 api.route('/autopilot', autopilotRouter);
 api.route('/publishing', publishingRouter);
 api.route('/access', accessRouter);
+api.route('/deliverables', deliverablesRouter);
 
 // Mount API
 app.route('/api/v1', api);

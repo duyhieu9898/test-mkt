@@ -11,6 +11,7 @@ import {
   Briefcase,
   Building2,
   ChevronRight,
+  ClipboardCheck,
   Compass,
   Database,
   FileEdit,
@@ -82,6 +83,7 @@ const navigationGroups: NavigationGroup[] = [
     activeClass: 'bg-blue-600 text-white shadow-sm',
     items: [
       { name: 'Your AI Team', href: '/team', icon: Users, unlockLevel: 1 },
+      { name: 'AI Outputs', href: '/outputs', icon: ClipboardCheck, unlockLevel: 1 },
       { name: 'Knowledge Hub', href: '/knowledge', icon: BookOpen, unlockLevel: 1, tourId: 'knowledge-menu' },
       { name: 'Brain Hub', href: '/brain-hub', icon: Database, unlockLevel: 1, tourId: 'brain-hub-menu' },
     ],
@@ -147,6 +149,7 @@ const itemTranslationKeys: Record<string, AppMessageKey> = {
   'CEO Advisor': 'navCeoAdvisor',
   Walkthrough: 'navWalkthrough',
   'Your AI Team': 'navYourAiTeam',
+  'AI Outputs': 'navAiOutputs',
   'Knowledge Hub': 'navKnowledgeHub',
   'Brain Hub': 'navBrainHub',
   Campaigns: 'navCampaigns',

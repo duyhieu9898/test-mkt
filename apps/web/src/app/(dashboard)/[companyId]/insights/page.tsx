@@ -12,7 +12,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Sparkles, RefreshCw, Loader2, ArrowRight, Trophy, AlertTriangle, Coins, Target, Database, Users, CalendarDays } from 'lucide-react';
+import { Sparkles, RefreshCw, Loader2, ArrowRight, Trophy, AlertTriangle, Coins, Target, Database, Users, CalendarDays, FileCheck2 } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api/client';
 import { friendlyError } from '@/lib/friendly-errors';
@@ -72,6 +72,9 @@ interface BriefAction {
   campaignProposal?: CampaignProposal;
   responsibleDepartments?: AdvisorResponsibleDepartment[];
   teamTasks?: AdvisorTeamTask[];
+  deliverableId?: string;
+  deliverableType?: string;
+  deliverableStatus?: string;
 }
 interface AdvisorResponsibleDepartment {
   department: string;
@@ -303,6 +306,7 @@ export default function CeoAdvisorPage() {
       toast.success(hasAdvice ? 'Advice refreshed' : 'Your first advice is ready');
       qc.setQueryData(['ceo-advisor', 'latest', companyId], data);
       qc.invalidateQueries({ queryKey: ['ceo-advisor', 'latest', companyId] });
+      qc.invalidateQueries({ queryKey: ['deliverables', companyId] });
     },
     onError: (err) => toast.error(friendlyError(err)),
   });
@@ -773,30 +777,43 @@ export default function CeoAdvisorPage() {
                             )}
                           </div>
 
-                          {action.campaignProposal ? (
-                            <Button
-                              size="sm"
-                              className="shrink-0 gap-1.5 bg-indigo-600 hover:bg-indigo-700"
-                              disabled={createCampaignM.isPending || !token || !hasEnoughAdvisorCampaignCredits}
-                              title={!hasEnoughAdvisorCampaignCredits ? 'Not enough credits. Contact support to add more.' : undefined}
-                              onClick={() => {
-                                if (!hasEnoughAdvisorCampaignCredits) {
-                                  setOutOfCreditsRequired(advisorCampaignCreditCost);
-                                  setOutOfCreditsAvailable(availableCredits);
-                                  setOutOfCreditsOpen(true);
-                                  return;
-                                }
-                                createCampaignM.mutate({ action, index: originalIndex });
-                              }}
-                            >
-                              {creatingActionIndex === originalIndex ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                              {creatingActionIndex === originalIndex ? 'Creating...' : `Create campaign · ${advisorCampaignCreditCost} credits`}
-                            </Button>
-                          ) : action.link ? (
-                            <Button size="sm" variant="outline" className="shrink-0 gap-1" onClick={() => router.push(action.link!)}>
-                              Review <ArrowRight className="h-3 w-3" />
-                            </Button>
-                          ) : null}
+                          <div className="flex shrink-0 flex-wrap gap-2 lg:max-w-52 lg:justify-end">
+                            {action.deliverableId && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1.5 border-indigo-200 text-indigo-700"
+                                onClick={() => router.push(`/${companyId}/outputs?open=${action.deliverableId}`)}
+                              >
+                                <FileCheck2 className="h-3.5 w-3.5" />
+                                Review output
+                              </Button>
+                            )}
+                            {action.campaignProposal ? (
+                              <Button
+                                size="sm"
+                                className="gap-1.5 bg-indigo-600 hover:bg-indigo-700"
+                                disabled={createCampaignM.isPending || !token || !hasEnoughAdvisorCampaignCredits}
+                                title={!hasEnoughAdvisorCampaignCredits ? 'Not enough credits. Contact support to add more.' : undefined}
+                                onClick={() => {
+                                  if (!hasEnoughAdvisorCampaignCredits) {
+                                    setOutOfCreditsRequired(advisorCampaignCreditCost);
+                                    setOutOfCreditsAvailable(availableCredits);
+                                    setOutOfCreditsOpen(true);
+                                    return;
+                                  }
+                                  createCampaignM.mutate({ action, index: originalIndex });
+                                }}
+                              >
+                                {creatingActionIndex === originalIndex ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                                {creatingActionIndex === originalIndex ? 'Creating...' : `Create campaign · ${advisorCampaignCreditCost} credits`}
+                              </Button>
+                            ) : !action.deliverableId && action.link ? (
+                              <Button size="sm" variant="outline" className="gap-1" onClick={() => router.push(action.link!)}>
+                                Review <ArrowRight className="h-3 w-3" />
+                              </Button>
+                            ) : null}
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
