@@ -1,0 +1,1187 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="1Personの初回ログインから日々の運用までを説明する日本語ユーザーマニュアル">
+  <title>1Person ユーザーマニュアル</title>
+  <style>
+    :root {
+      --paper: oklch(0.985 0.004 255);
+      --surface: oklch(0.955 0.009 255);
+      --surface-strong: oklch(0.92 0.015 255);
+      --ink: oklch(0.22 0.028 258);
+      --muted: oklch(0.46 0.025 258);
+      --quiet: oklch(0.62 0.018 258);
+      --line: oklch(0.87 0.014 258);
+      --navy: oklch(0.25 0.07 266);
+      --cobalt: oklch(0.55 0.19 259);
+      --cobalt-soft: oklch(0.94 0.035 259);
+      --mint: oklch(0.63 0.13 166);
+      --mint-soft: oklch(0.95 0.035 166);
+      --amber: oklch(0.69 0.14 74);
+      --amber-soft: oklch(0.96 0.045 82);
+      --danger: oklch(0.55 0.18 24);
+      --danger-soft: oklch(0.95 0.04 24);
+      --display: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
+      --body: "Hiragino Kaku Gothic ProN", "Yu Gothic", "YuGothic", sans-serif;
+      --step-1: 0.75rem;
+      --step-2: 0.875rem;
+      --step-3: 1rem;
+      --step-4: 1.2rem;
+      --step-5: 1.44rem;
+      --step-6: 2.074rem;
+      --step-7: clamp(2.75rem, 5vw, 4.3rem);
+      --space-1: 0.25rem;
+      --space-2: 0.5rem;
+      --space-3: 0.75rem;
+      --space-4: 1rem;
+      --space-6: 1.5rem;
+      --space-8: 2rem;
+      --space-12: 3rem;
+      --space-16: 4rem;
+      --space-24: 6rem;
+      --radius-sm: 0.5rem;
+      --radius-md: 0.75rem;
+      --radius-lg: 1rem;
+      --screen-max: 100rem;
+      --ease: cubic-bezier(0.25, 1, 0.5, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      --utility-height: 0rem;
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--body);
+      font-size: var(--step-3);
+      line-height: 1.8;
+      text-rendering: optimizeLegibility;
+    }
+    body.author-tools-visible { --utility-height: 4rem; }
+    a { color: inherit; }
+    button { font: inherit; }
+    :focus-visible { outline: 3px solid var(--cobalt); outline-offset: 3px; }
+
+    .utility-bar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      display: flex;
+      min-height: 4rem;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      padding: var(--space-2) var(--space-6);
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklch, var(--paper) 92%, transparent);
+      backdrop-filter: blur(12px);
+    }
+    .utility-bar[hidden] { display: none; }
+    .utility-brand { font-family: var(--display); font-weight: 700; }
+    .utility-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .action {
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: var(--space-2) var(--space-4);
+      background: var(--paper);
+      color: var(--ink);
+      cursor: pointer;
+      transition: transform 160ms var(--ease), border-color 220ms var(--ease), background-color 220ms var(--ease);
+    }
+    .action:hover { transform: translateY(-2px); border-color: var(--cobalt); }
+    .action:active { transform: translateY(2px); }
+    .action.primary { border-color: var(--cobalt); background: var(--cobalt); color: var(--paper); }
+    .action[aria-pressed="true"] { border-color: var(--mint); background: var(--mint-soft); color: var(--ink); }
+    .toc-toggle { display: none; }
+
+    .shell { display: grid; grid-template-columns: 18rem minmax(0, 1fr); min-height: calc(100dvh - var(--utility-height)); }
+    .toc {
+      position: sticky;
+      top: var(--utility-height);
+      height: calc(100dvh - var(--utility-height));
+      overflow: auto;
+      border-right: 1px solid var(--line);
+      padding: var(--space-8) var(--space-6) var(--space-16);
+      background: var(--surface);
+    }
+    .toc-title { margin: 0 0 var(--space-6); font-family: var(--display); font-size: var(--step-5); }
+    .toc-group + .toc-group { margin-top: var(--space-6); }
+    .toc-group > p { margin: 0 0 var(--space-2); color: var(--quiet); font-size: var(--step-1); font-weight: 700; letter-spacing: 0.08em; }
+    .toc ul { margin: 0; padding: 0; list-style: none; }
+    .toc a {
+      display: block;
+      min-height: 44px;
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius-sm);
+      color: var(--muted);
+      font-size: var(--step-2);
+      line-height: 1.5;
+      text-decoration: none;
+      transition: transform 160ms var(--ease), background-color 220ms var(--ease), color 220ms var(--ease);
+    }
+    .toc a:hover { transform: translateX(4px); color: var(--ink); }
+    .toc a[aria-current="true"] { background: var(--cobalt-soft); color: var(--cobalt); font-weight: 700; }
+
+    .document { min-width: 0; }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 7fr) minmax(16rem, 5fr);
+      gap: var(--space-16);
+      align-items: end;
+      min-height: 44rem;
+      padding: var(--space-24) max(var(--space-12), calc((100vw - 88rem) / 2)) var(--space-16);
+      background: var(--navy);
+      color: var(--paper);
+    }
+    .brand-line { margin: 0 0 var(--space-8); color: var(--mint); font-size: var(--step-2); font-weight: 700; letter-spacing: 0.1em; }
+    .hero h1 { max-width: 12ch; margin: 0; font-family: var(--display); font-size: var(--step-7); line-height: 1.15; text-wrap: balance; }
+    .hero-copy { max-width: 42rem; margin: var(--space-6) 0 0; color: oklch(0.88 0.02 258); font-size: var(--step-4); text-wrap: pretty; }
+    .hero-map { border-top: 1px solid color-mix(in oklch, var(--paper) 30%, transparent); padding-top: var(--space-6); }
+    .hero-map ol { margin: 0; padding: 0; list-style: none; }
+    .hero-map li { display: grid; grid-template-columns: 3rem 1fr; gap: var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid color-mix(in oklch, var(--paper) 16%, transparent); }
+    .hero-map span { color: var(--mint); font-variant-numeric: tabular-nums; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-8); }
+    .hero-action {
+      display: inline-flex;
+      min-height: 44px;
+      align-items: center;
+      justify-content: center;
+      padding: var(--space-2) var(--space-4);
+      border: 1px solid color-mix(in oklch, var(--paper) 45%, transparent);
+      border-radius: var(--radius-sm);
+      color: var(--paper);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .hero-action.primary { border-color: var(--mint); background: var(--mint); color: var(--navy); }
+
+    .content { width: min(100% - var(--space-12), 74rem); margin: 0 auto; padding: var(--space-16) 0 var(--space-24); }
+    .chapter { scroll-margin-top: 6rem; padding: var(--space-16) 0; border-bottom: 1px solid var(--line); }
+    .chapter:last-child { border-bottom: 0; }
+    .chapter-head { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: var(--space-6); margin-bottom: var(--space-12); }
+    .chapter-index { color: var(--cobalt); font-size: var(--step-2); font-weight: 700; font-variant-numeric: tabular-nums; }
+    h2 { margin: 0; font-family: var(--display); font-size: var(--step-6); line-height: 1.25; text-wrap: balance; }
+    h3 { margin: var(--space-12) 0 var(--space-4); font-size: var(--step-5); line-height: 1.35; text-wrap: balance; }
+    p { max-width: 70ch; margin: 0 0 var(--space-6); color: var(--muted); text-wrap: pretty; }
+    strong { color: var(--ink); }
+    ul, ol { margin: 0 0 var(--space-8); padding-left: var(--space-6); }
+    li + li { margin-top: var(--space-3); }
+
+    .lede { max-width: 62ch; font-size: var(--step-4); color: var(--ink); }
+    .route {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      margin: 0 0 var(--space-6);
+      padding: var(--space-2) var(--space-4);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--navy);
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: var(--step-2);
+      overflow-wrap: anywhere;
+    }
+    .note { margin: var(--space-8) 0; padding: var(--space-6); border-radius: var(--radius-md); background: var(--cobalt-soft); }
+    .note.tip { background: var(--mint-soft); }
+    .note.warn { background: var(--amber-soft); }
+    .note.danger { background: var(--danger-soft); }
+    .note strong { display: block; margin-bottom: var(--space-2); color: var(--cobalt); }
+    .note.tip strong { color: var(--mint); }
+    .note.warn strong { color: var(--amber); }
+    .note.danger strong { color: var(--danger); }
+    .note p { margin: 0; color: var(--ink); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+      gap: var(--space-2);
+      margin: var(--space-8) 0 var(--space-12);
+      padding: 0;
+      list-style: none;
+      counter-reset: flow;
+    }
+    .flow li { position: relative; min-height: 7rem; margin: 0; padding: var(--space-6) var(--space-4) var(--space-4); border-top: 3px solid var(--cobalt); background: var(--surface); }
+    .flow li::before { counter-increment: flow; content: counter(flow, decimal-leading-zero); position: absolute; top: var(--space-2); right: var(--space-3); color: var(--quiet); font-size: var(--step-1); font-weight: 700; }
+
+    .steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+    .steps li { position: relative; min-height: 4rem; margin: 0; padding: 0 0 var(--space-8) 4rem; }
+    .steps li::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 0; display: grid; width: 2.75rem; height: 2.75rem; place-items: center; border-radius: 50%; background: var(--cobalt); color: var(--paper); font-weight: 700; }
+    .steps li::after { content: ""; position: absolute; left: 1.35rem; top: 2.75rem; bottom: 0; width: 1px; background: var(--line); }
+    .steps li:last-child::after { display: none; }
+    .steps strong { display: block; margin-bottom: var(--space-1); font-size: var(--step-4); }
+    .steps p { margin: 0; }
+
+    .screen-figure {
+      margin: var(--space-8) 0 var(--space-12);
+    }
+    .screen-open {
+      position: relative;
+      display: block;
+      width: 100%;
+      min-height: 44px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 0;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: zoom-in;
+      transition: transform 160ms var(--ease), border-color 220ms var(--ease);
+    }
+    .screen-open::after {
+      content: "クリックして拡大";
+      position: absolute;
+      right: var(--space-4);
+      bottom: var(--space-4);
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius-sm);
+      background: var(--navy);
+      color: var(--paper);
+      font-size: var(--step-1);
+      font-weight: 700;
+    }
+    .screen-open:hover { transform: translateY(-2px); border-color: var(--cobalt); }
+    .screen-open:active { transform: translateY(2px); }
+    .screen-open img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .screen-figure figcaption {
+      display: grid;
+      grid-template-columns: minmax(12rem, 1fr) minmax(0, 2fr);
+      gap: var(--space-4);
+      margin-top: var(--space-3);
+      color: var(--muted);
+      font-size: var(--step-2);
+      line-height: 1.6;
+    }
+    .screen-figure figcaption strong { color: var(--ink); }
+
+    .screen-dialog {
+      width: min(calc(100vw - var(--space-8)), var(--screen-max));
+      max-width: none;
+      max-height: calc(100dvh - var(--space-8));
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      background: var(--paper);
+      color: var(--ink);
+    }
+    .screen-dialog::backdrop { background: color-mix(in oklch, var(--navy) 76%, transparent); }
+    .screen-dialog-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      margin-bottom: var(--space-4);
+    }
+    .screen-dialog-bar strong { font-size: var(--step-3); }
+    .screen-dialog-close {
+      min-width: 44px;
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: var(--space-2) var(--space-4);
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+      transition: transform 160ms var(--ease), border-color 220ms var(--ease);
+    }
+    .screen-dialog-close:hover { transform: translateY(-2px); border-color: var(--cobalt); }
+    .screen-dialog-close:active { transform: translateY(2px); }
+    .screen-dialog img { display: block; width: 100%; height: auto; border-radius: var(--radius-sm); }
+    .screen-dialog p { max-width: 80ch; margin: var(--space-4) 0 0; }
+
+    .table-wrap { margin: var(--space-8) 0 var(--space-12); overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-md); }
+    table { width: 100%; border-collapse: collapse; font-size: var(--step-2); }
+    th, td { padding: var(--space-4); text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { background: var(--navy); color: var(--paper); font-weight: 700; }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:nth-child(even) { background: var(--surface); }
+    td:first-child { color: var(--ink); font-weight: 700; }
+
+    .status { display: inline-flex; align-items: center; min-height: 2rem; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); font-size: var(--step-1); font-weight: 700; }
+    .status.live { background: var(--mint-soft); color: var(--mint); }
+    .status.partial { background: var(--amber-soft); color: var(--amber); }
+    .status.soon { background: var(--surface-strong); color: var(--muted); }
+
+    .checklist { display: grid; grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr); gap: var(--space-8); }
+    .checklist aside { align-self: start; padding: var(--space-6); background: var(--mint-soft); border-radius: var(--radius-md); }
+    .checklist aside p { margin: 0; color: var(--ink); }
+
+    .is-editing .document { outline: 4px solid var(--mint); outline-offset: -4px; }
+    .is-editing .chapter:hover { background: color-mix(in oklch, var(--mint-soft) 50%, transparent); }
+    [contenteditable="true"] { caret-color: var(--cobalt); }
+
+    @media (max-width: 72rem) {
+      .shell { grid-template-columns: 1fr; }
+      .toc-toggle { display: inline-flex; }
+      .toc { position: fixed; inset: var(--utility-height) auto 0 0; z-index: 20; width: min(22rem, 88vw); height: calc(100dvh - var(--utility-height)); transform: translateX(-105%); transition: transform 300ms var(--ease); }
+      body.toc-open .toc { transform: translateX(0); }
+      .hero { grid-template-columns: 1fr; min-height: auto; padding: var(--space-16) var(--space-8); }
+      .content { width: min(100% - var(--space-16), 74rem); }
+    }
+    @media (max-width: 48rem) {
+      body { font-size: 1rem; }
+      .utility-bar { align-items: flex-start; padding: var(--space-2); }
+      .utility-brand { display: none; }
+      .utility-actions { display: grid; width: 100%; grid-template-columns: 0.7fr 1fr 1.2fr 0.8fr; gap: var(--space-1); }
+      .action { min-width: 0; padding-inline: var(--space-2); font-size: var(--step-1); white-space: nowrap; }
+      .hero { padding: var(--space-12) var(--space-6); }
+      .hero h1 { font-size: clamp(2.75rem, 14vw, 3.5rem); }
+      .content { width: min(100% - var(--space-8), 74rem); padding-top: var(--space-8); }
+      .chapter { padding: var(--space-12) 0; }
+      .chapter-head { grid-template-columns: 1fr; gap: var(--space-2); margin-bottom: var(--space-8); }
+      h2 { font-size: 1.8rem; }
+      .checklist { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr 1fr; }
+      .route { display: flex; width: 100%; }
+      .screen-figure figcaption { grid-template-columns: 1fr; gap: var(--space-1); }
+      .screen-open::after { right: var(--space-2); bottom: var(--space-2); }
+      .screen-dialog { width: calc(100vw - var(--space-4)); max-height: calc(100dvh - var(--space-4)); padding: var(--space-2); }
+    }
+    @media (max-width: 24rem) {
+      .flow { grid-template-columns: 1fr; }
+      .action span { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+    }
+    @media print {
+      @page { size: A4; margin: 16mm; }
+      body { background: var(--paper); font-size: 10pt; line-height: 1.6; }
+      .utility-bar, .toc, .screen-dialog { display: none !important; }
+      .shell { display: block; }
+      .hero { min-height: auto; margin: -16mm -16mm 0; padding: 24mm 18mm; color-adjust: exact; print-color-adjust: exact; }
+      .content { width: 100%; padding: 0; }
+      .chapter { padding: 12mm 0; break-before: page; }
+      .chapter-head { margin-bottom: 8mm; }
+      .note, .flow li, th { color-adjust: exact; print-color-adjust: exact; }
+      .table-wrap { overflow: visible; }
+      .screen-figure { break-inside: avoid; margin: 6mm 0 10mm; }
+      .screen-open { border-color: var(--line); }
+      .screen-open::after { display: none; }
+      a { text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="utility-bar" id="author-tools" aria-label="ドキュメント操作" hidden>
+    <div class="utility-brand">1Person Manual</div>
+    <div class="utility-actions">
+      <button class="action toc-toggle" id="toc-toggle" type="button" aria-expanded="false">目次</button>
+      <button class="action" id="edit-toggle" type="button" aria-pressed="false">編集モード</button>
+      <button class="action" id="download-html" type="button">HTMLを保存</button>
+      <button class="action primary" id="print-page" type="button"><span>印刷・</span>PDF</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="toc" id="toc" aria-label="目次">
+      <h2 class="toc-title">目次</h2>
+      <div class="toc-group">
+        <p>はじめる</p>
+        <ul>
+          <li><a href="#overview">概要と業務フロー</a></li>
+          <li><a href="#roles">ロールと権限</a></li>
+          <li><a href="#login">登録・ログイン</a></li>
+          <li><a href="#onboarding">初回セットアップ</a></li>
+        </ul>
+      </div>
+      <div class="toc-group">
+        <p>基盤を整える</p>
+        <ul>
+          <li><a href="#navigation">共通画面</a></li>
+          <li><a href="#dashboard">ダッシュボード</a></li>
+          <li><a href="#knowledge">Knowledge・Brand IQ</a></li>
+          <li><a href="#brain">AIチーム・Brain・成果物</a></li>
+          <li><a href="#advisor">CEOアドバイザー</a></li>
+        </ul>
+      </div>
+      <div class="toc-group">
+        <p>実行する</p>
+        <ul>
+          <li><a href="#campaign">キャンペーン</a></li>
+          <li><a href="#landing">ランディングページ</a></li>
+          <li><a href="#content">コンテンツ・SEO・GEO</a></li>
+          <li><a href="#market">市場・競合</a></li>
+          <li><a href="#sales">営業</a></li>
+        </ul>
+      </div>
+      <div class="toc-group">
+        <p>接続・測定</p>
+        <ul>
+          <li><a href="#meetings">会議・学習</a></li>
+          <li><a href="#customers">Chatbot・Channels</a></li>
+          <li><a href="#analytics">Analytics・設定</a></li>
+        </ul>
+      </div>
+      <div class="toc-group">
+        <p>参照</p>
+        <ul>
+          <li><a href="#screens">主要画面一覧</a></li>
+          <li><a href="#security">安全な利用</a></li>
+          <li><a href="#troubleshooting">トラブル対応</a></li>
+          <li><a href="#quickstart">30分クイックスタート</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <main class="document" id="document">
+      <section class="hero" aria-labelledby="manual-title">
+        <div>
+          <p class="brand-line">1PERSON USER MANUAL</p>
+          <h1 id="manual-title">ユーザー<br>マニュアル</h1>
+          <p class="hero-copy">初回ログインから日々の運用まで。AIに会社を教え、提案を確認し、施策を実行する順番を説明します。</p>
+          <div class="hero-actions">
+            <a class="hero-action primary" href="#quickstart">初めての方：30分で開始</a>
+            <a class="hero-action" href="#login">登録・ログインを見る</a>
+          </div>
+        </div>
+        <div class="hero-map" aria-label="基本の利用フロー">
+          <ol>
+            <li><span>01</span>ログイン</li>
+            <li><span>02</span>初期設定</li>
+            <li><span>03</span>AIが学習</li>
+            <li><span>04</span>提案を確認</li>
+            <li><span>05</span>実行・改善</li>
+          </ol>
+        </div>
+      </section>
+
+      <div class="content">
+        <section class="chapter" id="overview">
+          <header class="chapter-head"><span class="chapter-index">01</span><h2>概要と業務フロー</h2></header>
+          <p class="lede">1Personは、会社情報をAIに学習させ、優先事項の提案、マーケティング・営業施策の作成、結果の分析までを一つのワークスペースで行うシステムです。</p>
+          <ol class="flow">
+            <li>会社情報を登録</li><li>AIが学習</li><li>優先事項を提案</li><li>施策を作成・実行</li><li>結果を分析・改善</li>
+          </ol>
+          <h3>このマニュアルの使い方</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>利用者</th><th>最初に読む場所</th><th>目的</th></tr></thead>
+            <tbody>
+              <tr><td>初めて利用する方</td><td><a href="#quickstart">30分クイックスタート</a></td><td>最小限の設定で最初の施策まで進む</td></tr>
+              <tr><td>日々の運用担当</td><td><a href="#dashboard">ダッシュボード</a>、<a href="#advisor">CEOアドバイザー</a></td><td>今日の優先事項とレビュー待ち成果物を確認する</td></tr>
+              <tr><td>制作・マーケティング担当</td><td><a href="#campaign">キャンペーン</a>、<a href="#landing">ランディングページ</a></td><td>生成、レビュー、公開まで安全に進める</td></tr>
+              <tr><td>オーナー・管理者</td><td><a href="#roles">ロールと権限</a>、<a href="#security">安全な利用</a></td><td>メンバー、クレジット、外部連携を管理する</td></tr>
+            </tbody>
+          </table></div>
+          <h3>最初に進める順番</h3>
+          <ol class="steps">
+            <li><strong>AIに正しい会社情報を教える</strong><p>Knowledge、Brand IQ、Brainで商品、顧客、ブランドトーン、FAQを整えます。</p></li>
+            <li><strong>CEOアドバイザーを確認する</strong><p>会社データを横断した提案を読み、最重要アクションから着手します。</p></li>
+            <li><strong>施策を実行する</strong><p>キャンペーン、市場、営業など目的に合う画面へ移動します。</p></li>
+            <li><strong>結果を学習へ戻す</strong><p>分析、競合情報、会議の決定事項を次の提案と生成物へ反映します。</p></li>
+          </ol>
+          <div class="note tip"><strong>おすすめ</strong><p>初日はすべてを設定する必要はありません。「Knowledge → Brand IQ → CEOアドバイザー → 最初の施策」の順で進めます。</p></div>
+          <div class="note"><strong>画面と本書の表記が異なる場合</strong><p>機能の提供状況や消費クレジットは契約・権限・接続状況によって変わります。操作直前に画面へ表示される内容を優先し、不明な場合はオーナーまたはサポートへ確認してください。</p></div>
+        </section>
+
+        <section class="chapter" id="roles">
+          <header class="chapter-head"><span class="chapter-index">02</span><h2>ユーザーロールと権限</h2></header>
+          <div class="table-wrap"><table>
+            <thead><tr><th>ロール</th><th>主な利用者</th><th>できること</th></tr></thead>
+            <tbody>
+              <tr><td>オーナー</td><td>会社作成者</td><td>会社、メンバー、連携、公開、クレジットを全面管理</td></tr>
+              <tr><td>管理者</td><td>信頼できる運用担当</td><td>大部分の設定、チーム、マーケティング実行を管理</td></tr>
+              <tr><td>マーケティング責任者</td><td>施策責任者</td><td>キャンペーン作成、市場スキャン、SNS公開</td></tr>
+              <tr><td>コンテンツ担当</td><td>編集・制作担当</td><td>記事、バナー、LPなどの下書きを作成・編集</td></tr>
+              <tr><td>アナリスト</td><td>調査・レポート担当</td><td>戦略、市場、キャンペーン、分析結果を閲覧</td></tr>
+              <tr><td>閲覧のみ</td><td>関係者・レビュー担当</td><td>会社情報を閲覧。変更、公開、クレジット消費は不可</td></tr>
+            </tbody>
+          </table></div>
+          <code class="route">/{companyId}/settings/team</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="チーム権限画面を拡大" data-screen-title="図 1：自分の権限と会社チームを確認" data-screen-description="自分のロールと実行可能な操作を確認し、必要な権限を選んでメンバーを会社チームへ追加します。">
+              <img src="./images/28-team-permissions-anonymized.png" alt="オーナー権限、メンバー追加フォーム、会社チーム一覧が表示されたチーム権限画面" width="1829" height="860" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 1：自分の権限と会社チームを確認</strong><span>自分のロールと実行可能な操作を確認し、必要な権限を選んでメンバーを会社チームへ追加します。</span></figcaption>
+          </figure>
+          <div class="note warn"><strong>権限エラー</strong><p>ボタンが無効、または権限不足と表示された場合は、会社のオーナーまたは管理者に必要なロールを確認してもらってください。業務に必要な最小限の権限だけを付与します。</p></div>
+        </section>
+
+        <section class="chapter" id="login">
+          <header class="chapter-head"><span class="chapter-index">03</span><h2>アカウント作成・ログイン</h2></header>
+          <h3>新規登録</h3><code class="route">/register</code>
+          <ol class="steps">
+            <li><strong>氏名を入力</strong><p>2文字以上で入力します。</p></li>
+            <li><strong>メールアドレスを入力</strong><p>会社で利用できる有効なメールアドレスを使います。</p></li>
+            <li><strong>パスワードを作成</strong><p>8文字以上、英字と数字を含めます。</p></li>
+            <li><strong>アカウント作成を押す</strong><p>承認が必要な環境では、管理者承認後にログインできます。画面上の目安は通常24時間以内です。</p></li>
+          </ol>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="アカウント作成画面を拡大" data-screen-title="図 2：新しいアカウントを作成" data-screen-description="氏名、メールアドレス、条件を満たすパスワードを入力し、利用規約とプライバシーポリシーを確認して登録します。">
+              <img src="./images/21-account-signup.png" alt="氏名、メールアドレス、パスワードを入力するアカウント作成画面" width="1486" height="1498" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 2：新しいアカウントを作成</strong><span>氏名、メールアドレス、条件を満たすパスワードを入力し、利用規約とプライバシーポリシーを確認して登録します。</span></figcaption>
+          </figure>
+          <h3>ログイン</h3><code class="route">/login</code>
+          <ol class="steps">
+            <li><strong>メールアドレスとパスワードを入力</strong><p>入力エラーはフィールド下のメッセージで確認します。</p></li>
+            <li><strong>ログインを押す</strong><p>処理中はボタンが無効になります。重複クリックしないでください。</p></li>
+            <li><strong>遷移先を確認</strong><p>新規ユーザーは初回セットアップ、設定済みユーザーは会社一覧へ進みます。システム管理者には管理画面が表示される場合があります。</p></li>
+          </ol>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="ログイン画面を拡大" data-screen-title="図 3：アカウントへログイン" data-screen-description="現在はメールアドレスとパスワードを使ってログインします。">
+              <img src="./images/22-account-login.png" alt="メールアドレス、パスワード、Google、GitHubの選択肢があるログイン画面" width="1498" height="1500" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 3：アカウントへログイン</strong><span>現在はメールアドレスとパスワードを使ってログインします。Google・GitHubボタンは利用しないでください。</span></figcaption>
+          </figure>
+          <div class="note warn"><strong>パスワードを忘れた場合</strong><p>現在、セルフサービスのパスワード再設定は利用できません。ログイン画面のリンクは使用せず、会社のオーナーまたは <a href="mailto:support@1person.ai">support@1person.ai</a> へ連絡してください。</p></div>
+        </section>
+
+        <section class="chapter" id="onboarding">
+          <header class="chapter-head"><span class="chapter-index">04</span><h2>初回セットアップ</h2></header>
+          <code class="route">/welcome</code>
+          <h3>開始前に準備するもの</h3>
+          <ul>
+            <li>会社で利用できるメールアドレスと、自分のロール。</li>
+            <li>既存のWebサイトURL。Webサイトがない場合は、事業概要、対象顧客、商品・サービス、強み。</li>
+            <li>確認できる担当者。AIが抽出した会社名、商品、顧客情報は人が承認します。</li>
+            <li>必要に応じて商品資料、FAQ、料金表、ブランド資料。パスワードや秘密鍵は含めません。</li>
+          </ul>
+          <ol class="steps">
+            <li><strong>表示・生成言語を選ぶ</strong><p>日本語を選ぶと、AI生成コンテンツも日本語が基本になります。</p></li>
+            <li>
+              <strong>開始方法を選ぶ</strong><p>「まだWebサイトがありません」または「Webサイトがあります」を選択します。</p>
+              <figure class="screen-figure">
+                <button class="screen-open" type="button" aria-label="開始方法と言語を選択する画面を拡大" data-screen-title="図 4：開始方法と言語を選択" data-screen-description="日本語を選び、Webサイトの有無に応じて開始方法を決めます。">
+                  <img src="./images/01-onboarding-start.png" alt="1Personの初回セットアップで言語とWebサイトの有無を選択する画面" width="2048" height="1030" loading="lazy" decoding="async">
+                </button>
+                <figcaption><strong>図 4：開始方法と言語を選択</strong><span>日本語を選び、Webサイトの有無に応じて開始方法を決めます。</span></figcaption>
+              </figure>
+            </li>
+            <li>
+              <strong>事業情報を入力</strong><p>新規事業は顧客、課題、商品、強みを記載します。既存サイトがある場合はURLを入力します。</p>
+              <figure class="screen-figure">
+                <button class="screen-open" type="button" aria-label="WebサイトURL入力画面を拡大" data-screen-title="図 5：既存WebサイトのURLを入力" data-screen-description="サイトが検出されたことを確認してから、「分析して成長させる」を押します。">
+                  <img src="./images/02-onboarding-website-url.png" alt="既存WebサイトのURLを入力し、AI分析を開始する画面" width="2048" height="1023" loading="lazy" decoding="async">
+                </button>
+                <figcaption><strong>図 5：既存WebサイトのURLを入力</strong><span>サイトが検出されたことを確認してから、「分析して成長させる」を押します。</span></figcaption>
+              </figure>
+            </li>
+            <li><strong>AI分析を待つ</strong><p>事業理解、サイト分析、AIチーム、成長戦略、ブランド設定が順番に処理されます。</p></li>
+            <li>
+              <strong>事業理解の結果を確認</strong><p>会社名、業界、モデル、顧客、商品、提供価値、成長方針を確認し、必要なら編集します。</p>
+              <figure class="screen-figure">
+                <button class="screen-open" type="button" aria-label="AIが抽出した事業情報の確認画面を拡大" data-screen-title="図 6：AIが抽出した事業情報を確認" data-screen-description="市場、顧客、提供内容、SEOスコアを確認し、必要な項目を編集します。">
+                  <img src="./images/03-onboarding-business-confirmation.png" alt="AIが抽出した事業情報とWebサイトSEOスコアを確認する画面" width="2048" height="1025" loading="lazy" decoding="async">
+                </button>
+                <figcaption><strong>図 6：AIが抽出した事業情報を確認</strong><span>市場、顧客、提供内容、SEOスコアを確認し、必要な項目を編集します。</span></figcaption>
+              </figure>
+            </li>
+            <li>
+              <strong>AIチームと成長プランを承認</strong><p>担当内容と優先施策を確認して実行を開始します。</p>
+              <figure class="screen-figure">
+                <button class="screen-open" type="button" aria-label="作成されたAIチーム画面を拡大" data-screen-title="図 7：作成されたAIチームを確認" data-screen-description="各エージェントの役割とレポートラインを確認し、問題がなければ「続ける」を押します。">
+                  <img src="./images/04-onboarding-ai-team.png" alt="CEO、営業、マーケティング、データ分析、コンテンツ制作のAIチーム構成画面" width="2048" height="1024" loading="lazy" decoding="async">
+                </button>
+                <figcaption><strong>図 7：作成されたAIチームを確認</strong><span>各エージェントの役割とレポートラインを確認し、問題がなければ「続ける」を押します。</span></figcaption>
+              </figure>
+              <figure class="screen-figure">
+                <button class="screen-open" type="button" aria-label="成長マスタープラン画面を拡大" data-screen-title="図 8：成長マスタープランを承認" data-screen-description="SEO、コンテンツ、ソーシャルメディアの施策と優先度を確認して承認します。">
+                  <img src="./images/05-onboarding-growth-master-plan.png" alt="SEO、コンテンツ、ソーシャルメディアの成長マスタープラン確認画面" width="2048" height="1029" loading="lazy" decoding="async">
+                </button>
+                <figcaption><strong>図 8：成長マスタープランを承認</strong><span>SEO、コンテンツ、ソーシャルメディアの施策と優先度を確認して承認します。</span></figcaption>
+              </figure>
+            </li>
+            <li><strong>ダッシュボードへ移動</strong><p>セットアップ完了後、作成した会社のダッシュボードへ進みます。</p></li>
+          </ol>
+          <div class="note tip"><strong>セットアップ完了の目安</strong><p>正しい会社名と対象顧客が表示され、AIチームと成長プランを確認でき、ダッシュボードへ移動できれば完了です。</p></div>
+          <div class="note tip"><strong>入力例</strong><p>「日本の中小製造業向けに、見積作成を自動化するSaaS。営業責任者が主な利用者。導入の早さと日本語サポートが強み。」</p></div>
+          <div class="note warn"><strong>承認前の確認</strong><p>会社名と対象顧客、商品内容、ブランド表現の3点に重大な違いがないか確認してください。</p></div>
+        </section>
+
+        <section class="chapter" id="navigation">
+          <header class="chapter-head"><span class="chapter-index">05</span><h2>共通画面とナビゲーション</h2></header>
+          <div class="table-wrap"><table>
+            <thead><tr><th>場所</th><th>表示内容</th><th>使い方</th></tr></thead>
+            <tbody>
+              <tr><td>左サイドバー</td><td>会社切替、機能カテゴリ</td><td>目的の画面へ移動。モバイルはメニューを開く</td></tr>
+              <tr><td>上部ヘッダー</td><td>ガイド、言語、AI状態、通知、ユーザー</td><td>日本語切替、ガイド再開、ログアウト</td></tr>
+              <tr><td>ユーザーメニュー</td><td>クレジット残高、会社ロール</td><td>設定・チーム権限の確認</td></tr>
+              <tr><td>メイン領域</td><td>各画面の作業内容</td><td>主ボタン、ステータス、エラーを確認</td></tr>
+            </tbody>
+          </table></div>
+          <h3>5つのカテゴリ</h3>
+          <ul>
+            <li><strong>事業戦略：</strong>成長プラン、ブランドIQ、CEOアドバイザー、使い方ガイド。</li>
+            <li><strong>AIチーム：</strong>AIチーム、AI成果物、ナレッジハブ、ブレインハブ。</li>
+            <li><strong>実行：</strong>キャンペーン、LP、コンテンツ、GEO、市場、営業、SNS、チャネル、受信箱、チャットボット、素材。</li>
+            <li><strong>分析：</strong>Analytics。</li>
+            <li><strong>システム：</strong>Brain、Trust、クレジット・請求、チーム権限、設定、管理。</li>
+          </ul>
+          <h3>使い方ガイドを開く</h3><code class="route">/{companyId}/walkthrough</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="使い方ガイド画面を拡大" data-screen-title="図 9：使い方ガイドとQuick start" data-screen-description="主要機能の対応状況、マーケティングフレームワーク、6ステップの開始手順を確認します。">
+              <img src="./images/10-walkthrough-quick-start.png" alt="利用可能な機能とマーケティングフレームワーク、Quick startが表示された使い方ガイド画面" width="2048" height="958" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 9：使い方ガイドとQuick start</strong><span>主要機能の対応状況、マーケティングフレームワーク、6ステップの開始手順を確認します。</span></figcaption>
+          </figure>
+          <div class="note"><strong>ヘッダー検索</strong><p>検索機能は現在利用できません。目的の画面へ移動する場合は左サイドバーを使用してください。</p></div>
+        </section>
+
+        <section class="chapter" id="dashboard">
+          <header class="chapter-head"><span class="chapter-index">06</span><h2>ダッシュボードと毎日の使い方</h2></header>
+          <code class="route">/{companyId}</code>
+          <p class="lede">ダッシュボードは「今日、何をすべきか」を判断する出発点です。</p>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="ダッシュボード全体画面を拡大" data-screen-title="図 10：日々の作業を開始するダッシュボード" data-screen-description="セットアップ進捗、次に行うこと、レビュー待ちのAI成果物を確認します。">
+              <img src="./images/06-dashboard-overview.png" alt="セットアップチェックリストとAI成果物が表示された1Personダッシュボード" width="2048" height="1025" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 10：日々の作業を開始するダッシュボード</strong><span>セットアップ進捗、次に行うこと、レビュー待ちのAI成果物を確認します。</span></figcaption>
+          </figure>
+          <div class="table-wrap"><table>
+            <thead><tr><th>領域</th><th>意味</th><th>次の操作</th></tr></thead>
+            <tbody>
+              <tr><td>Getting Started</td><td>初期設定の進捗</td><td>未完了の項目を開く</td></tr>
+              <tr><td>Ready Outputs</td><td>レビュー待ちのAI成果物</td><td>確認、承認、アーカイブ</td></tr>
+              <tr><td>Growth Score</td><td>4領域の成長状態</td><td>低い領域のタスクを優先</td></tr>
+              <tr><td>Today's Focus</td><td>今日のミッション</td><td>完了またはスキップ</td></tr>
+              <tr><td>AI Team Overview</td><td>AIチームの活動</td><td>担当や成果物を確認</td></tr>
+              <tr><td>Quick Stats</td><td>Campaign、Deal、競合、会議</td><td>カードから詳細へ移動</td></tr>
+            </tbody>
+          </table></div>
+          <ol class="flow"><li>ダッシュボード確認</li><li>CEO提案を更新</li><li>最重要施策を実行</li><li>成果物をレビュー</li><li>結果を記録</li></ol>
+          <div class="note warn"><strong>クレジット</strong><p>AI生成などのコストは管理設定で変わります。操作直前に画面へ表示される値を基準にしてください。</p></div>
+        </section>
+
+        <section class="chapter" id="knowledge">
+          <header class="chapter-head"><span class="chapter-index">07</span><h2>KnowledgeとBrand IQ</h2></header>
+          <h3>Knowledgeに信頼する情報を追加</h3><code class="route">/{companyId}/knowledge</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="Knowledgeのドキュメント画面を拡大" data-screen-title="図 11：Knowledgeへ事業資料を追加" data-screen-description="Documentsタブでファイル、Webサイト、テキストを追加し、AIの学習状況を確認します。">
+              <img src="./images/12-knowledge-documents.png" alt="ファイル、Webサイト、テキストを追加できるKnowledgeのDocuments画面" width="2048" height="957" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 11：Knowledgeへ事業資料を追加</strong><span>Documentsタブでファイル、Webサイト、テキストを追加し、AIの学習状況を確認します。</span></figcaption>
+          </figure>
+          <ul>
+            <li>ファイルをアップロードします。1ファイル10MB未満です。</li>
+            <li>WebサイトURL、またはタイトルと詳細テキストを直接登録できます。</li>
+            <li>AIの抽出結果をプレビューして承認します。</li>
+            <li>公開範囲を public、internal、confidential から選びます。</li>
+            <li>AI Extracted、Raw Content、How AI Uses Thisで内容を確認します。</li>
+          </ul>
+          <div class="note tip"><strong>Knowledge登録完了の目安</strong><p>内容をプレビューし、事実が正しいことと公開範囲を確認して承認済みになれば、AIが参照できる状態です。古い資料や重複資料は定期的に整理してください。</p></div>
+          <h3>Webサイトと公開情報を取り込む</h3><code class="route">/{companyId}/knowledge/crawl</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="Knowledgeのデータクロール画面を拡大" data-screen-title="図 12：Webサイトと公開情報をクロール" data-screen-description="検出したソースを選択し、Knowledgeへ安全にインポートします。">
+              <img src="./images/14-knowledge-web-crawl.png" alt="Webサイトや公開情報を検出しKnowledgeへ取り込むデータクロール画面" width="2048" height="950" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 12：Webサイトと公開情報をクロール</strong><span>検出したソースを選択し、Knowledgeへ安全にインポートします。</span></figcaption>
+          </figure>
+          <h3>Brand IQを確認</h3><code class="route">/{companyId}/brand-iq</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="Brand IQ画面を拡大" data-screen-title="図 13：Brand IQの確認と編集" data-screen-description="タグライン、Voice、Audience personasなど、AIが参照するブランド基準を管理します。">
+              <img src="./images/07-brand-iq-overview.png" alt="タグラインとブランドボイスが表示されたBrand IQ画面" width="2048" height="966" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 13：Brand IQの確認と編集</strong><span>タグライン、Voice、Audience personasなど、AIが参照するブランド基準を管理します。</span></figcaption>
+          </figure>
+          <ul>
+            <li>Webサイトや補足コンテキストからBrand IQを生成します。</li>
+            <li>ブランドボイス、対象顧客、ポジショニング、視覚情報、ロゴ、色、フォント、OKRを編集します。</li>
+            <li>保存後、ブログ、広告、SNS、LP、チャット回答などがこの基準を参照します。</li>
+          </ul>
+          <div class="note tip"><strong>出力が的外れな場合</strong><p>プロンプトを増やす前に、KnowledgeとBrand IQの事実、顧客、トーンを修正してください。</p></div>
+        </section>
+
+        <section class="chapter" id="brain">
+          <header class="chapter-head"><span class="chapter-index">08</span><h2>AIチーム、Brain、AI成果物</h2></header>
+          <h3>AIチームの構成を確認</h3><code class="route">/{companyId}/team</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="AIチーム画面を拡大" data-screen-title="図 14：AIチームの構成と担当を確認" data-screen-description="組織図で指揮系統を確認し、Team detailsから各エージェントの専門性、KPI、質問画面を開きます。">
+              <img src="./images/11-ai-team-overview.png" alt="AIエージェントの組織図と担当詳細が表示されたYour AI team画面" width="2048" height="1029" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 14：AIチームの構成と担当を確認</strong><span>組織図で指揮系統を確認し、Team detailsから各エージェントの専門性、KPI、質問画面を開きます。</span></figcaption>
+          </figure>
+          <h3>BrainとAI成果物を使う</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>画面</th><th>役割</th><th>主な利用</th></tr></thead>
+            <tbody>
+              <tr><td>Brain</td><td>構造化された会社の記憶</td><td>ブランド、ペルソナ、商品、営業・市場の前提を確認</td></tr>
+              <tr><td>Brain Hub</td><td>リアルタイムのシグナル層</td><td>Sources、Event stream、Watchers、Reactions、検索、分析</td></tr>
+              <tr><td>AI Outputs</td><td>AI成果物のレビュー面</td><td>確認、承認、アーカイブ、根拠の参照</td></tr>
+            </tbody>
+          </table></div>
+          <code class="route">/{companyId}/brain</code> <code class="route">/{companyId}/brain-hub</code>
+          <ol class="steps">
+            <li><strong>Sourcesへ情報を追加</strong><p>PDFやCSVをアップロード、またはテキストを一括登録します。</p></li>
+            <li><strong>Event streamを確認</strong><p>チャット、受信メッセージ、リード、アップロードから入ったイベントを確認します。</p></li>
+            <li><strong>Watchersを管理</strong><p>繰り返し質問、営業反論、解約リスク、競合言及などの検知を有効または停止します。</p></li>
+            <li><strong>Today's Reactionsをレビュー</strong><p>FAQ案、記事案、注意通知を承認または却下します。</p></li>
+          </ol>
+        </section>
+
+        <section class="chapter" id="advisor">
+          <header class="chapter-head"><span class="chapter-index">09</span><h2>CEOアドバイザーと成長プラン</h2></header>
+          <code class="route">/{companyId}/insights</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="CEOアドバイザーの概要画面を拡大" data-screen-title="図 15：CEOアドバイザーで今日の優先事項を確認" data-screen-description="Today's Brief、市場シグナル、今週のアクションを読み、最初に実行する施策を決めます。">
+              <img src="./images/08-ceo-advisor-brief.png" alt="Today's Briefと市場シグナル、Weekly Actionsが表示されたCEOアドバイザー画面" width="2048" height="965" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 15：CEOアドバイザーで今日の優先事項を確認</strong><span>Today's Brief、市場シグナル、今週のアクションを読み、最初に実行する施策を決めます。</span></figcaption>
+          </figure>
+          <ol class="steps">
+            <li><strong>最新のアドバイスを開く</strong><p>初回は作成準備中または空状態が表示されます。</p></li>
+            <li><strong>Refreshを実行</strong><p>表示されたクレジットと権限を確認します。</p></li>
+            <li><strong>見出し、Wins、優先アクションを読む</strong><p>市場、Knowledge、キャンペーン、営業、会議などの根拠を確認します。</p></li>
+            <li><strong>実行画面へ移動</strong><p>GoまたはOpen outputから対象画面へ進み、作成・レビューを行います。</p></li>
+          </ol>
+          <h3>優先提案の根拠と実行内容を読む</h3>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="CEOの優先提案詳細画面を拡大" data-screen-title="図 16：CEOの優先提案を詳細確認" data-screen-description="課題、根拠、推奨内容、期待効果、今日行うこと、担当部門を確認してから実行へ進みます。">
+              <img src="./images/09-ceo-advisor-priority-detail.png" alt="課題、根拠、推奨内容、期待効果が表示されたCEO Strategic Priorities画面" width="2048" height="1023" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 16：CEOの優先提案を詳細確認</strong><span>課題、根拠、推奨内容、期待効果、今日行うこと、担当部門を確認してから実行へ進みます。</span></figcaption>
+          </figure>
+          <code class="route">/{companyId}/growth-plan</code> <code class="route">/{companyId}/outputs</code>
+          <div class="note tip"><strong>意思決定のコツ</strong><p>すべてを同時に実行せず、Impactが高く、期限が近く、根拠が明確な1件を選びます。最終判断はユーザーが行います。</p></div>
+        </section>
+
+          <section class="chapter" id="campaign">
+          <header class="chapter-head"><span class="chapter-index">10</span><h2>キャンペーン作成・レビュー</h2></header>
+          <code class="route">/{companyId}/campaigns</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="キャンペーン一覧画面を拡大" data-screen-title="図 17：キャンペーンの生成状態を確認" data-screen-description="一覧でgenerating、readyなどの状態を確認し、新規作成またはレビュー対象を開きます。">
+              <img src="./images/15-campaign-list.png" alt="生成中と準備完了のキャンペーンが表示されたキャンペーン一覧画面" width="2048" height="958" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 17：キャンペーンの生成状態を確認</strong><span>一覧でgenerating、readyなどの状態を確認し、新規作成またはレビュー対象を開きます。</span></figcaption>
+          </figure>
+          <div class="note"><strong>作成前の確認</strong><p>対象顧客、商品・オファー、ブランドボイス、公開責任者、使用可能なクレジットを確認します。情報が不足している場合は、先にKnowledgeまたはBrand IQを更新してください。</p></div>
+          <ol class="steps">
+            <li><strong>Brain Readinessを確認</strong><p>ブランドボイス、主要ペルソナ、商品情報が正しいことを確認します。</p></li>
+            <li><strong>Generate Campaignを押す</strong><p>作成権限とクレジット消費権限が必要です。</p></li>
+            <li><strong>目標と対象顧客を入力</strong><p>地域、業種、役職、課題まで具体的にします。</p></li>
+            <li><strong>参照資料を選ぶ</strong><p>商品、オファー、ポジショニング資料を追加します。</p></li>
+            <li><strong>品質ティアを選ぶ</strong><p>Fast、Balanced、Premiumから選び、表示クレジットを確認して生成します。</p></li>
+            <li><strong>生成中の進捗を確認</strong><p>詳細画面の進捗パネルでReadyまたはFailedになるまで待ちます。</p></li>
+          </ol>
+          <h3>キャンペーンランチャーで作成</h3><code class="route">/{companyId}/launch</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="キャンペーンランチャー画面を拡大" data-screen-title="図 18：提案からキャンペーンを作成" data-screen-description="AIの提案を選び、キャンペーンの焦点と伝える内容を調整して生成を開始します。">
+              <img src="./images/16-campaign-launcher.png" alt="事業向けの提案とキャンペーン入力欄が表示されたCampaign Launcher画面" width="2048" height="961" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 18：提案からキャンペーンを作成</strong><span>AIの提案を選び、キャンペーンの焦点と伝える内容を調整して生成を開始します。</span></figcaption>
+          </figure>
+          <h3>レビューから開始まで</h3><code class="route">/{companyId}/campaigns/{campaignId}</code>
+          <ol class="flow"><li>Planを確認</li><li>バナー・投稿を編集</li><li>根拠を確認</li><li>Launch</li><li>Learnで改善</li></ol>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="キャンペーン詳細画面を拡大" data-screen-title="図 19：キャンペーン計画と生成物をレビュー" data-screen-description="対象顧客、コアメッセージ、生成済みアセット、成功指標を確認し、バナーや投稿のレビューへ進みます。">
+              <img src="./images/23-campaign-detail.png" alt="キャンペーン計画、対象顧客、生成アセット、成功指標が表示された詳細画面" width="2048" height="963" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 19：キャンペーン計画と生成物をレビュー</strong><span>対象顧客、コアメッセージ、生成済みアセット、成功指標を確認し、バナーや投稿のレビューへ進みます。</span></figcaption>
+          </figure>
+          <h3>キャンペーン動画を作成</h3>
+          <ol class="steps">
+            <li><strong>Videosで形式を選ぶ</strong><p>公開先に合わせてVerticalまたはWideを選び、「Create AI video」を押します。</p></li>
+            <li><strong>動画の焦点を入力</strong><p>強調したい商品、対象顧客、雰囲気、伝えたい内容を具体的に入力します。空欄でも作成できます。</p></li>
+            <li><strong>画像ソースを選ぶ</strong><p>必要に応じて画像をアップロードするかDriveから選択します。画像を選ばない場合は、キャンペーン情報からAIが映像を作成します。</p></li>
+            <li><strong>クレジットを確認して作成</strong><p>ボタンに表示される消費クレジット（画面例では50）を確認し、「Create video」を押します。</p></li>
+            <li><strong>生成結果をレビュー</strong><p>内容、縦横比、テキスト、ブランド表現を確認してから公開対象へ追加します。</p></li>
+          </ol>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="キャンペーン動画作成画面を拡大" data-screen-title="図 20：AIキャンペーン動画を作成" data-screen-description="動画の焦点と任意の参照画像を指定し、表示された消費クレジットを確認して生成します。">
+              <img src="./images/29-campaign-video-creation.png" alt="動画の焦点、画像ソース、消費クレジットを指定するCreate campaign videoダイアログ" width="2048" height="1019" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 20：AIキャンペーン動画を作成</strong><span>動画の焦点と任意の参照画像を指定し、表示された消費クレジットを確認して生成します。</span></figcaption>
+          </figure>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="SNS投稿プレビュー画面を拡大" data-screen-title="図 21：チャネル別のSNS投稿を確認・編集" data-screen-description="各チャネル向けの文章、画像、ハッシュタグ、表示レイアウトを確認し、必要な投稿を編集します。">
+              <img src="./images/26-campaign-social-posts.png" alt="LinkedInとInstagram向けSNS投稿のプレビューが表示されたキャンペーン詳細画面" width="2048" height="951" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 21：チャネル別のSNS投稿を確認・編集</strong><span>各チャネル向けの文章、画像、ハッシュタグ、表示レイアウトを確認し、必要な投稿を編集します。</span></figcaption>
+          </figure>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="キャンペーン公開前確認画面を拡大" data-screen-title="図 22：Launch readinessを最終確認" data-screen-description="戦略、バナー、ブログ、接続先と公開対象のSNS投稿を確認し、選択した成果物だけを公開へ進めます。">
+              <img src="./images/24-campaign-launch-readiness.png" alt="キャンペーンの公開条件とSNS投稿選択が表示されたLaunch readinessダイアログ" width="2048" height="1027" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 22：Launch readinessを最終確認</strong><span>戦略、バナー、ブログ、接続先と公開対象のSNS投稿を確認し、選択した成果物だけを公開へ進めます。</span></figcaption>
+          </figure>
+          <h3>公開前の最終確認</h3>
+          <ul>
+            <li>対象顧客、商品名、価格、日付、地域、CTAがキャンペーン計画と一致している。</li>
+            <li>画像、音楽、ロゴ、引用、人物情報を公開できる権利がある。</li>
+            <li>リンク先が正しく、フォーム送信とモバイル表示を確認している。</li>
+            <li>公開するSNS投稿・バナー・ブログだけを選択している。</li>
+            <li>チャネル、公開日時、消費クレジット、最終承認者を確認している。</li>
+          </ul>
+          <div class="note danger"><strong>人による承認が必要です</strong><p>AIの生成物をそのまま公開しないでください。誤情報、価格、日付、権利関係、個人情報、リンク先、ブランドトーンを確認し、責任者の承認後にLaunchします。</p></div>
+          <div class="note tip"><strong>開始完了の目安</strong><p>キャンペーンがreadyまたは公開待ちの状態になり、選択した成果物と公開先をLaunch readinessで確認できればレビュー工程は完了です。</p></div>
+        </section>
+
+        <section class="chapter" id="landing">
+          <header class="chapter-head"><span class="chapter-index">11</span><h2>ランディングページ作成・公開</h2></header>
+          <code class="route">/{companyId}/landing-pages</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="ランディングページ一覧画面を拡大" data-screen-title="図 23：ランディングページを管理" data-screen-description="ページ数、公開状況、訪問者、リードを確認し、下書きの編集または新規生成へ進みます。">
+              <img src="./images/17-landing-pages-overview.png" alt="ページ指標と下書き一覧が表示されたランディングページ管理画面" width="2048" height="958" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 23：ランディングページを管理</strong><span>ページ数、公開状況、訪問者、リードを確認し、下書きの編集または新規生成へ進みます。</span></figcaption>
+          </figure>
+          <ol class="steps">
+            <li><strong>新しいページを作成</strong><p>ページ名、目的、対象顧客、特徴、デザイン方向を入力します。</p></li>
+            <li><strong>生成完了を待つ</strong><p>ステータスはgeneratingからreadyへ変わります。</p></li>
+            <li><strong>Previewで確認</strong><p>ヒーロー、特徴、FAQ、リードフォーム、CTA、モバイル表示を確認します。</p></li>
+            <li><strong>Editで修正</strong><p>文章、画像、構成を修正します。</p></li>
+            <li><strong>Publishを開く</strong><p>公開先を1Person hosted websiteまたはWordPressから選びます。</p></li>
+            <li><strong>公開履歴を確認</strong><p>公開バージョン、失敗、プレビュー、更新履歴を確認します。</p></li>
+          </ol>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="ランディングページ編集画面を拡大" data-screen-title="図 24：ブロックエディターでページを編集" data-screen-description="編集対象のブロックを選び、右側のパネルからHero、Problem、Solution、FAQ、画像などを追加・調整します。">
+              <img src="./images/25-landing-page-editor.png" alt="ヒーローセクションとブロック追加パネルが表示されたランディングページエディター" width="2048" height="962" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 24：ブロックエディターでページを編集</strong><span>編集対象のブロックを選び、右側のパネルからHero、Problem、Solution、FAQ、画像などを追加・調整します。</span></figcaption>
+          </figure>
+          <div class="table-wrap"><table>
+            <thead><tr><th>公開先</th><th>入力・条件</th><th>結果</th></tr></thead>
+            <tbody><tr><td>Hosted</td><td>利用可能なサブドメインを入力</td><td>1Person上の公開URLを作成</td></tr><tr><td>WordPress</td><td>SettingsでWordPress接続が必要</td><td>下書き作成または即時公開</td></tr></tbody>
+          </table></div>
+        </section>
+
+        <section class="chapter" id="content">
+          <header class="chapter-head"><span class="chapter-index">12</span><h2>コンテンツ、SEO、GEO、SNS</h2></header>
+          <div class="table-wrap"><table>
+            <thead><tr><th>画面</th><th>向いている用途</th><th>基本操作</th><th>利用可否の確認</th></tr></thead>
+            <tbody>
+              <tr><td>Campaign Launcher</td><td>1キーワードから複数チャネル</td><td>ブログ、画像、SNS下書き、GEOを一括生成</td><td>生成ボタンとクレジット表示を確認</td></tr>
+              <tr><td>Content Autopilot</td><td>継続的なSEO記事</td><td>頻度とトピック列を設定、Run one nowでテスト</td><td>Run one nowが有効か確認</td></tr>
+              <tr><td>Content Editor</td><td>既存記事の改善</td><td>原稿とキーワードを貼付、Grade、上位提案を修正</td><td>Gradeを実行できるか確認</td></tr>
+              <tr><td>AI Visibility</td><td>AI検索での可視性</td><td>顧客の質問を登録、Run Now、競合比較</td><td>Run Nowとクレジット表示を確認</td></tr>
+              <tr><td>Social Media</td><td>SNS下書き・予約・公開</td><td>接続済みチャネルへ公開。他は下書きとして確認</td><td>Channelsの接続状態を確認</td></tr>
+              <tr><td>動画作成・公開</td><td>キャンペーン動画</td><td>キャンペーンから動画を生成し、対応する公開先を選択</td><td>作成ボタン、公開先、クレジットを確認</td></tr>
+            </tbody>
+          </table></div>
+          <div class="note"><strong>機能の提供状況</strong><p>ボタンが表示されない、Coming soonと表示される、または権限エラーになる機能は利用できません。画面の表示を最新情報として確認してください。</p></div>
+          <ol class="flow"><li>Brand IQ</li><li>WordPress接続</li><li>競合追加</li><li>GEO基準値</li><li>Launcher</li><li>公開・測定</li></ol>
+        </section>
+
+        <section class="chapter" id="market">
+          <header class="chapter-head"><span class="chapter-index">13</span><h2>市場・競合分析</h2></header>
+          <code class="route">/{companyId}/market</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="市場と競合分析画面を拡大" data-screen-title="図 25：競合を登録してスキャン" data-screen-description="競合ごとのURLとキーワードを確認し、Scan nowで最新情報を取得して次のアクションへつなげます。">
+              <img src="./images/18-market-competitors.png" alt="登録した競合とScan now操作が表示された市場・競合分析画面" width="2048" height="1025" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 25：競合を登録してスキャン</strong><span>競合ごとのURLとキーワードを確認し、Scan nowで最新情報を取得して次のアクションへつなげます。</span></figcaption>
+          </figure>
+          <ol class="steps">
+            <li><strong>競合を追加</strong><p>名称、WebサイトURL、最大3件のキーワード、メモを入力します。</p></li>
+            <li><strong>AI提案を使う</strong><p>Suggested competitorsで候補を生成し、個別または一括で追加します。</p></li>
+            <li><strong>Scan nowを実行</strong><p>表示クレジットを確認し、Webサイトやニュースのシグナルを取得します。</p></li>
+            <li><strong>シグナルを確認</strong><p>価格変更、製品発表、採用、ニュース、コンテンツを読み、推奨アクションを判断します。</p></li>
+            <li><strong>情報を更新</strong><p>必要に応じてURL、キーワード、メモを編集します。</p></li>
+          </ol>
+          <div class="note tip"><strong>良いキーワード</strong><p>ブランド名に加え、pricing、launch、fundingや主要商品のカテゴリ語から、意思決定に使う3件を選びます。</p></div>
+        </section>
+
+        <section class="chapter" id="sales">
+          <header class="chapter-head"><span class="chapter-index">14</span><h2>営業とAI Deal Assistant</h2></header>
+          <code class="route">/{companyId}/sales</code>
+          <p>商談はDiscovery → Qualified → Proposal → Negotiation → Won／Lostの6列で管理します。</p>
+          <ol class="steps">
+            <li><strong>New dealを押す</strong><p>タイトルは必須です。連絡先、会社名、金額、初期ステージを入力します。</p></li>
+            <li><strong>商談カードを開く</strong><p>ステージ、金額、通貨、次のアクション、メモを更新します。</p></li>
+            <li><strong>Ask AI Assistantを実行</strong><p>画面表示では1回3クレジットです。次の行動、理由、想定反論、メール案、信頼度を返します。</p></li>
+            <li><strong>提案を採用</strong><p>Set as next actionで反映します。メール案はコピーし、外部メールで確認して送信します。</p></li>
+            <li><strong>Timelineを確認</strong><p>作成、ステージ変更、AI提案などの履歴を確認します。</p></li>
+          </ol>
+          <div class="note danger"><strong>メール送信</strong><p>Deal Assistantはメール案を作成しますが、このフローでは自動送信しません。宛先、価格、日付、敬称、機密情報を確認してください。</p></div>
+        </section>
+
+        <section class="chapter" id="meetings">
+          <header class="chapter-head"><span class="chapter-index">15</span><h2>会議・議事録・学習ループ</h2></header>
+          <code class="route">/{companyId}/meetings</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="Meeting Intelligence画面を拡大" data-screen-title="図 26：会議データを追加" data-screen-description="ブラウザ録音、音声アップロード、議事録の貼り付けから入力方法を選びます。">
+              <img src="./images/13-knowledge-meetings.png" alt="録音、音声アップロード、文字起こし貼り付けを選べるMeeting Intelligence画面" width="2048" height="954" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 26：会議データを追加</strong><span>ブラウザ録音、音声アップロード、議事録の貼り付けから入力方法を選びます。</span></figcaption>
+          </figure>
+          <ol class="steps">
+            <li><strong>入力方法を選ぶ</strong><p>ブラウザ録音、音声ファイル、またはタイトルと議事録テキストを使います。</p></li>
+            <li><strong>マイク権限を許可</strong><p>録音未対応のブラウザでは音声アップロードを使います。</p></li>
+            <li><strong>AI分析を待つ</strong><p>文字起こし、要約、決定事項、タスク、キーワード、戦略・市場・営業の示唆を生成します。</p></li>
+            <li><strong>結果をレビュー</strong><p>誤認識を修正し、必要なら再分析します。</p></li>
+            <li><strong>Approveを実行</strong><p>承認した知見がKnowledgeやBrainへ入り、次の提案で利用されます。</p></li>
+          </ol>
+          <ol class="flow"><li>録音・議事録</li><li>AI要約</li><li>人が承認</li><li>Knowledge・Brain</li><li>次回提案へ反映</li></ol>
+          <div class="note"><strong>音声解析を利用できない場合</strong><p>音声アップロード後に手動議事録の追加を案内された場合は、文字起こしテキストを貼り付けて分析します。</p></div>
+        </section>
+
+        <section class="chapter" id="customers">
+          <header class="chapter-head"><span class="chapter-index">16</span><h2>Chatbot、Channels、Inbox</h2></header>
+          <div class="table-wrap"><table>
+            <thead><tr><th>画面</th><th>役割</th><th>基本操作</th><th>利用可否の確認</th></tr></thead>
+            <tbody>
+              <tr><td>Chatbot</td><td>Webサイト接客</td><td>Knowledgeを基に回答、リード獲得、会話確認</td><td>New ChatbotとDeployを確認</td></tr>
+              <tr><td>Channels</td><td>外部チャネル接続</td><td>Facebookでサインインし、管理するPageを選択</td><td>接続ボタンとConnected accountsを確認</td></tr>
+              <tr><td>Inbox &amp; Messages</td><td>受信箱の統合</td><td>スレッドを開き、AI自動返信OFF時は手動返信</td><td>接続済みチャネルの受信を確認</td></tr>
+              <tr><td>Zalo・WhatsApp・Instagram</td><td>追加チャネル</td><td>利用可能になったチャネルを接続</td><td>Coming soon表示中は利用不可</td></tr>
+            </tbody>
+          </table></div>
+          <h3>公開チャネルを接続</h3><code class="route">/{companyId}/channels</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="Channels画面を拡大" data-screen-title="図 27：公開チャネルを接続" data-screen-description="利用可能なチャネルと対応状況を確認し、Facebook Pageなどのアカウントを接続します。">
+              <img src="./images/19-channels-overview.png" alt="Facebook Pageと今後対応予定のチャネルが表示されたChannels画面" width="2048" height="1009" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 27：公開チャネルを接続</strong><span>利用可能なチャネルと対応状況を確認し、Facebook Pageなどのアカウントを接続します。</span></figcaption>
+          </figure>
+          <h3>Chatbotを設定してテスト</h3><code class="route">/{companyId}/chatbot</code>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="Chatbot設定画面を拡大" data-screen-title="図 28：Chatbotを設定してテスト" data-screen-description="ボット名、挨拶文、トーン、モード、色を設定し、右側のWidget previewで応答を確認します。">
+              <img src="./images/20-chatbot-training.png" alt="Chatbotの設定フォームとWidget previewが並んだTraining画面" width="2048" height="958" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 28：Chatbotを設定してテスト</strong><span>ボット名、挨拶文、トーン、モード、色を設定し、右側のWidget previewで応答を確認します。</span></figcaption>
+          </figure>
+          <h3>受信メッセージを確認</h3><code class="route">/{companyId}/inbox/messages</code>
+          <ol class="flow"><li>Knowledgeを整える</li><li>Chatbotを設定</li><li>Pageを接続</li><li>テスト会話</li><li>Inboxを確認</li></ol>
+        </section>
+
+        <section class="chapter" id="analytics">
+          <header class="chapter-head"><span class="chapter-index">17</span><h2>Analyticsとシステム設定</h2></header>
+          <h3>成果を確認する</h3>
+          <code class="route">/{companyId}/analytics</code>
+          <ul>
+            <li>Google接続後、GA4 Property IDを保存してセッション、ユーザー、コンバージョン、上位ページ、流入チャネルを取得します。</li>
+            <li>Revenue、Overview、SEOタブを切り替えて目的別に確認します。</li>
+            <li>接続が難しい場合は、GA4や広告管理画面の画像を貼り、質問を入力してAI分析できます。</li>
+            <li>分析結果を優先アクションへ変換し、キャンペーンやコンテンツ改善へ戻します。</li>
+          </ul>
+          <figure class="screen-figure">
+            <button class="screen-open" type="button" aria-label="Analytics画面を拡大" data-screen-title="図 29：トラフィックと成果を分析" data-screen-description="Google Analytics 4を接続するかレポート画像をアップロードし、売上、広告費、ROAS、CPA、コンバージョンを確認します。">
+              <img src="./images/27-analytics-overview.png" alt="GA4接続、スクリーンショット分析、売上指標が表示されたAnalytics画面" width="2048" height="1023" loading="lazy" decoding="async">
+            </button>
+            <figcaption><strong>図 29：トラフィックと成果を分析</strong><span>Google Analytics 4を接続するかレポート画像をアップロードし、売上、広告費、ROAS、CPA、コンバージョンを確認します。</span></figcaption>
+          </figure>
+          <h3>会社とアカウントを管理する</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>画面</th><th>確認・設定内容</th></tr></thead>
+            <tbody>
+              <tr><td>Trust</td><td>AI操作、監査、根拠、信頼性情報</td></tr>
+              <tr><td>Credits &amp; Billing</td><td>残高、プラン、トップアップ、使用履歴、参照ID</td></tr>
+              <tr><td>Team Access</td><td>自分のロール、メンバー追加、ロール変更、利用クレジット</td></tr>
+              <tr><td>Settings</td><td>会社情報、アカウント、外部連携、Webサイト公開先</td></tr>
+            </tbody>
+          </table></div>
+          <div class="note danger"><strong>認証情報</strong><p>WordPress Application Password、Custom API認証、GitHub tokenは共有画面やスクリーンショットへ写さないでください。</p></div>
+        </section>
+
+        <section class="chapter" id="screens">
+          <header class="chapter-head"><span class="chapter-index">18</span><h2>主要画面一覧</h2></header>
+          <div class="table-wrap"><table>
+            <thead><tr><th>画面</th><th>ルート</th><th>目的</th></tr></thead>
+            <tbody>
+              <tr><td>ダッシュボード</td><td>/{companyId}</td><td>優先事項、進捗、AIチーム、簡易指標</td></tr>
+              <tr><td>成長プラン</td><td>/growth-plan</td><td>成長戦略と優先アクション</td></tr>
+              <tr><td>Brand IQ</td><td>/brand-iq</td><td>声、顧客、位置づけ、視覚、OKR</td></tr>
+              <tr><td>CEOアドバイザー</td><td>/insights</td><td>横断データから重要行動を提案</td></tr>
+              <tr><td>AIチーム</td><td>/team</td><td>AIメンバー、専門領域、会話</td></tr>
+              <tr><td>AI成果物</td><td>/outputs</td><td>レビュー、承認、アーカイブ</td></tr>
+              <tr><td>Knowledge</td><td>/knowledge</td><td>資料、URL、テキスト、承認、検索</td></tr>
+              <tr><td>Brain Hub</td><td>/brain-hub</td><td>Sources、イベント、Watchers、Reactions</td></tr>
+              <tr><td>Campaigns</td><td>/campaigns</td><td>施策生成、レビュー、開始、学習</td></tr>
+              <tr><td>Landing Pages</td><td>/landing-pages</td><td>LP生成、編集、公開、ブログ</td></tr>
+              <tr><td>Campaign Launcher</td><td>/launch</td><td>1キーワードから複数チャネルへ生成</td></tr>
+              <tr><td>Content Autopilot</td><td>/autopilot</td><td>定期的なブログ自動生成</td></tr>
+              <tr><td>Content Editor</td><td>/editor</td><td>SEO・GEO評価と改善提案</td></tr>
+              <tr><td>AI Visibility</td><td>/geo</td><td>AI検索のShare of Voice</td></tr>
+              <tr><td>Market</td><td>/market</td><td>競合、スキャン、シグナル</td></tr>
+              <tr><td>Sales</td><td>/sales</td><td>商談とAI Deal Assistant</td></tr>
+              <tr><td>Channels</td><td>/channels</td><td>外部チャネル連携</td></tr>
+              <tr><td>Inbox</td><td>/inbox/messages</td><td>チャネル横断メッセージ</td></tr>
+              <tr><td>Chatbot</td><td>/chatbot</td><td>Webチャット設定と会話</td></tr>
+              <tr><td>Analytics</td><td>/analytics</td><td>GA4、SEO、画像分析</td></tr>
+              <tr><td>Settings</td><td>/settings</td><td>会社、連携、公開先、アカウント</td></tr>
+            </tbody>
+          </table></div>
+          <div class="note"><strong>ルートの読み方</strong><p>機能ルートの前には通常「/{companyId}」が付きます。会社IDを直接入力せず、サイドバーから移動してください。</p></div>
+          <h3>画面でよく使うステータス</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>表示</th><th>意味</th><th>次の操作</th></tr></thead>
+            <tbody>
+              <tr><td>Draft／下書き</td><td>まだ公開されていない編集可能な状態</td><td>内容をレビューして保存</td></tr>
+              <tr><td>Generating</td><td>AIが成果物を作成中</td><td>重複操作せず完了を待つ</td></tr>
+              <tr><td>Ready</td><td>生成が完了しレビューできる状態</td><td>内容と公開先を確認</td></tr>
+              <tr><td>Failed</td><td>処理が完了しなかった状態</td><td>入力、権限、クレジットを確認して再実行</td></tr>
+              <tr><td>Published／Live</td><td>外部または公開URLへ反映済み</td><td>公開ページと分析データを確認</td></tr>
+              <tr><td>Coming soon</td><td>現在は利用できない機能</td><td>利用開始の案内を待つ</td></tr>
+            </tbody>
+          </table></div>
+        </section>
+
+        <section class="chapter" id="security">
+          <header class="chapter-head"><span class="chapter-index">19</span><h2>安全に利用するために</h2></header>
+          <p class="lede">1Personへ登録した情報はAIの提案や生成物で参照されます。必要な情報だけを登録し、公開前には必ず人が確認してください。</p>
+          <h3>情報を追加するとき</h3>
+          <ul>
+            <li>Knowledgeの公開範囲は、用途に合わせてpublic、internal、confidentialから選びます。</li>
+            <li>パスワード、API key、token、秘密鍵、カード情報はKnowledgeやプロンプトへ入力しません。</li>
+            <li>個人情報、顧客情報、契約情報は、社内ルールと利用目的を確認してから登録します。</li>
+            <li>不要になった資料、古い価格、終了したキャンペーン情報は更新または削除します。</li>
+          </ul>
+          <h3>公開・外部連携するとき</h3>
+          <ul>
+            <li>公開操作は権限を持つ担当者が行い、対象ページ・投稿・チャネルを再確認します。</li>
+            <li>Facebook、Google Analytics、WordPressなどの連携先では、必要最小限の権限を使用します。</li>
+            <li>担当者の変更や利用終了時は、チーム権限と外部連携を速やかに見直します。</li>
+            <li>AIが生成した事実、数値、引用、著作物、人物画像は、責任者が確認してから公開します。</li>
+          </ul>
+          <div class="note danger"><strong>スクリーンショットを共有する前に</strong><p>氏名、メールアドレス、顧客情報、URL内のtoken、請求情報、認証情報を隠してください。サポートに送る場合も同じです。</p></div>
+        </section>
+
+        <section class="chapter" id="troubleshooting">
+          <header class="chapter-head"><span class="chapter-index">20</span><h2>トラブルシューティング</h2></header>
+          <div class="table-wrap"><table>
+            <thead><tr><th>症状</th><th>確認事項</th><th>対応</th></tr></thead>
+            <tbody>
+              <tr><td>ログインできない</td><td>承認待ち、メール、パスワード</td><td>管理者に承認状況を確認。入力を再確認</td></tr>
+              <tr><td>画面が空・読込失敗</td><td>通信状態、会社選択</td><td>再読込またはTry again。継続時はエラーを記録</td></tr>
+              <tr><td>ボタンが無効</td><td>会社ロールと権限</td><td>オーナーまたは管理者へ変更を依頼</td></tr>
+              <tr><td>AI生成が始まらない</td><td>入力、クレジット、権限</td><td>不足項目を修正して再実行</td></tr>
+              <tr><td>AI出力が不正確</td><td>Knowledge、Brand IQ、参照資料</td><td>元情報を修正して再生成。公開前に確認</td></tr>
+              <tr><td>音声を文字起こし不可</td><td>ブラウザ、マイク、音声形式</td><td>音声アップロードか手動議事録を利用</td></tr>
+              <tr><td>SNS公開できない</td><td>チャネル、Page権限、クレジット</td><td>Channelsで再接続し対象Pageを確認</td></tr>
+              <tr><td>WordPress公開不可</td><td>URL、ユーザー、Application Password</td><td>Settingsで接続テスト後に再公開</td></tr>
+            </tbody>
+          </table></div>
+          <h3>問い合わせ時に伝える情報</h3>
+          <ul>
+            <li>発生した日時と操作した会社名。</li>
+            <li>画面名とURL。トークンや機密クエリは除きます。</li>
+            <li>表示されたエラーメッセージ全文。</li>
+            <li>実行前後のステータスとクレジット変化。</li>
+            <li>再現手順と、機密情報を隠したスクリーンショット。</li>
+          </ul>
+          <div class="note tip"><strong>問い合わせ先</strong><p>解決しない場合は <a href="mailto:support@1person.ai">support@1person.ai</a> へ連絡してください。会社名、画面名、発生日時、再現手順、機密情報を隠した画像を添えると確認が早くなります。</p></div>
+          <div class="note danger"><strong>機密情報を送らない</strong><p>パスワード、JWT、API key、WordPress Application Password、GitHub token、個人情報を問い合わせ文や画像に含めないでください。</p></div>
+        </section>
+
+        <section class="chapter" id="quickstart">
+          <header class="chapter-head"><span class="chapter-index">21</span><h2>30分クイックスタート</h2></header>
+          <div class="checklist">
+            <ol class="steps">
+              <li><strong>0～5分：ログインと会社確認</strong><p>日本語、正しい会社、自分のロール、クレジット残高を確認します。</p></li>
+              <li><strong>5～12分：Knowledgeを追加</strong><p>商品資料、FAQ、Webサイトの最重要な1～3件を追加して承認します。</p></li>
+              <li><strong>12～17分：Brand IQを確認</strong><p>顧客、ブランドボイス、価値提案、色・ロゴを確認します。</p></li>
+              <li><strong>17～22分：CEOアドバイザー</strong><p>最初の提案を生成し、最重要アクションを1件選びます。</p></li>
+              <li><strong>22～30分：最初の施策</strong><p>キャンペーン、競合追加、GEO基準値、営業商談のいずれか1件を実行します。</p></li>
+            </ol>
+            <aside>
+              <h3>運用チェック</h3>
+              <p><strong>毎日：</strong>ダッシュボード、CEOアドバイザー、レビュー待ち成果物。</p>
+              <p><strong>毎週：</strong>キャンペーン、営業停滞、競合、GEO・SEO。</p>
+              <p><strong>会議後：</strong>議事録、決定事項、タスクを承認。</p>
+              <p><strong>月次：</strong>クレジット、権限、連携、古いKnowledgeを見直す。</p>
+            </aside>
+          </div>
+          <div class="note tip"><strong>完了の目安</strong><p>KnowledgeとBrand IQが整い、CEOアドバイザーから1件の施策へ移動し、成果物をレビューできれば基本運用を開始できます。</p></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog class="screen-dialog" id="screen-dialog" aria-labelledby="screen-dialog-title" aria-describedby="screen-dialog-description">
+    <div class="screen-dialog-bar">
+      <strong id="screen-dialog-title">画面イメージ</strong>
+      <button class="screen-dialog-close" id="screen-dialog-close" type="button">閉じる</button>
+    </div>
+    <img id="screen-dialog-image" alt="">
+    <p id="screen-dialog-description"></p>
+  </dialog>
+
+  <script>
+    (() => {
+      const body = document.body;
+      const authorTools = document.getElementById('author-tools');
+      const documentArea = document.getElementById('document');
+      const editButton = document.getElementById('edit-toggle');
+      const downloadButton = document.getElementById('download-html');
+      const tocButton = document.getElementById('toc-toggle');
+      const printButton = document.getElementById('print-page');
+      const tocLinks = [...document.querySelectorAll('.toc a')];
+      const sections = [...document.querySelectorAll('.chapter')];
+      const screenButtons = [...document.querySelectorAll('.screen-open')];
+      const screenDialog = document.getElementById('screen-dialog');
+      const screenDialogTitle = document.getElementById('screen-dialog-title');
+      const screenDialogDescription = document.getElementById('screen-dialog-description');
+      const screenDialogImage = document.getElementById('screen-dialog-image');
+      const screenDialogClose = document.getElementById('screen-dialog-close');
+
+      // Keep authoring controls out of the customer-facing page. They remain
+      // available for local files or by adding ?author=1 to the published URL.
+      const authorMode = window.location.protocol === 'file:' || new URLSearchParams(window.location.search).get('author') === '1';
+      if (authorMode) {
+        authorTools.hidden = false;
+        body.classList.add('author-tools-visible');
+      }
+
+      editButton.addEventListener('click', () => {
+        const editing = documentArea.getAttribute('contenteditable') === 'true';
+        documentArea.setAttribute('contenteditable', String(!editing));
+        editButton.setAttribute('aria-pressed', String(!editing));
+        editButton.textContent = editing ? '編集モード' : '編集を終了';
+        body.classList.toggle('is-editing', !editing);
+        if (!editing) documentArea.focus();
+      });
+
+      downloadButton.addEventListener('click', () => {
+        const clone = document.documentElement.cloneNode(true);
+        clone.querySelector('body').classList.remove('is-editing', 'toc-open', 'author-tools-visible');
+        clone.querySelector('#author-tools').hidden = true;
+        const cloneDocument = clone.querySelector('#document');
+        cloneDocument.setAttribute('contenteditable', 'false');
+        const cloneEdit = clone.querySelector('#edit-toggle');
+        cloneEdit.setAttribute('aria-pressed', 'false');
+        cloneEdit.textContent = '編集モード';
+        const source = '<!doctype html>\n' + clone.outerHTML;
+        const blob = new Blob([source], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = '1person-user-manual-ja.html';
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+
+      tocButton.addEventListener('click', () => {
+        const open = body.classList.toggle('toc-open');
+        tocButton.setAttribute('aria-expanded', String(open));
+      });
+      tocLinks.forEach((link) => link.addEventListener('click', () => {
+        body.classList.remove('toc-open');
+        tocButton.setAttribute('aria-expanded', 'false');
+      }));
+      printButton.addEventListener('click', () => window.print());
+
+      screenButtons.forEach((button) => button.addEventListener('click', () => {
+        const sourceImage = button.querySelector('img');
+        screenDialogTitle.textContent = button.dataset.screenTitle;
+        screenDialogDescription.textContent = button.dataset.screenDescription;
+        screenDialogImage.src = sourceImage.currentSrc || sourceImage.src;
+        screenDialogImage.alt = sourceImage.alt;
+        screenDialog.showModal();
+      }));
+      screenDialogClose.addEventListener('click', () => screenDialog.close());
+      screenDialog.addEventListener('click', (event) => {
+        const bounds = screenDialog.getBoundingClientRect();
+        const outside = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
+        if (outside) screenDialog.close();
+      });
+
+      const observer = new IntersectionObserver((entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        tocLinks.forEach((link) => link.setAttribute('aria-current', String(link.hash === '#' + visible.target.id)));
+      }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 0.2, 0.6] });
+      sections.forEach((section) => observer.observe(section));
+    })();
+  </script>
+</body>
+</html>
