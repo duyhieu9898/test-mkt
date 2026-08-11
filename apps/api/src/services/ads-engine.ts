@@ -27,6 +27,7 @@ import { platformRegistry } from './platforms';
 import type { PlatformConnection } from './platforms';
 import { renderSkillKnowledge } from '@1person/core';
 import { decryptMaybe, encryptSecret } from '../lib/crypto';
+import { MetaAdsReadOnlyError } from './meta-ads-errors';
 
 // Expert ad-creative playbook injected into creative generation (skill K02).
 const ADS_FRAMEWORK = renderSkillKnowledge('ad-creative');
@@ -144,13 +145,21 @@ export class AdsEngine {
     };
     agentId?: string;
   }): Promise<string> {
+    if (data.platform === 'facebook') {
+      throw new MetaAdsReadOnlyError();
+    }
+
     // Get connection
     const connection = await db.query.adConnections.findFirst({
-      where: eq(adConnections.id, data.connectionId),
+      where: and(eq(adConnections.id, data.connectionId), eq(adConnections.companyId, data.companyId)),
     });
 
     if (!connection || connection.status !== 'connected') {
       throw new Error('Ad connection not found or not active');
+    }
+
+    if (connection.platform === 'facebook') {
+      throw new MetaAdsReadOnlyError();
     }
 
     let platformCampaignId: string | undefined;
@@ -233,13 +242,20 @@ export class AdsEngine {
   /**
    * Launch (activate) a campaign
    */
-  async launchCampaign(campaignId: string): Promise<{ success: boolean; error?: string }> {
+  async launchCampaign(campaignId: string, companyId?: string): Promise<{ success: boolean; error?: string }> {
+    const whereCondition = companyId
+      ? and(eq(adCampaigns.id, campaignId), eq(adCampaigns.companyId, companyId))
+      : eq(adCampaigns.id, campaignId);
     const campaign = await db.query.adCampaigns.findFirst({
-      where: eq(adCampaigns.id, campaignId),
+      where: whereCondition,
     });
 
     if (!campaign) {
       return { success: false, error: 'Campaign not found' };
+    }
+
+    if (campaign.platform === 'facebook') {
+      throw new MetaAdsReadOnlyError();
     }
 
     if (!campaign.platformCampaignId) {
@@ -277,6 +293,7 @@ export class AdsEngine {
 
       return { success: true };
     } catch (error) {
+      if (error instanceof MetaAdsReadOnlyError) throw error;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to launch campaign',
@@ -287,13 +304,20 @@ export class AdsEngine {
   /**
    * Pause a campaign
    */
-  async pauseCampaign(campaignId: string): Promise<{ success: boolean; error?: string }> {
+  async pauseCampaign(campaignId: string, companyId?: string): Promise<{ success: boolean; error?: string }> {
+    const whereCondition = companyId
+      ? and(eq(adCampaigns.id, campaignId), eq(adCampaigns.companyId, companyId))
+      : eq(adCampaigns.id, campaignId);
     const campaign = await db.query.adCampaigns.findFirst({
-      where: eq(adCampaigns.id, campaignId),
+      where: whereCondition,
     });
 
     if (!campaign || !campaign.platformCampaignId) {
       return { success: false, error: 'Campaign not found' };
+    }
+
+    if (campaign.platform === 'facebook') {
+      throw new MetaAdsReadOnlyError();
     }
 
     const connection = await db.query.adConnections.findFirst({
@@ -323,6 +347,7 @@ export class AdsEngine {
 
       return { success: true };
     } catch (error) {
+      if (error instanceof MetaAdsReadOnlyError) throw error;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to pause campaign',
@@ -347,10 +372,14 @@ export class AdsEngine {
     placements?: string[];
   }): Promise<string> {
     const campaign = await db.query.adCampaigns.findFirst({
-      where: eq(adCampaigns.id, data.campaignId),
+      where: and(eq(adCampaigns.id, data.campaignId), eq(adCampaigns.companyId, data.companyId)),
     });
 
     if (!campaign) throw new Error('Campaign not found');
+
+    if (campaign.platform === 'facebook') {
+      throw new MetaAdsReadOnlyError();
+    }
 
     let platformAdSetId: string | undefined;
 
@@ -426,6 +455,13 @@ export class AdsEngine {
     videoUrl?: string;
     agentId?: string;
   }): Promise<string> {
+    const campaign = await db.query.adCampaigns.findFirst({
+      where: and(eq(adCampaigns.id, data.campaignId), eq(adCampaigns.companyId, data.companyId)),
+    });
+    if (!campaign) throw new Error('Campaign not found');
+    if (campaign.platform === 'facebook') {
+      throw new MetaAdsReadOnlyError();
+    }
     const result = await db
       .insert(ads)
       .values({

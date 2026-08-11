@@ -28,6 +28,7 @@ export async function createMetaAdsRecommendation(args: {
   const [recommendation] = await db.insert(adRecommendations).values({
     companyId: args.companyId,
     campaignId: args.campaignId,
+    analysisId: args.analysis.analysisId || null,
     type: primaryFinding.kind,
     priority: primaryFinding.severity,
     problem: primaryFinding.fact,
@@ -54,6 +55,7 @@ export async function listMetaAdsRecommendations(companyId: string, campaignId: 
 
 export async function listCompanyMetaAdsRecommendations(args: {
   companyId: string;
+  sourceAccountId?: string;
   status?: AdRecommendationStatus;
   page?: number;
   limit?: number;
@@ -66,6 +68,22 @@ export async function listCompanyMetaAdsRecommendations(args: {
   if (args.status) {
     conditions.push(eq(adRecommendations.status, args.status));
   }
+
+  if (args.sourceAccountId) {
+    const matchingCampaigns = await db.query.adCampaigns.findMany({
+      where: and(eq(adCampaigns.companyId, args.companyId), eq(adCampaigns.sourceAccountId, args.sourceAccountId)),
+      columns: { id: true },
+    });
+    const accountCampaignIds = matchingCampaigns.map((c) => c.id);
+    if (accountCampaignIds.length === 0) {
+      return {
+        items: [],
+        pagination: { page, limit, total: 0, totalPages: 0 },
+      };
+    }
+    conditions.push(inArray(adRecommendations.campaignId, accountCampaignIds));
+  }
+
   const whereClause = and(...conditions);
 
   const [items, allMatching] = await Promise.all([

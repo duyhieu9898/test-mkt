@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { adCampaigns, adConnections, adSets, ads } from '@1person/core/db';
 import { db } from '../lib/db';
 import { decryptMaybe } from '../lib/crypto';
+import { toMetaAdsUserError } from './meta-ads-errors';
 
 const META_API_VERSION = 'v18.0';
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -148,55 +149,42 @@ function shiftDate(value: string, days: number) {
 function performanceTimeRange(preset: MetaAdsPerformanceDatePreset, timezone: string) {
   const today = accountDate(timezone);
   const rangeForDays = (days: number) => ({
-    since: shiftDate(today, 1 - days),
+    since: shiftDate(today, -(days - 1)),
     until: today,
     days,
+    encoded: encodeURIComponent(
+      JSON.stringify({ since: shiftDate(today, -(days - 1)), until: today })
+    ),
   });
-  let range: { since: string; until: string; days: number };
-  if (preset === 'today') range = { since: today, until: today, days: 1 };
-  else if (preset === 'yesterday') {
+
+  if (preset === 'today') return rangeForDays(1);
+  if (preset === 'yesterday') {
     const yesterday = shiftDate(today, -1);
-    range = { since: yesterday, until: yesterday, days: 1 };
-  } else if (preset === 'today_and_yesterday')
-    range = { since: shiftDate(today, -1), until: today, days: 2 };
-  else if (preset === 'last_7d') range = rangeForDays(7);
-  else if (preset === 'last_30d') range = rangeForDays(30);
-  else if (preset === 'last_90d') range = rangeForDays(90);
-  else if (preset === 'last_360d') range = rangeForDays(360);
-  else if (preset === 'last_720d') range = rangeForDays(720);
-  else if (preset === 'this_week') {
-    const offset = (new Date(`${today}T00:00:00.000Z`).getUTCDay() + 6) % 7;
-    range = { since: shiftDate(today, -offset), until: today, days: offset + 1 };
-  } else if (preset === 'this_month') {
-    const since = `${today.slice(0, 8)}01`;
-    range = {
-      since,
-      until: today,
-      days:
-        Math.round(
-          (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) / 86_400_000
-        ) + 1,
+    return {
+      since: yesterday,
+      until: yesterday,
+      days: 1,
+      encoded: encodeURIComponent(JSON.stringify({ since: yesterday, until: yesterday })),
     };
-  } else {
-    const firstOfThisMonth = `${today.slice(0, 8)}01`;
-    const until = shiftDate(firstOfThisMonth, -1);
-    const since = `${until.slice(0, 8)}01`;
-    range = { since, until, days: Number(until.slice(8)) };
   }
-  return {
-    ...range,
-    encoded: encodeURIComponent(JSON.stringify({ since: range.since, until: range.until })),
-  };
+  if (preset === 'today_and_yesterday') return rangeForDays(2);
+  if (preset === 'last_7d') return rangeForDays(7);
+  if (preset === 'last_90d') return rangeForDays(90);
+  if (preset === 'last_360d') return rangeForDays(360);
+  if (preset === 'last_720d') return rangeForDays(720);
+  return rangeForDays(30);
 }
 
-/** Shared read-only Graph pagination helper for sync and on-demand analysis. */
-export async function fetchMetaAdsPages<T>(path: string, accessToken: string): Promise<T[]> {
+export async function fetchMetaAdsPages<T>(endpoint: string, accessToken: string): Promise<T[]> {
+  let url: string | undefined = `${META_BASE_URL}/${endpoint}`;
+  if (!url.includes('access_token=')) {
+    url += `${url.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(accessToken)}`;
+  }
   const rows: T[] = [];
-  let url: string | undefined =
-    `${META_BASE_URL}/${path}${path.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(accessToken)}`;
-  for (let pageNumber = 0; url && pageNumber < 100; pageNumber += 1) {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' || parsed.hostname !== 'graph.facebook.com')
+  let pageCount = 0;
+  while (url && pageCount < 100) {
+    pageCount++;
+    if (!url.startsWith(META_BASE_URL))
       throw new Error('Meta Ads pagination returned an invalid URL');
     const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
     if (!response.ok) {
@@ -224,8 +212,7 @@ export type MetaAdsSyncResult = {
 };
 
 /**
- * Import Meta Ads hierarchy and 30-day aggregate insights. This operation is
- * deliberately read-only: it never calls Meta mutation endpoints.
+ * Import Meta Ads hierarchy and aggregate insights in Phase A (Network) and Phase B (DB Transaction).
  */
 export async function syncMetaAds(
   companyId: string,
@@ -247,6 +234,7 @@ export async function syncMetaAds(
     connection.platformAccountTimezone || 'UTC'
   );
   try {
+    // Phase A: Network fetch outside DB transaction
     const [remoteCampaigns, remoteAdSets, remoteAds, campaignInsights, adSetInsights, adInsights] =
       await Promise.all([
         fetchMetaAdsPages<MetaCampaign>(
@@ -284,198 +272,213 @@ export async function syncMetaAds(
     const adInsightsById = new Map(
       adInsights.filter((row) => row.ad_id).map((row) => [row.ad_id!, row])
     );
-    const existingCampaigns = await db.query.adCampaigns.findMany({
-      where: and(eq(adCampaigns.companyId, companyId), eq(adCampaigns.connectionId, connection.id)),
-    });
-    const campaignsByPlatformId = new Map(
-      existingCampaigns
-        .filter((row) => row.platformCampaignId)
-        .map((row) => [row.platformCampaignId!, row])
-    );
-    const localCampaignIdByPlatformId = new Map<string, string>();
 
-    for (const remote of remoteCampaigns) {
-      const insight = campaignInsightsById.get(remote.id);
-      const impressions = Math.round(toNumber(insight?.impressions));
-      const clicks = Math.round(toNumber(insight?.clicks));
-      const spend = toNumber(insight?.spend);
-      const values = {
-        name: remote.name || remote.id,
-        platform: 'facebook' as const,
-        objective: mapObjective(remote.objective),
-        status: mapMetaAdsStatus(remote.status),
-        effectiveStatus: remote.effective_status || remote.status || null,
-        dailyBudget: remote.daily_budget ? (toNumber(remote.daily_budget) / 100).toFixed(2) : null,
-        totalBudget: remote.lifetime_budget
-          ? (toNumber(remote.lifetime_budget) / 100).toFixed(2)
-          : null,
-        startDate: toDate(remote.start_time),
-        endDate: toDate(remote.stop_time),
-        impressions,
-        clicks,
-        reach: Math.round(toNumber(insight?.reach)),
-        conversions: Math.round(conversionCount(insight?.actions)),
-        spentAmount: spend.toFixed(2),
-        ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
-        cpc: clicks ? (spend / clicks).toFixed(2) : '0',
-        cpm: impressions ? ((spend / impressions) * 1000).toFixed(2) : '0',
-        frequency: toNumber(insight?.frequency).toFixed(2),
-        updatedAt: new Date(),
-      };
-      const existing = campaignsByPlatformId.get(remote.id);
-      if (existing) {
-        await db.update(adCampaigns).set(values).where(eq(adCampaigns.id, existing.id));
-        localCampaignIdByPlatformId.set(remote.id, existing.id);
-      } else {
-        const [created] = await db
-          .insert(adCampaigns)
-          .values({
-            ...values,
-            companyId,
-            connectionId: connection.id,
-            platformCampaignId: remote.id,
-          })
-          .returning({ id: adCampaigns.id });
-        if (created) localCampaignIdByPlatformId.set(remote.id, created.id);
+    // Phase B: Atomic DB transaction
+    await db.transaction(async (tx) => {
+      const existingCampaigns = await tx.query.adCampaigns.findMany({
+        where: and(
+          eq(adCampaigns.companyId, companyId),
+          eq(adCampaigns.connectionId, connection.id),
+          eq(adCampaigns.sourceAccountId, accountId)
+        ),
+      });
+      const campaignsByPlatformId = new Map(
+        existingCampaigns
+          .filter((row) => row.platformCampaignId)
+          .map((row) => [row.platformCampaignId!, row])
+      );
+      const localCampaignIdByPlatformId = new Map<string, string>();
+
+      for (const remote of remoteCampaigns) {
+        const insight = campaignInsightsById.get(remote.id);
+        const impressions = Math.round(toNumber(insight?.impressions));
+        const clicks = Math.round(toNumber(insight?.clicks));
+        const spend = toNumber(insight?.spend);
+        const values = {
+          name: remote.name || remote.id,
+          platform: 'facebook' as const,
+          sourceAccountId: accountId,
+          origin: 'meta_synced_readonly' as const,
+          objective: mapObjective(remote.objective),
+          status: mapMetaAdsStatus(remote.status),
+          effectiveStatus: remote.effective_status || remote.status || null,
+          dailyBudget: remote.daily_budget ? (toNumber(remote.daily_budget) / 100).toFixed(2) : null,
+          totalBudget: remote.lifetime_budget
+            ? (toNumber(remote.lifetime_budget) / 100).toFixed(2)
+            : null,
+          startDate: toDate(remote.start_time),
+          endDate: toDate(remote.stop_time),
+          impressions,
+          clicks,
+          reach: Math.round(toNumber(insight?.reach)),
+          conversions: Math.round(conversionCount(insight?.actions)),
+          spentAmount: spend.toFixed(2),
+          ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
+          cpc: clicks ? (spend / clicks).toFixed(2) : '0',
+          cpm: impressions ? ((spend / impressions) * 1000).toFixed(2) : '0',
+          frequency: toNumber(insight?.frequency).toFixed(2),
+          updatedAt: new Date(),
+        };
+        const existing = campaignsByPlatformId.get(remote.id);
+        if (existing) {
+          await tx.update(adCampaigns).set(values).where(eq(adCampaigns.id, existing.id));
+          localCampaignIdByPlatformId.set(remote.id, existing.id);
+        } else {
+          const [created] = await tx
+            .insert(adCampaigns)
+            .values({
+              ...values,
+              companyId,
+              connectionId: connection.id,
+              platformCampaignId: remote.id,
+            })
+            .returning({ id: adCampaigns.id });
+          if (created) localCampaignIdByPlatformId.set(remote.id, created.id);
+        }
       }
-    }
 
-    const existingAdSets = await db.query.adSets.findMany({
-      where: eq(adSets.companyId, companyId),
-    });
-    const adSetsByPlatformId = new Map(
-      existingAdSets.filter((row) => row.platformAdSetId).map((row) => [row.platformAdSetId!, row])
-    );
-    const localAdSetIdByPlatformId = new Map<string, string>();
-    for (const remote of remoteAdSets) {
-      const campaignId = remote.campaign_id
-        ? localCampaignIdByPlatformId.get(remote.campaign_id)
-        : undefined;
-      if (!campaignId) continue;
-      const insight = adSetInsightsById.get(remote.id);
-      const impressions = Math.round(toNumber(insight?.impressions));
-      const clicks = Math.round(toNumber(insight?.clicks));
-      const spend = toNumber(insight?.spend);
-      const values = {
-        campaignId,
-        companyId,
-        name: remote.name || remote.id,
-        status: mapMetaAdsStatus(remote.status),
-        effectiveStatus: remote.effective_status || remote.status || null,
-        dailyBudget: remote.daily_budget ? (toNumber(remote.daily_budget) / 100).toFixed(2) : null,
-        bidAmount: remote.bid_amount ? (toNumber(remote.bid_amount) / 100).toFixed(2) : null,
-        bidStrategy: remote.bid_strategy || 'lowest_cost',
-        targetAudience: remote.targeting || null,
-        impressions,
-        clicks,
-        reach: Math.round(toNumber(insight?.reach)),
-        conversions: Math.round(conversionCount(insight?.actions)),
-        spentAmount: spend.toFixed(2),
-        ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
-        cpc: clicks ? (spend / clicks).toFixed(2) : '0',
-        cpm: impressions ? ((spend / impressions) * 1000).toFixed(2) : '0',
-        frequency: toNumber(insight?.frequency).toFixed(2),
-        updatedAt: new Date(),
-      };
-      const existing = adSetsByPlatformId.get(remote.id);
-      if (existing) {
-        await db.update(adSets).set(values).where(eq(adSets.id, existing.id));
-        localAdSetIdByPlatformId.set(remote.id, existing.id);
-      } else {
-        const [created] = await db
-          .insert(adSets)
-          .values({ ...values, platformAdSetId: remote.id })
-          .returning({ id: adSets.id });
-        if (created) localAdSetIdByPlatformId.set(remote.id, created.id);
+      const existingAdSets = await tx.query.adSets.findMany({
+        where: and(eq(adSets.companyId, companyId), eq(adSets.sourceAccountId, accountId)),
+      });
+      const adSetsByPlatformId = new Map(
+        existingAdSets.filter((row) => row.platformAdSetId).map((row) => [row.platformAdSetId!, row])
+      );
+      const localAdSetIdByPlatformId = new Map<string, string>();
+      for (const remote of remoteAdSets) {
+        const campaignId = remote.campaign_id
+          ? localCampaignIdByPlatformId.get(remote.campaign_id)
+          : undefined;
+        if (!campaignId) continue;
+        const insight = adSetInsightsById.get(remote.id);
+        const impressions = Math.round(toNumber(insight?.impressions));
+        const clicks = Math.round(toNumber(insight?.clicks));
+        const spend = toNumber(insight?.spend);
+        const values = {
+          campaignId,
+          companyId,
+          sourceAccountId: accountId,
+          name: remote.name || remote.id,
+          status: mapMetaAdsStatus(remote.status),
+          effectiveStatus: remote.effective_status || remote.status || null,
+          dailyBudget: remote.daily_budget ? (toNumber(remote.daily_budget) / 100).toFixed(2) : null,
+          bidAmount: remote.bid_amount ? (toNumber(remote.bid_amount) / 100).toFixed(2) : null,
+          bidStrategy: remote.bid_strategy || 'lowest_cost',
+          targetAudience: remote.targeting || null,
+          impressions,
+          clicks,
+          reach: Math.round(toNumber(insight?.reach)),
+          conversions: Math.round(conversionCount(insight?.actions)),
+          spentAmount: spend.toFixed(2),
+          ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
+          cpc: clicks ? (spend / clicks).toFixed(2) : '0',
+          cpm: impressions ? ((spend / impressions) * 1000).toFixed(2) : '0',
+          frequency: toNumber(insight?.frequency).toFixed(2),
+          updatedAt: new Date(),
+        };
+        const existing = adSetsByPlatformId.get(remote.id);
+        if (existing) {
+          await tx.update(adSets).set(values).where(eq(adSets.id, existing.id));
+          localAdSetIdByPlatformId.set(remote.id, existing.id);
+        } else {
+          const [created] = await tx
+            .insert(adSets)
+            .values({ ...values, platformAdSetId: remote.id })
+            .returning({ id: adSets.id });
+          if (created) localAdSetIdByPlatformId.set(remote.id, created.id);
+        }
       }
-    }
 
-    const existingAds = await db.query.ads.findMany({ where: eq(ads.companyId, companyId) });
-    const adsByPlatformId = new Map(
-      existingAds.filter((row) => row.platformAdId).map((row) => [row.platformAdId!, row])
-    );
-    for (const remote of remoteAds) {
-      const campaignId = remote.campaign_id
-        ? localCampaignIdByPlatformId.get(remote.campaign_id)
-        : undefined;
-      const adSetId = remote.adset_id ? localAdSetIdByPlatformId.get(remote.adset_id) : undefined;
-      if (!campaignId || !adSetId) continue;
-      const insight = adInsightsById.get(remote.id);
-      const impressions = Math.round(toNumber(insight?.impressions));
-      const clicks = Math.round(toNumber(insight?.clicks));
-      const creative = remote.creative;
-      const linkData = creative?.object_story_spec?.link_data;
-      const values = {
-        adSetId,
-        campaignId,
-        companyId,
-        name: remote.name || remote.id,
-        type: mapAdType(creative?.object_type),
-        status: mapMetaAdsStatus(remote.status),
-        effectiveStatus: remote.effective_status || remote.status || null,
-        headline: linkData?.name || null,
-        primaryText: linkData?.message || null,
-        description: linkData?.description || null,
-        callToAction: linkData?.call_to_action?.type || 'Learn More',
-        destinationUrl: linkData?.link || null,
-        thumbnailUrl: creative?.thumbnail_url || null,
-        platformCreativeId: creative?.id || null,
-        impressions,
-        clicks,
-        reach: Math.round(toNumber(insight?.reach)),
-        conversions: Math.round(conversionCount(insight?.actions)),
-        spentAmount: toNumber(insight?.spend).toFixed(2),
-        ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
-        cpc: clicks ? (toNumber(insight?.spend) / clicks).toFixed(2) : '0',
-        cpm: impressions ? ((toNumber(insight?.spend) / impressions) * 1000).toFixed(2) : '0',
-        frequency: toNumber(insight?.frequency).toFixed(2),
-        updatedAt: new Date(),
-      };
-      const existing = adsByPlatformId.get(remote.id);
-      if (existing) await db.update(ads).set(values).where(eq(ads.id, existing.id));
-      else await db.insert(ads).values({ ...values, platformAdId: remote.id });
-    }
+      const existingAds = await tx.query.ads.findMany({
+        where: and(eq(ads.companyId, companyId), eq(ads.sourceAccountId, accountId)),
+      });
+      const adsByPlatformId = new Map(
+        existingAds.filter((row) => row.platformAdId).map((row) => [row.platformAdId!, row])
+      );
+      for (const remote of remoteAds) {
+        const campaignId = remote.campaign_id
+          ? localCampaignIdByPlatformId.get(remote.campaign_id)
+          : undefined;
+        const adSetId = remote.adset_id ? localAdSetIdByPlatformId.get(remote.adset_id) : undefined;
+        if (!campaignId || !adSetId) continue;
+        const insight = adInsightsById.get(remote.id);
+        const impressions = Math.round(toNumber(insight?.impressions));
+        const clicks = Math.round(toNumber(insight?.clicks));
+        const creative = remote.creative;
+        const linkData = creative?.object_story_spec?.link_data;
+        const values = {
+          adSetId,
+          campaignId,
+          companyId,
+          sourceAccountId: accountId,
+          name: remote.name || remote.id,
+          type: mapAdType(creative?.object_type),
+          status: mapMetaAdsStatus(remote.status),
+          effectiveStatus: remote.effective_status || remote.status || null,
+          headline: linkData?.name || null,
+          primaryText: linkData?.message || null,
+          description: linkData?.description || null,
+          callToAction: linkData?.call_to_action?.type || 'Learn More',
+          destinationUrl: linkData?.link || null,
+          thumbnailUrl: creative?.thumbnail_url || null,
+          platformCreativeId: creative?.id || null,
+          impressions,
+          clicks,
+          reach: Math.round(toNumber(insight?.reach)),
+          conversions: Math.round(conversionCount(insight?.actions)),
+          spentAmount: toNumber(insight?.spend).toFixed(2),
+          ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
+          cpc: clicks ? (toNumber(insight?.spend) / clicks).toFixed(2) : '0',
+          cpm: impressions ? ((toNumber(insight?.spend) / impressions) * 1000).toFixed(2) : '0',
+          frequency: toNumber(insight?.frequency).toFixed(2),
+          updatedAt: new Date(),
+        };
+        const existing = adsByPlatformId.get(remote.id);
+        if (existing) await tx.update(ads).set(values).where(eq(ads.id, existing.id));
+        else await tx.insert(ads).values({ ...values, platformAdId: remote.id });
+      }
 
-    const campaignPlatformIds = new Set(remoteCampaigns.map((row) => row.id));
-    const adSetPlatformIds = new Set(remoteAdSets.map((row) => row.id));
-    const adPlatformIds = new Set(remoteAds.map((row) => row.id));
-    await Promise.all([
-      ...existingCampaigns
-        .filter((row) => row.platformCampaignId && !campaignPlatformIds.has(row.platformCampaignId))
-        .map((row) =>
-          db
-            .update(adCampaigns)
-            .set({ status: 'archived', updatedAt: new Date() })
-            .where(eq(adCampaigns.id, row.id))
-        ),
-      ...existingAdSets
-        .filter((row) => row.platformAdSetId && !adSetPlatformIds.has(row.platformAdSetId))
-        .map((row) =>
-          db
-            .update(adSets)
-            .set({ status: 'archived', updatedAt: new Date() })
-            .where(eq(adSets.id, row.id))
-        ),
-      ...existingAds
-        .filter((row) => row.platformAdId && !adPlatformIds.has(row.platformAdId))
-        .map((row) =>
-          db
-            .update(ads)
-            .set({ status: 'archived', updatedAt: new Date() })
-            .where(eq(ads.id, row.id))
-        ),
-    ]);
+      const campaignPlatformIds = new Set(remoteCampaigns.map((row) => row.id));
+      const adSetPlatformIds = new Set(remoteAdSets.map((row) => row.id));
+      const adPlatformIds = new Set(remoteAds.map((row) => row.id));
+      await Promise.all([
+        ...existingCampaigns
+          .filter((row) => row.platformCampaignId && !campaignPlatformIds.has(row.platformCampaignId))
+          .map((row) =>
+            tx
+              .update(adCampaigns)
+              .set({ status: 'archived', updatedAt: new Date() })
+              .where(eq(adCampaigns.id, row.id))
+          ),
+        ...existingAdSets
+          .filter((row) => row.platformAdSetId && !adSetPlatformIds.has(row.platformAdSetId))
+          .map((row) =>
+            tx
+              .update(adSets)
+              .set({ status: 'archived', updatedAt: new Date() })
+              .where(eq(adSets.id, row.id))
+          ),
+        ...existingAds
+          .filter((row) => row.platformAdId && !adPlatformIds.has(row.platformAdId))
+          .map((row) =>
+            tx
+              .update(ads)
+              .set({ status: 'archived', updatedAt: new Date() })
+              .where(eq(ads.id, row.id))
+          ),
+      ]);
 
-    await db
-      .update(adConnections)
-      .set({
-        lastUsedAt: new Date(),
-        lastError: null,
-        metaAdsPerformanceWindowDays: timeRange.days,
-        metaAdsPerformanceDatePreset: performanceDatePreset,
-        updatedAt: new Date(),
-      })
-      .where(eq(adConnections.id, connection.id));
+      await tx
+        .update(adConnections)
+        .set({
+          lastUsedAt: new Date(),
+          lastError: null,
+          metaAdsPerformanceWindowDays: timeRange.days,
+          metaAdsPerformanceDatePreset: performanceDatePreset,
+          updatedAt: new Date(),
+        })
+        .where(eq(adConnections.id, connection.id));
+    });
+
     return {
       campaigns: remoteCampaigns.length,
       adSets: remoteAdSets.length,
@@ -486,15 +489,15 @@ export async function syncMetaAds(
       syncedAt: new Date().toISOString(),
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message.slice(0, 500) : 'Meta Ads sync failed';
+    const userError = toMetaAdsUserError(error);
     try {
       await db
         .update(adConnections)
-        .set({ lastError: message, updatedAt: new Date() })
+        .set({ lastError: userError, updatedAt: new Date() })
         .where(eq(adConnections.id, connection.id));
     } catch (persistenceError) {
       console.warn('[MetaAdsSync] Could not record sync failure', persistenceError);
     }
-    throw error;
+    throw new Error(userError);
   }
 }

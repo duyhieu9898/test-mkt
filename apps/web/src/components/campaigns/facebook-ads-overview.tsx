@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import {
   AlertCircle,
+  Calendar,
   CheckCircle2,
   DollarSign,
   Eye,
@@ -131,6 +132,7 @@ export function FacebookAdsOverview() {
   const token = useAuthStore((state) => state.token);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<SyncResult | null>(null);
   const [page, setPage] = useState(1);
@@ -138,6 +140,7 @@ export function FacebookAdsOverview() {
     async (requestedPage: number) => {
       if (!token) return;
       setLoading(true);
+      setApiError(null);
       try {
         const result = await api.get<{ data: Overview }>(
           `/ads/company/${companyId}/facebook/overview?page=${requestedPage}`,
@@ -145,7 +148,9 @@ export function FacebookAdsOverview() {
         );
         setOverview(result.data);
       } catch (error) {
-        toast.error((error as Error).message || 'Could not load Meta Ads data.');
+        const msg = (error as Error).message || 'Could not load Meta Ads data.';
+        setApiError(msg);
+        toast.error(msg);
       } finally {
         setLoading(false);
       }
@@ -212,7 +217,16 @@ export function FacebookAdsOverview() {
           </Button>
         )}
       </div>
-      {!connection ? (
+      {apiError ? (
+        <ConnectionState
+          title="Could not load Meta Ads data"
+          description={apiError}
+          action="Retry"
+          href="#"
+          onClick={() => void loadOverview(page)}
+          error
+        />
+      ) : !connection ? (
         <ConnectionState
           title="Connect Meta Ads to begin"
           description="Connect Facebook, then choose the Meta Ad Account that 1Person may read. No ads will be created or changed."
@@ -248,33 +262,34 @@ export function FacebookAdsOverview() {
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {connection.accountId
-                    ? `Ad Account ID ${connection.accountId}`
-                    : 'Ad Account ID unavailable'}{' '}
-                  ·{' '}
-                  <Link
-                    href={`/${companyId}/settings?tab=integrations`}
-                    className="underline hover:text-foreground"
-                  >
-                    Change Ad Account
-                  </Link>
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {connection.lastSyncedAt
-                    ? `Last synced ${new Date(connection.lastSyncedAt).toLocaleString()}`
-                    : 'Not synced yet'}
-                  {connection.timezone ? ` · ${connection.timezone}` : ''}
-                  {' · Meta attribution setting · Read-only'}
+                    ? `ID: ${connection.accountId} • ${connection.currency || 'USD'} • ${connection.timezone || 'UTC'}`
+                    : 'Select an account in settings'}
                 </p>
               </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                {connection.lastSyncedAt && (
+                  <span>Last synced: {new Date(connection.lastSyncedAt).toLocaleString()}</span>
+                )}
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/${companyId}/settings?tab=integrations`}>
+                    Switch account
+                  </Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2 text-sm">
+                <Calendar className="h-4 w-4 text-muted-foreground" />
+                <span className="font-medium">Performance date preset</span>
+                <span className="text-muted-foreground">
+                  (applies to aggregate metrics on all campaigns)
+                </span>
+              </div>
               <Select
-                value={
-                  performanceDatePresets.some(
-                    (preset) => preset.value === overview?.performanceDatePreset
-                  )
-                    ? overview!.performanceDatePreset
-                    : 'last_30d'
-                }
-                onValueChange={(value) => void sync(value as PerformanceDatePreset)}
+                value={overview?.performanceDatePreset || 'last_30d'}
+                onValueChange={(val) => void sync(val as PerformanceDatePreset)}
                 disabled={syncing}
               >
                 <SelectTrigger className="w-[190px]">
@@ -318,7 +333,7 @@ export function FacebookAdsOverview() {
             <Metric icon={TrendingUp} label="CTR" value={`${ctr.toFixed(2)}%`} />
             <Metric
               icon={DollarSign}
-              label="Cost / Conv."
+              label="Cost per tracked conversion"
               value={
                 totals.costPerConversion !== null && totals.costPerConversion !== undefined
                   ? money(totals.costPerConversion, connection.currency)
@@ -393,12 +408,14 @@ function ConnectionState({
   description,
   action,
   href,
+  onClick,
   error = false,
 }: {
   title: string;
   description: string;
   action: string;
   href: string;
+  onClick?: () => void;
   error?: boolean;
 }) {
   return (
@@ -413,9 +430,13 @@ function ConnectionState({
           <h2 className="font-semibold">{title}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{description}</p>
         </div>
-        <Button asChild>
-          <Link href={href}>{action}</Link>
-        </Button>
+        {onClick ? (
+          <Button onClick={onClick}>{action}</Button>
+        ) : (
+          <Button asChild>
+            <Link href={href}>{action}</Link>
+          </Button>
+        )}
       </CardContent>
     </Card>
   );

@@ -33,6 +33,7 @@ const fixtures = vi.hoisted(() => {
       },
     })),
     update: vi.fn(() => ({ set: () => ({ where: async () => undefined }) })),
+    transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(db)),
   };
   return { campaigns, adSets, ads, db, tables, reset: () => { campaigns.length = 0; adSets.length = 0; ads.length = 0; nextId = 1; } };
 });

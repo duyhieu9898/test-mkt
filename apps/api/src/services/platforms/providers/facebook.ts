@@ -233,20 +233,28 @@ const OBJECTIVE_MAP: Record<string, string> = {
   conversions: 'OUTCOME_SALES',
 };
 
+import { MetaAdsReadOnlyError } from '../../meta-ads-errors';
+
 export class FacebookAdProvider implements IAdPlatformProvider {
   readonly platformId = 'facebook';
 
-  mapObjective(objective: string): string {
-    return OBJECTIVE_MAP[objective.toLowerCase()] || 'OUTCOME_TRAFFIC';
+  private mapObjective(objective: string): string {
+    const map: Record<string, string> = {
+      awareness: 'OUTREACH',
+      traffic: 'LINK_CLICKS',
+      engagement: 'POST_ENGAGEMENT',
+      leads: 'LEAD_GENERATION',
+      app_promotion: 'APP_INSTALLS',
+      sales: 'CONVERSIONS',
+      conversions: 'CONVERSIONS',
+    };
+    return map[objective] || 'LINK_CLICKS';
   }
 
-  buildTargeting(audience: TargetAudience): Record<string, unknown> {
+  private buildTargeting(audience: TargetAudience): Record<string, unknown> {
     const targeting: Record<string, unknown> = {};
     if (audience.locations?.length) {
-      targeting.geo_locations = {
-        countries: audience.locations.filter((l) => l.length === 2),
-        cities: audience.locations.filter((l) => l.length > 2).map((c) => ({ key: c })),
-      };
+      targeting.geo_locations = { countries: audience.locations };
     }
     if (audience.ageMin) targeting.age_min = audience.ageMin;
     if (audience.ageMax) targeting.age_max = audience.ageMax;
@@ -262,87 +270,20 @@ export class FacebookAdProvider implements IAdPlatformProvider {
     return targeting;
   }
 
-  async createCampaign(connection: PlatformConnection, data: CreateCampaignInput): Promise<PlatformCampaignResult> {
-    const accountId = connection.platformAccountId;
-    const result = await fbRequest<{ id: string }>(
-      `act_${accountId}/campaigns`,
-      connection.accessToken,
-      'POST',
-      {
-        name: data.name,
-        objective: this.mapObjective(data.objective),
-        status: 'PAUSED',
-        special_ad_categories: [],
-        ...(data.dailyBudget && { daily_budget: Math.round(data.dailyBudget * 100) }),
-      }
-    );
-    return { id: result.id, platformCampaignId: result.id, status: 'PAUSED' };
+  async createCampaign(_connection: PlatformConnection, _data: CreateCampaignInput): Promise<PlatformCampaignResult> {
+    throw new MetaAdsReadOnlyError();
   }
 
-  async updateCampaignStatus(connection: PlatformConnection, platformCampaignId: string, status: 'ACTIVE' | 'PAUSED') {
-    await fbRequest(platformCampaignId, connection.accessToken, 'POST', { status });
+  async updateCampaignStatus(_connection: PlatformConnection, _platformCampaignId: string, _status: 'ACTIVE' | 'PAUSED') {
+    throw new MetaAdsReadOnlyError();
   }
 
-  async createAdSet(connection: PlatformConnection, data: CreateAdSetInput): Promise<PlatformAdSetResult> {
-    const accountId = connection.platformAccountId;
-    const targeting = data.targetAudience ? this.buildTargeting(data.targetAudience) : { geo_locations: { countries: ['US'] } };
-    const result = await fbRequest<{ id: string }>(
-      `act_${accountId}/adsets`,
-      connection.accessToken,
-      'POST',
-      {
-        campaign_id: data.platformCampaignId,
-        name: data.name,
-        daily_budget: Math.round((data.dailyBudget || 10) * 100),
-        targeting,
-        optimization_goal: 'LINK_CLICKS',
-        billing_event: 'IMPRESSIONS',
-        status: 'PAUSED',
-        ...(data.placements?.length && {
-          targeting: { ...targeting, publisher_platforms: data.placements },
-        }),
-      }
-    );
-    return { id: result.id, platformAdSetId: result.id };
+  async createAdSet(_connection: PlatformConnection, _data: CreateAdSetInput): Promise<PlatformAdSetResult> {
+    throw new MetaAdsReadOnlyError();
   }
 
-  async createAd(connection: PlatformConnection, data: CreateAdInput): Promise<PlatformAdResult> {
-    const accountId = connection.platformAccountId;
-
-    // First create the creative
-    const creative = await fbRequest<{ id: string }>(
-      `act_${accountId}/adcreatives`,
-      connection.accessToken,
-      'POST',
-      {
-        name: `Creative: ${data.name}`,
-        object_story_spec: {
-          link_data: {
-            message: data.primaryText,
-            link: data.destinationUrl,
-            name: data.headline,
-            description: data.description,
-            call_to_action: { type: data.callToAction || 'LEARN_MORE', value: { link: data.destinationUrl } },
-            ...(data.imageUrl && { image_url: data.imageUrl }),
-          },
-        },
-      }
-    );
-
-    // Then create the ad
-    const result = await fbRequest<{ id: string }>(
-      `act_${accountId}/ads`,
-      connection.accessToken,
-      'POST',
-      {
-        adset_id: data.platformAdSetId,
-        name: data.name,
-        creative: { creative_id: creative.id },
-        status: 'PAUSED',
-      }
-    );
-
-    return { id: result.id, platformAdId: result.id, platformCreativeId: creative.id };
+  async createAd(_connection: PlatformConnection, _data: CreateAdInput): Promise<PlatformAdResult> {
+    throw new MetaAdsReadOnlyError();
   }
 
   async getCampaignInsights(connection: PlatformConnection, platformCampaignId: string): Promise<CampaignInsights> {

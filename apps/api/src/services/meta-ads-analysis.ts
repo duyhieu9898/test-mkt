@@ -115,12 +115,39 @@ function snapshot(row: MetaInsight | undefined): MetricSnapshot {
 
 function insightsPath(platformCampaignId: string, window: EvidenceWindow) {
   const timeRange = encodeURIComponent(JSON.stringify({ since: window.start, until: window.end }));
-  return `${platformCampaignId}/insights?time_range=${timeRange}&fields=impressions,clicks,spend,actions&limit=1`;
+  return `${platformCampaignId}/insights?time_range=${timeRange}&fields=impressions,clicks,spend,actions&use_unified_attribution_setting=true&limit=1`;
+}
+
+export function calculate7dAnalysisWindows(accountTimezone: string = 'UTC'): MetaAnalysisWindows {
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: accountTimezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const now = new Date();
+  
+  // Yesterday in account timezone
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const currentEndStr = formatter.format(yesterday);
+  
+  const currentEnd = new Date(`${currentEndStr}T00:00:00Z`);
+  const currentStart = new Date(currentEnd.getTime() - 6 * 24 * 60 * 60 * 1000);
+  
+  const baselineEnd = new Date(currentStart.getTime() - 1 * 24 * 60 * 60 * 1000);
+  const baselineStart = new Date(baselineEnd.getTime() - 6 * 24 * 60 * 60 * 1000);
+  
+  return {
+    current: {
+      start: currentStart.toISOString().slice(0, 10),
+      end: currentEnd.toISOString().slice(0, 10),
+      timezone: accountTimezone,
+    },
+    baseline: {
+      start: baselineStart.toISOString().slice(0, 10),
+      end: baselineEnd.toISOString().slice(0, 10),
+      timezone: accountTimezone,
+    },
+  };
 }
 
 /**
- * Compares two user-visible Meta Insights windows. It fetches no daily history
- * and never converts a spend difference into a budget-change claim.
+ * Compares two user-visible Meta Insights windows and persists the factual analysis run.
  */
 export async function analyzeMetaCampaign(companyId: string, campaignId: string, windows: MetaAnalysisWindows) {
   const campaign = await db.query.adCampaigns.findFirst({
@@ -129,40 +156,41 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
   if (!campaign?.platformCampaignId) throw new Error('This campaign has not been synced from Meta');
   const briefContext = await loadBriefContext(companyId, campaign.id, campaign.objective);
 
-  // A deliberate local-only UX fixture. It never calls Graph and can only be
-  // created by the explicit seed script; production can never take this path.
   const demoScenario = process.env.NODE_ENV !== 'production' && isDevelopmentMetaAdsFixture(campaign.platformCampaignId)
     ? DEV_DEMO_SCENARIOS[campaign.platformCampaignId]
     : undefined;
+
+  let baseline: MetricSnapshot;
+  let current: MetricSnapshot;
+  let isDevelopmentFixture = false;
+  let sourceAccountId = campaign.sourceAccountId || 'dev_fixture';
+
   if (demoScenario) {
-    const { baseline, current } = demoScenario;
-    return {
-      target: { id: campaign.id, name: campaign.name, objective: campaign.objective, briefContext },
-      baseline,
-      current,
-      isDevelopmentFixture: true,
-      isInsufficientData: !hasSufficientDelivery(baseline) || !hasSufficientDelivery(current),
-      findings: detectAdsFindings({ target: 'campaign', targetId: campaign.id, baseline, current, baselineWindow: windows.baseline, currentWindow: windows.current, source: 'development_fixture' }),
-    };
+    baseline = demoScenario.baseline;
+    current = demoScenario.current;
+    isDevelopmentFixture = true;
+  } else {
+    const connection = await db.query.adConnections.findFirst({
+      where: and(
+        eq(adConnections.id, campaign.connectionId),
+        eq(adConnections.companyId, companyId),
+        eq(adConnections.platform, 'facebook'),
+        eq(adConnections.status, 'connected'),
+      ),
+    });
+    if (!connection) throw new Error('Meta Ad Account is not connected');
+
+    sourceAccountId = connection.platformAccountId || campaign.sourceAccountId || 'unknown';
+    const token = decryptMaybe(connection.accessToken);
+    const [baselineRows, currentRows] = await Promise.all([
+      fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.baseline), token),
+      fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.current), token),
+    ]);
+    baseline = snapshot(baselineRows[0]);
+    current = snapshot(currentRows[0]);
   }
 
-  const connection = await db.query.adConnections.findFirst({
-    where: and(
-      eq(adConnections.id, campaign.connectionId),
-      eq(adConnections.companyId, companyId),
-      eq(adConnections.platform, 'facebook'),
-      eq(adConnections.status, 'connected'),
-    ),
-  });
-  if (!connection) throw new Error('Meta Ad Account is not connected');
-
-  const token = decryptMaybe(connection.accessToken);
-  const [baselineRows, currentRows] = await Promise.all([
-    fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.baseline), token),
-    fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.current), token),
-  ]);
-  const baseline = snapshot(baselineRows[0]);
-  const current = snapshot(currentRows[0]);
+  const isInsufficientData = !hasSufficientDelivery(baseline) || !hasSufficientDelivery(current);
   const findings = detectAdsFindings({
     target: 'campaign',
     targetId: campaign.id,
@@ -170,14 +198,39 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
     current,
     baselineWindow: windows.baseline,
     currentWindow: windows.current,
+    ...(isDevelopmentFixture ? { source: 'development_fixture' } : {}),
   });
 
+  const status: AdAnalysisStatus = isInsufficientData
+    ? 'insufficient_data'
+    : findings.length > 0
+    ? 'needs_review'
+    : 'no_issues_detected';
+
+  const { adCampaignAnalyses } = await import('@1person/core/db');
+  const [analysisRecord] = await db.insert(adCampaignAnalyses).values({
+    companyId,
+    campaignId: campaign.id,
+    connectionId: campaign.connectionId,
+    sourceAccountId,
+    status,
+    baselineWindow: windows.baseline as Record<string, unknown>,
+    currentWindow: windows.current as Record<string, unknown>,
+    baselineSnapshot: baseline as Record<string, unknown>,
+    currentSnapshot: current as Record<string, unknown>,
+    findings: findings as Record<string, unknown>[],
+    analysisVersion: 'meta-ads-v1',
+    analyzedAt: new Date(),
+  }).returning({ id: adCampaignAnalyses.id });
+
   return {
+    analysisId: analysisRecord.id,
     target: { id: campaign.id, name: campaign.name, objective: campaign.objective, briefContext },
     baseline,
     current,
-    isDevelopmentFixture: false,
-    isInsufficientData: !hasSufficientDelivery(baseline) || !hasSufficientDelivery(current),
+    status,
+    isDevelopmentFixture,
+    isInsufficientData,
     findings,
   };
 }

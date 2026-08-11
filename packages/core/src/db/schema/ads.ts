@@ -148,6 +148,10 @@ export const adCampaigns = pgTable('ad_campaigns', {
   // Created by
   createdByAgentId: uuid('created_by_agent_id').references(() => agents.id),
 
+  // Provenance & Source
+  sourceAccountId: text('source_account_id'),
+  origin: text('origin').$type<'managed' | 'meta_synced_readonly'>().notNull().default('managed'),
+
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -191,6 +195,7 @@ export const adSets = pgTable('ad_sets', {
 
   // Platform ID
   platformAdSetId: text('platform_ad_set_id'),
+  sourceAccountId: text('source_account_id'),
 
   // Metrics
   impressions: integer('impressions').notNull().default(0),
@@ -270,6 +275,7 @@ export const ads = pgTable('ads', {
   // Platform ID
   platformAdId: text('platform_ad_id'),
   platformCreativeId: text('platform_creative_id'),
+  sourceAccountId: text('source_account_id'),
 
   // Review status
   reviewStatus: text('review_status'), // pending, approved, rejected
@@ -341,6 +347,48 @@ export const adPerformance = pgTable('ad_performance', {
 });
 
 // ============================================
+// PERSISTED CAMPAIGN ANALYSIS RUNS
+// ============================================
+
+export type AdAnalysisStatus = 'insufficient_data' | 'needs_review' | 'no_issues_detected';
+
+export const adCampaignAnalyses = pgTable('ad_campaign_analyses', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  campaignId: uuid('campaign_id').notNull().references(() => adCampaigns.id, { onDelete: 'cascade' }),
+  connectionId: uuid('connection_id').notNull().references(() => adConnections.id, { onDelete: 'cascade' }),
+  sourceAccountId: text('source_account_id').notNull(),
+  status: text('status').$type<AdAnalysisStatus>().notNull(),
+  baselineWindow: jsonb('baseline_window').$type<Record<string, unknown>>().notNull(),
+  currentWindow: jsonb('current_window').$type<Record<string, unknown>>().notNull(),
+  baselineSnapshot: jsonb('baseline_snapshot').$type<Record<string, unknown>>().notNull(),
+  currentSnapshot: jsonb('current_snapshot').$type<Record<string, unknown>>().notNull(),
+  findings: jsonb('findings').$type<Record<string, unknown>[]>().notNull().default([]),
+  analysisVersion: text('analysis_version').notNull().default('meta-ads-v1'),
+  analyzedAt: timestamp('analyzed_at').notNull().defaultNow(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => ({
+  companyCampaignIdx: index('ad_campaign_analyses_company_campaign_idx').on(table.companyId, table.campaignId, table.analyzedAt),
+}));
+
+// ============================================
+// OAUTH ONE-TIME STATES
+// ============================================
+
+export const oauthStates = pgTable('oauth_states', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  nonce: text('nonce').notNull().unique(),
+  userId: text('user_id').notNull(),
+  companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  platform: text('platform').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  consumedAt: timestamp('consumed_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => ({
+  nonceIdx: index('oauth_states_nonce_idx').on(table.nonce),
+}));
+
+// ============================================
 // EVIDENCE-BACKED RECOMMENDATIONS (READ-ONLY V1)
 // ============================================
 
@@ -355,6 +403,7 @@ export const adRecommendations = pgTable('ad_recommendations', {
   id: uuid('id').primaryKey().defaultRandom(),
   companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
   campaignId: uuid('campaign_id').notNull().references(() => adCampaigns.id, { onDelete: 'cascade' }),
+  analysisId: uuid('analysis_id').references(() => adCampaignAnalyses.id, { onDelete: 'set null' }),
   status: text('status').$type<AdRecommendationStatus>().notNull().default('recommended'),
   priority: text('priority').notNull().default('medium'),
   type: text('type').notNull(),
@@ -384,3 +433,7 @@ export type AdPerformance = typeof adPerformance.$inferSelect;
 export type NewAdPerformance = typeof adPerformance.$inferInsert;
 export type AdRecommendation = typeof adRecommendations.$inferSelect;
 export type NewAdRecommendation = typeof adRecommendations.$inferInsert;
+export type AdCampaignAnalysis = typeof adCampaignAnalyses.$inferSelect;
+export type NewAdCampaignAnalysis = typeof adCampaignAnalyses.$inferInsert;
+export type OAuthStateRecord = typeof oauthStates.$inferSelect;
+export type NewOAuthStateRecord = typeof oauthStates.$inferInsert;

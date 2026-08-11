@@ -214,11 +214,31 @@ integrationsRouter.post('/:platform/connect', async (c) => {
   }
 
   const { userId } = c.get('user');
+  const body = await c.req.json().catch(() => ({})) as { companyId?: string };
+  const userCompanies = await getUserCompanies(userId);
+  const targetCompanyId = body.companyId && userCompanies.some((co: { id: string }) => co.id === body.companyId)
+    ? body.companyId
+    : userCompanies[0]?.id;
+
+  if (!targetCompanyId) {
+    return c.json({ error: 'User does not belong to any valid company' }, 403);
+  }
+
+  const nonce = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes TTL
+
+  await db.insert(oauthStates).values({
+    nonce,
+    userId,
+    companyId: targetCompanyId,
+    platform,
+    expiresAt,
+  });
+
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
   const redirectUri = `${apiUrl}/integrations/${platform}/callback`;
-  const state = `${userId}:${platform}:${Date.now()}`;
 
-  const url = provider.getAuthorizationUrl(state, redirectUri);
+  const url = provider.getAuthorizationUrl(nonce, redirectUri);
 
   return c.json({ url });
 });
@@ -248,11 +268,31 @@ integrationsRouter.get('/:platform/auth-url', async (c) => {
   }
 
   const { userId } = c.get('user');
+  const requestedCompanyId = c.req.query('companyId');
+  const userCompanies = await getUserCompanies(userId);
+  const targetCompanyId = requestedCompanyId && userCompanies.some((co: { id: string }) => co.id === requestedCompanyId)
+    ? requestedCompanyId
+    : userCompanies[0]?.id;
+
+  if (!targetCompanyId) {
+    return c.json({ error: 'User does not belong to any valid company' }, 403);
+  }
+
+  const nonce = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  await db.insert(oauthStates).values({
+    nonce,
+    userId,
+    companyId: targetCompanyId,
+    platform,
+    expiresAt,
+  });
+
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
   const redirectUri = `${apiUrl}/integrations/${platform}/callback`;
-  const state = `${userId}:${platform}:${Date.now()}`;
 
-  const url = provider.getAuthorizationUrl(state, redirectUri);
+  const url = provider.getAuthorizationUrl(nonce, redirectUri);
 
   return c.json({ url });
 });
@@ -278,12 +318,34 @@ integrationsRouter.get('/:platform/callback', async (c) => {
   }
 
   const code = c.req.query('code');
-  const state = c.req.query('state') || '';
-  const [userId] = state.split(':');
+  const stateNonce = c.req.query('state') || '';
 
   if (!code) {
     return c.html('<html><body><h1>Error</h1><p>No authorization code received.</p><script>window.close();</script></body></html>');
   }
+
+  if (!stateNonce) {
+    return c.html('<html><body><h1>Error</h1><p>Invalid state token.</p><script>window.close();</script></body></html>');
+  }
+
+  // Atomic one-time consumption of OAuth state
+  const { sql: drizzleSql } = await import('drizzle-orm');
+  const [consumedState] = await db
+    .update(oauthStates)
+    .set({ consumedAt: new Date() })
+    .where(and(
+      eq(oauthStates.nonce, stateNonce),
+      eq(oauthStates.platform, platform),
+      drizzleSql`consumed_at IS NULL`,
+      drizzleSql`expires_at > NOW()`
+    ))
+    .returning();
+
+  if (!consumedState) {
+    return c.html('<html><body><h1>Error</h1><p>Invalid or expired OAuth state token.</p><script>window.close();</script></body></html>');
+  }
+
+  const targetCompanyId = consumedState.companyId;
 
   if (!platformRegistry.hasOAuthProvider(platform)) {
     return c.html(`<html><body><h1>Error</h1><p>Platform ${platform} not supported.</p><script>window.close();</script></body></html>`);
@@ -295,18 +357,6 @@ integrationsRouter.get('/:platform/callback', async (c) => {
 
   try {
     const tokens = await provider.exchangeCode(code, redirectUri);
-
-    // Find user's company
-    const { companies } = await import('@1person/core/db');
-    const userCompanies = userId
-      ? await db.query.companies.findMany({ where: eq(companies.ownerId, userId) })
-      : [];
-
-    const companyId = userCompanies[0]?.id;
-    if (!companyId) {
-      return c.html('<html><body><h1>Error</h1><p>No company found.</p><script>window.close();</script></body></html>');
-    }
-    const targetCompanyId: string = companyId;
 
     const config = platformRegistry.getConfig(platform);
     const tokenExpiresAt = tokens.expiresIn

@@ -144,12 +144,15 @@ export default function FacebookAdsCampaignDetailPage() {
   const campaignId = params.campaignId as string;
   const token = useAuthStore((state) => state.token);
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [updatingDisposition, setUpdatingDisposition] = useState(false);
+
   const load = useCallback(async () => {
     if (!token) return;
+    setLoadError(null);
     try {
       const [detailResult, recommendationsResult] = await Promise.all([
         api.get<{ data: Detail }>(`/ads/company/${companyId}/facebook/campaigns/${campaignId}`, {
@@ -167,7 +170,9 @@ export default function FacebookAdsCampaignDetailPage() {
       setDetail(detailResult.data);
       if (recommendationsResult) setRecommendations(recommendationsResult.data);
     } catch (error) {
-      toast.error((error as Error).message || 'Could not load this campaign.');
+      const msg = (error as Error).message || 'Could not load this campaign.';
+      setLoadError(msg);
+      toast.error(msg);
     }
   }, [campaignId, companyId, token]);
   useEffect(() => {
@@ -187,7 +192,10 @@ export default function FacebookAdsCampaignDetailPage() {
     setAnalyzing(true);
     try {
       const endpoint = `/ads/company/${companyId}/facebook/campaigns/${campaignId}/${withBrief ? 'recommendation-brief' : 'analyze'}`;
-      const result = await api.post<{ data: Analysis }>(endpoint, windows, { token });
+      const payload = withBrief && (analysis as any)?.analysisId
+        ? { analysisId: (analysis as any).analysisId }
+        : windows;
+      const result = await api.post<{ data: Analysis }>(endpoint, payload, { token });
       setAnalysis(result.data);
       if (result.data.recommendation)
         setRecommendations((current) => [
@@ -227,6 +235,15 @@ export default function FacebookAdsCampaignDetailPage() {
       setUpdatingDisposition(false);
     }
   };
+  if (loadError)
+    return (
+      <div className="mx-auto max-w-5xl space-y-4 py-8 text-center">
+        <AlertCircle className="mx-auto h-8 w-8 text-red-500" />
+        <h2 className="text-lg font-bold">Could not load campaign</h2>
+        <p className="text-sm text-muted-foreground">{loadError}</p>
+        <Button onClick={() => void load()}>Try again</Button>
+      </div>
+    );
   if (!detail)
     return (
       <div className="flex h-64 items-center justify-center">
@@ -295,34 +312,6 @@ export default function FacebookAdsCampaignDetailPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-        <Metric
-          icon={DollarSign}
-          label="Spend"
-          value={formatMoney(campaign.spentAmount, detail.currency)}
-        />
-        <Metric
-          icon={DollarSign}
-          label="Cost / Conv."
-          value={
-            campaign.conversions > 0 && campaign.spentAmount
-              ? formatMoney((Number(campaign.spentAmount) / campaign.conversions).toString(), detail.currency)
-              : '—'
-          }
-        />
-        <Metric icon={Eye} label="Impressions" value={campaign.impressions.toLocaleString()} />
-        <Metric icon={Users} label="Reach" value={campaign.reach.toLocaleString()} />
-        <Metric
-          icon={Repeat}
-          label="Frequency"
-          value={Number(campaign.frequency || 0).toFixed(2)}
-        />
-        <Metric icon={MousePointer} label="Clicks" value={campaign.clicks.toLocaleString()} />
-        <Metric icon={Percent} label="CTR" value={`${Number(campaign.ctr || 0).toFixed(2)}%`} />
-        <Metric icon={BarChart2} label="CPC" value={formatMoney(campaign.cpc, detail.currency)} />
-        <Metric icon={TrendingUp} label="CPM" value={formatMoney(campaign.cpm, detail.currency)} />
-      </div>
-
       <CampaignTabs
         companyId={companyId}
         campaignId={campaignId}
@@ -364,13 +353,16 @@ function CampaignTabs({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeTab = searchParams.get('tab') || 'overview';
+  const requestedTab = searchParams.get('tab') || '';
+  const activeTab = ['overview', 'ad-sets', 'ads'].includes(requestedTab) ? requestedTab : 'overview';
 
   const handleTabChange = (tab: string) => {
     const newParams = new URLSearchParams(searchParams.toString());
     newParams.set('tab', tab);
     router.replace(`/${companyId}/campaigns/facebook-ads/${campaignId}?${newParams.toString()}`);
   };
+
+  const { campaign } = detail;
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
@@ -381,6 +373,30 @@ function CampaignTabs({
       </TabsList>
 
       <TabsContent value="overview" className="space-y-6">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+          <Metric
+            icon={DollarSign}
+            label="Spend"
+            value={formatMoney(campaign.spentAmount, detail.currency)}
+          />
+          <Metric icon={Eye} label="Impressions" value={campaign.impressions.toLocaleString()} />
+          <Metric icon={Users} label="Reach" value={campaign.reach.toLocaleString()} />
+          <Metric icon={Repeat} label="Frequency" value={Number(campaign.frequency || 0).toFixed(2)} />
+          <Metric icon={TrendingUp} label="Conversions" value={campaign.conversions.toLocaleString()} />
+          <Metric
+            icon={DollarSign}
+            label="Cost per tracked conversion"
+            value={formatMoney(
+              campaign.conversions ? (Number(campaign.spentAmount || 0) / campaign.conversions).toString() : null,
+              detail.currency
+            )}
+          />
+          <Metric icon={MousePointer} label="Clicks" value={campaign.clicks.toLocaleString()} />
+          <Metric icon={Percent} label="CTR" value={`${Number(campaign.ctr || 0).toFixed(2)}%`} />
+          <Metric icon={BarChart2} label="CPC" value={formatMoney(campaign.cpc, detail.currency)} />
+          <Metric icon={TrendingUp} label="CPM" value={formatMoney(campaign.cpm, detail.currency)} />
+        </div>
+
         {analysis ? (
           <AnalysisCard
             analysis={analysis}
