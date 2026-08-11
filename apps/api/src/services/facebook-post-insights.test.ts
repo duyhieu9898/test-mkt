@@ -16,7 +16,7 @@ describe('fetchFacebookPostInsights', () => {
   it('combines engagement counts with Facebook post insights', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({
-        likes: { summary: { total_count: 12 } },
+        reactions: { summary: { total_count: 12 } },
         comments: { summary: { total_count: 4 } },
         shares: { count: 2 },
       }))
@@ -47,7 +47,7 @@ describe('fetchFacebookPostInsights', () => {
   it('keeps reach data when post clicks are unavailable', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({
-        likes: { summary: { total_count: 3 } },
+        reactions: { summary: { total_count: 3 } },
         comments: { summary: { total_count: 1 } },
       }))
       .mockResolvedValueOnce(jsonResponse({

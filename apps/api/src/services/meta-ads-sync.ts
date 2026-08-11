@@ -169,9 +169,52 @@ function performanceTimeRange(preset: MetaAdsPerformanceDatePreset, timezone: st
   }
   if (preset === 'today_and_yesterday') return rangeForDays(2);
   if (preset === 'last_7d') return rangeForDays(7);
+  if (preset === 'last_30d') return rangeForDays(30);
   if (preset === 'last_90d') return rangeForDays(90);
   if (preset === 'last_360d') return rangeForDays(360);
   if (preset === 'last_720d') return rangeForDays(720);
+
+  if (preset === 'this_week') {
+    const todayDate = new Date(`${today}T00:00:00.000Z`);
+    const day = todayDate.getUTCDay();
+    const diffToMonday = day === 0 ? 6 : day - 1;
+    const monday = shiftDate(today, -diffToMonday);
+    const days = diffToMonday + 1;
+    return {
+      since: monday,
+      until: today,
+      days,
+      encoded: encodeURIComponent(JSON.stringify({ since: monday, until: today })),
+    };
+  }
+
+  if (preset === 'this_month') {
+    const monthStart = `${today.slice(0, 7)}-01`;
+    const todayDate = new Date(`${today}T00:00:00.000Z`);
+    const days = todayDate.getUTCDate();
+    return {
+      since: monthStart,
+      until: today,
+      days,
+      encoded: encodeURIComponent(JSON.stringify({ since: monthStart, until: today })),
+    };
+  }
+
+  if (preset === 'last_month') {
+    const todayDate = new Date(`${today}T00:00:00.000Z`);
+    const prevMonthDate = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth() - 1, 1));
+    const lastDayPrevMonthDate = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth(), 0));
+    const since = prevMonthDate.toISOString().slice(0, 10);
+    const until = lastDayPrevMonthDate.toISOString().slice(0, 10);
+    const days = lastDayPrevMonthDate.getUTCDate();
+    return {
+      since,
+      until,
+      days,
+      encoded: encodeURIComponent(JSON.stringify({ since, until })),
+    };
+  }
+
   return rangeForDays(30);
 }
 

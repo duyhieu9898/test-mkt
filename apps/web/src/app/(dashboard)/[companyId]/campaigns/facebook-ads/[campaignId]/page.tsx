@@ -131,6 +131,7 @@ type Recommendation = {
   createdAt?: string;
 };
 type Analysis = {
+  analysisId?: string;
   findings: Finding[];
   isDevelopmentFixture?: boolean;
   isInsufficientData?: boolean;
@@ -192,11 +193,11 @@ export default function FacebookAdsCampaignDetailPage() {
     setAnalyzing(true);
     try {
       const endpoint = `/ads/company/${companyId}/facebook/campaigns/${campaignId}/${withBrief ? 'recommendation-brief' : 'analyze'}`;
-      const payload = withBrief && (analysis as any)?.analysisId
-        ? { analysisId: (analysis as any).analysisId }
+      const payload = withBrief && analysis?.analysisId
+        ? { analysisId: analysis.analysisId }
         : windows;
       const result = await api.post<{ data: Analysis }>(endpoint, payload, { token });
-      setAnalysis(result.data);
+      setAnalysis((current) => (current ? { ...current, ...result.data } : result.data));
       if (result.data.recommendation)
         setRecommendations((current) => [
           result.data.recommendation!,
@@ -468,7 +469,7 @@ function CampaignTabs({
                           : 'Campaign budget'}{' '}
                         · {adSet.impressions.toLocaleString()} impressions ·{' '}
                         {formatMoney(adSet.spentAmount, detail.currency)} spent ·{' '}
-                        Cost/Conv: {adSetCostPerConv !== null ? formatMoney(adSetCostPerConv.toString(), detail.currency) : '—'}
+                        Cost per tracked conversion: {adSetCostPerConv !== null ? formatMoney(adSetCostPerConv.toString(), detail.currency) : '—'}
                       </CardDescription>
                     </div>
                     <StatusBadges
@@ -823,11 +824,12 @@ function Metric({
 }
 
 function formatMoney(value: string | null, currency: string) {
+  if (value === null || value === undefined) return '—';
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency,
     maximumFractionDigits: 2,
-  }).format(Number(value || 0));
+  }).format(Number(value));
 }
 function formatEvidenceNumber(metric: string, value: number, currency: string) {
   return metric === 'spend' || metric === 'daily_budget'

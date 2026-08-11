@@ -64,7 +64,7 @@ function hasSufficientDelivery(snapshot: MetricSnapshot) {
   return snapshot.impressions >= MIN_IMPRESSIONS_FOR_ANALYSIS;
 }
 
-async function loadBriefContext(companyId: string, campaignId: string, objective: string) {
+export async function loadBriefContext(companyId: string, campaignId: string, objective: string) {
   const [campaignAdSets, campaignAds] = await Promise.all([
     db.query.adSets.findMany({
       where: and(eq(adSets.companyId, companyId), eq(adSets.campaignId, campaignId)),
@@ -180,7 +180,12 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
     });
     if (!connection) throw new Error('Meta Ad Account is not connected');
 
-    sourceAccountId = connection.platformAccountId || campaign.sourceAccountId || 'unknown';
+    const activeAccountId = connection.platformAccountId ? connection.platformAccountId.replace(/^act_/, '') : undefined;
+    if (campaign.sourceAccountId && activeAccountId && campaign.sourceAccountId !== activeAccountId) {
+      throw new Error('Campaign does not belong to the currently selected Meta Ad Account');
+    }
+
+    sourceAccountId = activeAccountId || campaign.sourceAccountId || 'unknown';
     const token = decryptMaybe(connection.accessToken);
     const [baselineRows, currentRows] = await Promise.all([
       fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.baseline), token),
@@ -201,7 +206,7 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
     ...(isDevelopmentFixture ? { source: 'development_fixture' } : {}),
   });
 
-  const status: AdAnalysisStatus = isInsufficientData
+  const status: AnalysisStatus = isInsufficientData
     ? 'insufficient_data'
     : findings.length > 0
     ? 'needs_review'
@@ -222,6 +227,8 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
     analysisVersion: 'meta-ads-v1',
     analyzedAt: new Date(),
   }).returning({ id: adCampaignAnalyses.id });
+
+  if (!analysisRecord) throw new Error('Failed to create analysis record');
 
   return {
     analysisId: analysisRecord.id,

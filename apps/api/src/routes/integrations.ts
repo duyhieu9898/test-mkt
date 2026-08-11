@@ -216,9 +216,19 @@ integrationsRouter.post('/:platform/connect', async (c) => {
   const { userId } = c.get('user');
   const body = await c.req.json().catch(() => ({})) as { companyId?: string };
   const userCompanies = await getUserCompanies(userId);
-  const targetCompanyId = body.companyId && userCompanies.some((co: { id: string }) => co.id === body.companyId)
-    ? body.companyId
-    : userCompanies[0]?.id;
+  let targetCompanyId: string | undefined;
+
+  if (body.companyId) {
+    if (userCompanies.some((co: { id: string }) => co.id === body.companyId)) {
+      targetCompanyId = body.companyId;
+    } else {
+      return c.json({ error: 'Access denied to specified company' }, 403);
+    }
+  } else if (userCompanies.length === 1) {
+    targetCompanyId = userCompanies[0]?.id;
+  } else {
+    return c.json({ error: 'companyId is required' }, 400);
+  }
 
   if (!targetCompanyId) {
     return c.json({ error: 'User does not belong to any valid company' }, 403);
@@ -270,9 +280,19 @@ integrationsRouter.get('/:platform/auth-url', async (c) => {
   const { userId } = c.get('user');
   const requestedCompanyId = c.req.query('companyId');
   const userCompanies = await getUserCompanies(userId);
-  const targetCompanyId = requestedCompanyId && userCompanies.some((co: { id: string }) => co.id === requestedCompanyId)
-    ? requestedCompanyId
-    : userCompanies[0]?.id;
+  let targetCompanyId: string | undefined;
+
+  if (requestedCompanyId) {
+    if (userCompanies.some((co: { id: string }) => co.id === requestedCompanyId)) {
+      targetCompanyId = requestedCompanyId;
+    } else {
+      return c.json({ error: 'Access denied to specified company' }, 403);
+    }
+  } else if (userCompanies.length === 1) {
+    targetCompanyId = userCompanies[0]?.id;
+  } else {
+    return c.json({ error: 'companyId is required' }, 400);
+  }
 
   if (!targetCompanyId) {
     return c.json({ error: 'User does not belong to any valid company' }, 403);
@@ -343,6 +363,11 @@ integrationsRouter.get('/:platform/callback', async (c) => {
 
   if (!consumedState) {
     return c.html('<html><body><h1>Error</h1><p>Invalid or expired OAuth state token.</p><script>window.close();</script></body></html>');
+  }
+
+  const userCompanies = await getUserCompanies(consumedState.userId);
+  if (!userCompanies.some((co: { id: string }) => co.id === consumedState.companyId)) {
+    return c.html('<html><body><h1>Error</h1><p>User no longer has access to this company.</p><script>window.close();</script></body></html>');
   }
 
   const targetCompanyId = consumedState.companyId;

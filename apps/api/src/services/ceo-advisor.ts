@@ -679,12 +679,12 @@ function buildStrategicGaps(
 ): AdvisorStrategicGapInput[] {
   const gaps: AdvisorStrategicGapInput[] = [];
   const existingContent = [
-    ...context.campaigns,
-    ...context.blogs,
-    ...context.landingPages,
+    ...(context.campaigns || []),
+    ...(context.blogs || []),
+    ...(context.landingPages || []),
   ];
 
-  for (const signal of context.marketSignals.slice(0, 12)) {
+  for (const signal of (context.marketSignals || []).slice(0, 12)) {
     if (!['critical', 'high', 'medium'].includes(signal.threatLevel)) continue;
     const recommendation = signal.campaignRecommendation;
     const topic = [
@@ -695,7 +695,7 @@ function buildStrategicGaps(
       recommendation?.publicTopic,
       recommendation?.contentAngle,
     ].filter(Boolean).join(' ');
-    const knowledgeMatches = knowledgeMatchesForTopic(context.knowledge, topic);
+    const knowledgeMatches = knowledgeMatchesForTopic(context.knowledge || [], topic);
     let suggestedAssets = sanitizeSuggestedAssets([
       ...(recommendation?.assets ?? []),
       'social_posts',
@@ -712,10 +712,10 @@ function buildStrategicGaps(
     }
 
     const missingPieces = [
-      !collectionHasTopic(context.campaigns, topic)
+      !collectionHasTopic(context.campaigns || [], topic)
         ? 'no visible counter-campaign has been created for this competitor signal'
         : '',
-      suggestedAssets.includes('blog') && !collectionHasTopic(context.blogs, topic)
+      suggestedAssets.includes('blog') && !collectionHasTopic(context.blogs || [], topic)
         ? 'no supporting blog or comparison article answers this market move'
         : '',
       suggestedAssets.includes('landing_page') && !collectionHasTopic(context.landingPages, topic)
@@ -747,7 +747,7 @@ function buildStrategicGaps(
     }));
   }
 
-  for (const entry of context.knowledge.slice(0, 12)) {
+  for (const entry of (context.knowledge || []).slice(0, 12)) {
     const id = String(entry.id ?? '').trim();
     const title = String(entry.title ?? '').trim();
     if (!id || !title) continue;
@@ -1021,7 +1021,9 @@ export function buildCampaignReviewActions(args: {
         : `Review campaign: ${name}`;
       const recommendation = status === 'generating'
         ? 'Open the campaign to follow generation progress and prepare the CEO review once assets are ready.'
-        : 'Review the campaign assets, confirm the message, and decide whether it should launch now.';
+        : assetSummary
+          ? `Review the campaign assets (${assetSummary}), confirm the message, and decide whether it should launch now.`
+          : 'Review the campaign assets, confirm the message, and decide whether it should launch now.';
       const evidenceSummary = evidence?.detail
         ?? `${status} AI-created campaign in the Campaigns list${assetSummary ? ` with ${assetSummary}` : ''}`;
 
@@ -1106,17 +1108,17 @@ export async function generateCeoBrief(args: {
     },
     growthPlanHealth: context.growthPlanHealth,
     todayMarketPulse: buildTodayMarketPulse(context),
-    campaigns: context.campaigns.slice(0, 20),
-    blogs: context.blogs.slice(0, 25),
-    landingPages: context.landingPages.slice(0, 15),
-    knowledge: context.knowledge.slice(0, 12),
+    campaigns: (context.campaigns || []).slice(0, 20),
+    blogs: (context.blogs || []).slice(0, 25),
+    landingPages: (context.landingPages || []).slice(0, 15),
+    knowledge: (context.knowledge || []).slice(0, 12),
     sales: context.sales,
     team: context.team,
     marketSignals: context.marketSignals,
     strategicGaps,
     coverageGaps: context.coverageGaps,
     sourceHealth: context.sourceHealth,
-    evidenceCatalog: context.evidence.slice(0, 80).map((item) => ({
+    evidenceCatalog: (context.evidence || []).slice(0, 80).map((item) => ({
       id: item.id,
       sourceType: item.sourceType,
       label: item.label,
@@ -1430,7 +1432,7 @@ Return:
       campaignsCount: context.counts.campaigns,
       blogsCount: context.counts.blogs,
       landingPagesCount: context.counts.landingPages,
-      knowledgeCount: context.knowledge.length,
+      knowledgeCount: (context.knowledge || []).length,
       dealsCount: context.counts.deals,
       marketScansCount: context.counts.marketScans,
       learningsCount: context.counts.learnings,

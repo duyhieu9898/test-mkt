@@ -590,8 +590,8 @@ function CompanyRecommendationsList({
   const updateStatus = async (id: string, status: 'saved' | 'handled_manually' | 'rejected') => {
     if (!token) return;
     try {
-      await api.post(
-        `/ads/company/${companyId}/facebook/recommendations/${id}/status`,
+      await api.patch(
+        `/ads/company/${companyId}/facebook/recommendations/${id}`,
         { status },
         { token }
       );

@@ -377,7 +377,7 @@ export default function SettingsPage() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8004/api/v1';
       try {
         const expectedOrigin = new URL(apiUrl).origin;
-        if (event.origin !== expectedOrigin && event.origin !== window.location.origin) return;
+        if (event.origin !== expectedOrigin) return;
       } catch {}
       if (event.data?.type === 'oauth_success') {
         const platformId = normalizeOAuthPlatform(event.data.platform);

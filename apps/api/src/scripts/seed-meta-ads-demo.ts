@@ -38,9 +38,10 @@ for (const demo of demos) {
       campaign = updated;
     }
   }
+  const sourceAccountId = connection.platformAccountId ? connection.platformAccountId.replace(/^act_/, '') : 'dev_fixture';
   if (!campaign) {
     const [created] = await db.insert(adCampaigns).values({
-      companyId, connectionId: connection.id, platform: 'facebook', platformCampaignId: demo.id,
+      companyId, connectionId: connection.id, platform: 'facebook', platformCampaignId: demo.id, sourceAccountId,
       name: demo.name, objective: 'traffic', status: 'active', dailyBudget: demo.budget,
       impressions: demo.impressions, clicks: demo.clicks, conversions: 7, reach: Math.round(demo.impressions * 0.75), spentAmount: demo.spend, ctr: demo.ctr, cpc: '1.00', cpm: '20.00',
     }).returning();
@@ -50,14 +51,14 @@ for (const demo of demos) {
   const adSetPlatformId = `${demo.id}_adset`;
   let adSet = await db.query.adSets.findFirst({ where: and(eq(adSets.companyId, companyId), eq(adSets.campaignId, campaign.id), eq(adSets.platformAdSetId, adSetPlatformId)) });
   if (!adSet) {
-    const [created] = await db.insert(adSets).values({ companyId, campaignId: campaign.id, platformAdSetId: adSetPlatformId, name: '[DEV DEMO] Parents in Ho Chi Minh City', status: 'active', dailyBudget: demo.budget, impressions: demo.impressions, clicks: demo.clicks, conversions: 7, spentAmount: demo.spend }).returning();
+    const [created] = await db.insert(adSets).values({ companyId, campaignId: campaign.id, platformAdSetId: adSetPlatformId, sourceAccountId, name: '[DEV DEMO] Parents in Ho Chi Minh City', status: 'active', dailyBudget: demo.budget, impressions: demo.impressions, clicks: demo.clicks, conversions: 7, spentAmount: demo.spend }).returning();
     if (!created) throw new Error(`Could not create Ad Set for ${demo.name}`);
     adSet = created;
   }
   if (demo.createCreative !== false) {
     const adPlatformId = `${demo.id}_ad`;
     const existingAd = await db.query.ads.findFirst({ where: and(eq(ads.companyId, companyId), eq(ads.campaignId, campaign.id), eq(ads.platformAdId, adPlatformId)) });
-    if (!existingAd) await db.insert(ads).values({ companyId, campaignId: campaign.id, adSetId: adSet.id, platformAdId: adPlatformId, platformCreativeId: `${demo.id}_creative`, name: '[DEV DEMO] Creative A', type: 'image', status: 'active', headline: demo.headline, primaryText: 'A local development fixture. It never reaches Meta.', callToAction: 'Learn More', impressions: demo.impressions, clicks: demo.clicks, conversions: 7, spentAmount: demo.spend, ctr: demo.ctr });
+    if (!existingAd) await db.insert(ads).values({ companyId, campaignId: campaign.id, adSetId: adSet.id, platformAdId: adPlatformId, platformCreativeId: `${demo.id}_creative`, sourceAccountId, name: '[DEV DEMO] Creative A', type: 'image', status: 'active', headline: demo.headline, primaryText: 'A local development fixture. It never reaches Meta.', callToAction: 'Learn More', impressions: demo.impressions, clicks: demo.clicks, conversions: 7, spentAmount: demo.spend, ctr: demo.ctr });
   }
   seeded.push({ campaignId: campaign.id, name: demo.name, url: `/${companyId}/campaigns/facebook-ads/${campaign.id}` });
 }

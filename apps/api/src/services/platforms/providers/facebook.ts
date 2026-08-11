@@ -238,7 +238,7 @@ import { MetaAdsReadOnlyError } from '../../meta-ads-errors';
 export class FacebookAdProvider implements IAdPlatformProvider {
   readonly platformId = 'facebook';
 
-  private mapObjective(objective: string): string {
+  mapObjective(objective: string): string {
     const map: Record<string, string> = {
       awareness: 'OUTREACH',
       traffic: 'LINK_CLICKS',
@@ -251,7 +251,7 @@ export class FacebookAdProvider implements IAdPlatformProvider {
     return map[objective] || 'LINK_CLICKS';
   }
 
-  private buildTargeting(audience: TargetAudience): Record<string, unknown> {
+  buildTargeting(audience: TargetAudience): Record<string, unknown> {
     const targeting: Record<string, unknown> = {};
     if (audience.locations?.length) {
       targeting.geo_locations = { countries: audience.locations };

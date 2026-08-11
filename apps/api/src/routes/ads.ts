@@ -10,7 +10,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { decryptMaybe } from '../lib/crypto';
 import { getFacebookAdAccounts } from '../services/platforms/providers/facebook';
 import { META_ADS_PERFORMANCE_DATE_PRESETS, syncMetaAds } from '../services/meta-ads-sync';
-import { analyzeMetaCampaign, isDevelopmentMetaAdsFixture, calculateCostPerConversion, calculateAggregateCpa, calculate7dAnalysisWindows } from '../services/meta-ads-analysis';
+import { analyzeMetaCampaign, isDevelopmentMetaAdsFixture, calculateCostPerConversion, calculateAggregateCpa, calculate7dAnalysisWindows, loadBriefContext } from '../services/meta-ads-analysis';
 import { generateMetaAdsBrief, MetaAdsBriefGenerationError } from '../services/meta-ads-brief';
 import { createMetaAdsRecommendation, listMetaAdsRecommendations, listCompanyMetaAdsRecommendations, MetaAdsRecommendationNotFoundError, setMetaAdsRecommendationStatus } from '../services/meta-ads-recommendations';
 import { MetaAdsReadOnlyError, toMetaAdsUserError } from '../services/meta-ads-errors';
@@ -113,13 +113,18 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
   const importedCampaigns = await db.query.adCampaigns.findMany({
     where: and(
       eq(adCampaigns.companyId, companyId),
-      eq(adCampaigns.connectionId, connection.id),
-      ...(accountId ? [eq(adCampaigns.sourceAccountId, accountId)] : [])
+      eq(adCampaigns.connectionId, connection.id)
     ),
     orderBy: desc(adCampaigns.updatedAt),
   });
-  const liveCampaigns = importedCampaigns.filter((campaign) => !isDevelopmentMetaAdsFixture(campaign.platformCampaignId));
-  const developmentFixtures = importedCampaigns.filter((campaign) => isDevelopmentMetaAdsFixture(campaign.platformCampaignId));
+  const liveCampaigns = importedCampaigns.filter(
+    (campaign) =>
+      !isDevelopmentMetaAdsFixture(campaign.platformCampaignId) &&
+      (!accountId || campaign.sourceAccountId === accountId)
+  );
+  const developmentFixtures = importedCampaigns.filter((campaign) =>
+    isDevelopmentMetaAdsFixture(campaign.platformCampaignId)
+  );
   const total = liveCampaigns.length;
   const totalPages = Math.ceil(total / FACEBOOK_CAMPAIGNS_PAGE_SIZE);
   const rawCampaigns = liveCampaigns.slice((page - 1) * FACEBOOK_CAMPAIGNS_PAGE_SIZE, page * FACEBOOK_CAMPAIGNS_PAGE_SIZE);
@@ -210,23 +215,47 @@ adsRouter.get('/company/:companyId/facebook/recommendations', async (c) => {
   return c.json({ success: true, data: result });
 });
 
+async function requireCurrentMetaCampaign(companyId: string, campaignId: string) {
+  const connection = await db.query.adConnections.findFirst({
+    where: and(
+      eq(adConnections.companyId, companyId),
+      eq(adConnections.platform, 'facebook'),
+      eq(adConnections.status, 'connected'),
+    ),
+  });
+  if (!connection) throw new HTTPException(404, { message: 'Meta Ad Account is not connected' });
+
+  const campaign = await db.query.adCampaigns.findFirst({
+    where: and(
+      eq(adCampaigns.id, campaignId),
+      eq(adCampaigns.companyId, companyId),
+      eq(adCampaigns.connectionId, connection.id),
+    ),
+  });
+  if (!campaign) throw new HTTPException(404, { message: 'Campaign not found for current selected ad account' });
+
+  const isFixture = isDevelopmentMetaAdsFixture(campaign.platformCampaignId);
+  const activeAccountId = connection.platformAccountId ? connection.platformAccountId.replace(/^act_/, '') : undefined;
+
+  if (!isFixture && activeAccountId && campaign.sourceAccountId && campaign.sourceAccountId !== activeAccountId) {
+    throw new HTTPException(404, { message: 'Campaign does not belong to the currently selected Meta Ad Account' });
+  }
+
+  return { campaign, connection, activeAccountId };
+}
+
 adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId', async (c) => {
   const companyId = c.req.param('companyId');
   const campaignId = c.req.param('campaignId');
   const { userId } = c.get('user');
   if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
-  const campaign = await db.query.adCampaigns.findFirst({
-    where: and(eq(adCampaigns.id, campaignId), eq(adCampaigns.companyId, companyId)),
-  });
-  if (!campaign) throw new HTTPException(404, { message: 'Campaign not found' });
+
+  const { campaign, connection } = await requireCurrentMetaCampaign(companyId, campaignId);
   const [campaignAdSets, campaignAds] = await Promise.all([
     db.query.adSets.findMany({ where: and(eq(adSets.campaignId, campaign.id), eq(adSets.companyId, companyId)), orderBy: desc(adSets.updatedAt) }),
     db.query.ads.findMany({ where: and(eq(ads.campaignId, campaign.id), eq(ads.companyId, companyId)), orderBy: desc(ads.updatedAt) }),
   ]);
-  const connection = await db.query.adConnections.findFirst({
-    where: and(eq(adConnections.id, campaign.connectionId), eq(adConnections.companyId, companyId)),
-  });
-  return c.json({ data: { campaign, adSets: campaignAdSets, ads: campaignAds, currency: connection?.platformAccountCurrency || 'USD', isDevelopmentFixture: isDevelopmentMetaAdsFixture(campaign.platformCampaignId) } });
+  return c.json({ data: { campaign, adSets: campaignAdSets, ads: campaignAds, currency: connection.platformAccountCurrency || 'USD', isDevelopmentFixture: isDevelopmentMetaAdsFixture(campaign.platformCampaignId) } });
 });
 
 adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId/ads/:adId', async (c) => {
@@ -235,15 +264,13 @@ adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId/ads/:adId', as
   const adId = c.req.param('adId');
   const { userId } = c.get('user');
   if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
-  const ad = await db.query.ads.findFirst({ where: and(eq(ads.id, adId), eq(ads.companyId, companyId), eq(ads.campaignId, campaignId)) });
+
+  const { campaign, connection } = await requireCurrentMetaCampaign(companyId, campaignId);
+  const ad = await db.query.ads.findFirst({ where: and(eq(ads.id, adId), eq(ads.companyId, companyId), eq(ads.campaignId, campaign.id)) });
   if (!ad) throw new HTTPException(404, { message: 'Ad not found' });
-  const [campaign, adSet] = await Promise.all([
-    db.query.adCampaigns.findFirst({ where: and(eq(adCampaigns.id, campaignId), eq(adCampaigns.companyId, companyId)) }),
-    db.query.adSets.findFirst({ where: and(eq(adSets.id, ad.adSetId), eq(adSets.companyId, companyId)) }),
-  ]);
-  if (!campaign || !adSet) throw new HTTPException(404, { message: 'Ad hierarchy not found' });
-  const connection = await db.query.adConnections.findFirst({ where: and(eq(adConnections.id, campaign.connectionId), eq(adConnections.companyId, companyId)) });
-  return c.json({ data: { campaign, adSet, ad, currency: connection?.platformAccountCurrency || 'USD' } });
+  const adSet = await db.query.adSets.findFirst({ where: and(eq(adSets.id, ad.adSetId), eq(adSets.companyId, companyId)) });
+  if (!adSet) throw new HTTPException(404, { message: 'Ad hierarchy not found' });
+  return c.json({ data: { campaign, adSet, ad, currency: connection.platformAccountCurrency || 'USD' } });
 });
 
 adsRouter.post('/company/:companyId/facebook/campaigns/:campaignId/analyze', zValidator('json', analyzeCampaignSchema), async (c) => {
@@ -251,11 +278,10 @@ adsRouter.post('/company/:companyId/facebook/campaigns/:campaignId/analyze', zVa
   const campaignId = c.req.param('campaignId');
   const { userId } = c.get('user');
   if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
-  const body = c.req.valid('json');
-  const timezone = await campaignTimezone(companyId, campaignId);
-  const windows = body.baseline && body.current
-    ? { baseline: { ...body.baseline, timezone }, current: { ...body.current, timezone } }
-    : calculate7dAnalysisWindows(timezone);
+
+  const { connection } = await requireCurrentMetaCampaign(companyId, campaignId);
+  const timezone = connection.platformAccountTimezone || 'UTC';
+  const windows = calculate7dAnalysisWindows(timezone);
   try {
     const data = await analyzeMetaCampaign(companyId, campaignId, windows);
     return c.json({ success: true, data });
@@ -269,8 +295,10 @@ adsRouter.post('/company/:companyId/facebook/campaigns/:campaignId/recommendatio
   const campaignId = c.req.param('campaignId');
   const { userId } = c.get('user');
   if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+
+  const { campaign, connection } = await requireCurrentMetaCampaign(companyId, campaignId);
   const body = c.req.valid('json');
-  const timezone = await campaignTimezone(companyId, campaignId);
+  const timezone = connection.platformAccountTimezone || 'UTC';
 
   try {
     let analysisRecord: any = null;
@@ -280,19 +308,17 @@ adsRouter.post('/company/:companyId/facebook/campaigns/:campaignId/recommendatio
         where: and(
           eq(adCampaignAnalyses.id, body.analysisId),
           eq(adCampaignAnalyses.companyId, companyId),
-          eq(adCampaignAnalyses.campaignId, campaignId)
+          eq(adCampaignAnalyses.campaignId, campaign.id)
         ),
       });
       if (!analysisRecord) throw new HTTPException(404, { message: 'Analysis run not found for this campaign' });
     } else {
-      const windows = body.baseline && body.current
-        ? { baseline: { ...body.baseline, timezone }, current: { ...body.current, timezone } }
-        : calculate7dAnalysisWindows(timezone);
-      const data = await analyzeMetaCampaign(companyId, campaignId, windows);
+      const windows = calculate7dAnalysisWindows(timezone);
+      const data = await analyzeMetaCampaign(companyId, campaign.id, windows);
       analysisRecord = {
         id: data.analysisId,
         companyId,
-        campaignId,
+        campaignId: campaign.id,
         status: data.status,
         baselineSnapshot: data.baseline,
         currentSnapshot: data.current,
@@ -306,27 +332,27 @@ adsRouter.post('/company/:companyId/facebook/campaigns/:campaignId/recommendatio
       return c.json({ success: true, data: { analysisId: analysisRecord.id, status: analysisRecord.status, brief: null, recommendation: null } });
     }
 
-    const campaign = await db.query.adCampaigns.findFirst({
-      where: and(eq(adCampaigns.id, campaignId), eq(adCampaigns.companyId, companyId)),
-    });
-    const targetName = campaign?.name || analysisRecord.targetName || 'Campaign';
+    const targetName = campaign.name || analysisRecord.targetName || 'Campaign';
+    const briefContext = analysisRecord.briefContext && Object.keys(analysisRecord.briefContext).length > 0
+      ? analysisRecord.briefContext
+      : await loadBriefContext(companyId, campaign.id, campaign.objective);
 
     const brief = await generateMetaAdsBrief(companyId, {
       targetName,
       findings: analysisRecord.findings,
-      campaignContext: analysisRecord.briefContext || {},
+      campaignContext: briefContext,
     });
 
     const analysisForRec = {
       analysisId: analysisRecord.id,
-      target: { id: campaignId, name: targetName, objective: campaign?.objective || 'traffic' },
+      target: { id: campaign.id, name: targetName, objective: campaign.objective || 'traffic' },
       baseline: analysisRecord.baselineSnapshot,
       current: analysisRecord.currentSnapshot,
       findings: analysisRecord.findings,
     } as any;
 
     const recommendation = brief
-      ? await createMetaAdsRecommendation({ companyId, campaignId, analysis: analysisForRec, brief })
+      ? await createMetaAdsRecommendation({ companyId, campaignId: campaign.id, analysis: analysisForRec, brief })
       : null;
 
     return c.json({ success: true, data: { analysisId: analysisRecord.id, brief, recommendation } });
@@ -343,7 +369,9 @@ adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId/recommendation
   const campaignId = c.req.param('campaignId');
   const { userId } = c.get('user');
   if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
-  return c.json({ data: await listMetaAdsRecommendations(companyId, campaignId) });
+
+  const { campaign } = await requireCurrentMetaCampaign(companyId, campaignId);
+  return c.json({ data: await listMetaAdsRecommendations(companyId, campaign.id) });
 });
 
 adsRouter.patch('/company/:companyId/facebook/recommendations/:recommendationId', zValidator('json', recommendationStatusSchema), async (c) => {
