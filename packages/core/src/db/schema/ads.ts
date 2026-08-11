@@ -8,6 +8,7 @@ import {
   boolean,
   integer,
   decimal,
+  index,
 } from 'drizzle-orm/pg-core';
 import { companies } from './companies';
 import { agents } from './agents';
@@ -25,6 +26,7 @@ export const adPlatformEnum = pgEnum('ad_platform', [
 ]);
 
 export const adConnectionStatusEnum = pgEnum('ad_connection_status', [
+  'pending',
   'connected',
   'expired',
   'revoked',
@@ -48,6 +50,9 @@ export const adConnections = pgTable('ad_connections', {
   // Platform-specific IDs
   platformAccountId: text('platform_account_id'), // Ad Account ID
   platformAccountName: text('platform_account_name'),
+  platformPageId: text('platform_page_id'), // Optional Page identity; never an Ad Account ID
+  platformAccountCurrency: text('platform_account_currency'),
+  platformAccountTimezone: text('platform_account_timezone'),
   platformBusinessId: text('platform_business_id'), // Business Manager ID
 
   // Connection metadata
@@ -55,6 +60,9 @@ export const adConnections = pgTable('ad_connections', {
   connectedAt: timestamp('connected_at').notNull().defaultNow(),
   lastUsedAt: timestamp('last_used_at'),
   lastError: text('last_error'),
+  // The reporting window represented by the aggregate metrics on synced Meta objects.
+  metaAdsPerformanceWindowDays: integer('meta_ads_performance_window_days').notNull().default(7),
+  metaAdsPerformanceDatePreset: text('meta_ads_performance_date_preset').notNull().default('last_30d'),
 
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -99,6 +107,7 @@ export const adCampaigns = pgTable('ad_campaigns', {
   platform: adPlatformEnum('platform').notNull(),
   objective: adCampaignObjectiveEnum('objective').notNull(),
   status: adCampaignStatusEnum('status').notNull().default('draft'),
+  effectiveStatus: text('effective_status'),
 
   // Budget
   dailyBudget: decimal('daily_budget', { precision: 10, scale: 2 }),
@@ -134,6 +143,7 @@ export const adCampaigns = pgTable('ad_campaigns', {
   cpm: decimal('cpm', { precision: 10, scale: 2 }), // Cost per 1000 impressions
   cpa: decimal('cpa', { precision: 10, scale: 2 }), // Cost per acquisition
   roas: decimal('roas', { precision: 10, scale: 2 }), // Return on ad spend
+  frequency: decimal('frequency', { precision: 10, scale: 2 }),
 
   // Created by
   createdByAgentId: uuid('created_by_agent_id').references(() => agents.id),
@@ -165,6 +175,7 @@ export const adSets = pgTable('ad_sets', {
 
   name: text('name').notNull(),
   status: adSetStatusEnum('status').notNull().default('draft'),
+  effectiveStatus: text('effective_status'),
 
   // Budget (optional - can inherit from campaign)
   dailyBudget: decimal('daily_budget', { precision: 10, scale: 2 }),
@@ -186,6 +197,11 @@ export const adSets = pgTable('ad_sets', {
   clicks: integer('clicks').notNull().default(0),
   conversions: integer('conversions').notNull().default(0),
   spentAmount: decimal('spent_amount', { precision: 10, scale: 2 }).default('0'),
+  reach: integer('reach').notNull().default(0),
+  ctr: decimal('ctr', { precision: 5, scale: 2 }),
+  cpc: decimal('cpc', { precision: 10, scale: 2 }),
+  cpm: decimal('cpm', { precision: 10, scale: 2 }),
+  frequency: decimal('frequency', { precision: 10, scale: 2 }),
 
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
@@ -228,6 +244,7 @@ export const ads = pgTable('ads', {
   name: text('name').notNull(),
   type: adTypeEnum('type').notNull().default('image'),
   status: adStatusEnum('status').notNull().default('draft'),
+  effectiveStatus: text('effective_status'),
 
   // Creative content
   headline: text('headline'),
@@ -264,6 +281,10 @@ export const ads = pgTable('ads', {
   conversions: integer('conversions').notNull().default(0),
   spentAmount: decimal('spent_amount', { precision: 10, scale: 2 }).default('0'),
   ctr: decimal('ctr', { precision: 5, scale: 2 }),
+  reach: integer('reach').notNull().default(0),
+  cpc: decimal('cpc', { precision: 10, scale: 2 }),
+  cpm: decimal('cpm', { precision: 10, scale: 2 }),
+  frequency: decimal('frequency', { precision: 10, scale: 2 }),
 
   // Created by
   createdByAgentId: uuid('created_by_agent_id').references(() => agents.id),
@@ -319,6 +340,37 @@ export const adPerformance = pgTable('ad_performance', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+// ============================================
+// EVIDENCE-BACKED RECOMMENDATIONS (READ-ONLY V1)
+// ============================================
+
+export type AdRecommendationStatus = 'recommended' | 'saved' | 'rejected' | 'handled_manually';
+
+/**
+ * A human decision record, not a Meta change request. V1 recommendations are
+ * deliberately campaign-scoped; ad/ad-set targets can be added once lower
+ * level evidence is implemented.
+ */
+export const adRecommendations = pgTable('ad_recommendations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  campaignId: uuid('campaign_id').notNull().references(() => adCampaigns.id, { onDelete: 'cascade' }),
+  status: text('status').$type<AdRecommendationStatus>().notNull().default('recommended'),
+  priority: text('priority').notNull().default('medium'),
+  type: text('type').notNull(),
+  problem: text('problem').notNull(),
+  evidence: jsonb('evidence').$type<Record<string, unknown>[]>().notNull().default([]),
+  possibleCause: text('possible_cause'),
+  suggestedAction: jsonb('suggested_action').$type<Record<string, unknown>>().notNull().default({}),
+  analysisInput: jsonb('analysis_input').$type<Record<string, unknown>>().notNull(),
+  analysisVersion: text('analysis_version').notNull().default('meta-ads-v1'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+  companyStatusIdx: index('ad_recommendations_company_status_idx').on(table.companyId, table.status),
+  campaignCreatedIdx: index('ad_recommendations_campaign_created_idx').on(table.campaignId, table.createdAt),
+}));
+
 // Type exports
 export type AdConnection = typeof adConnections.$inferSelect;
 export type NewAdConnection = typeof adConnections.$inferInsert;
@@ -330,3 +382,5 @@ export type Ad = typeof ads.$inferSelect;
 export type NewAd = typeof ads.$inferInsert;
 export type AdPerformance = typeof adPerformance.$inferSelect;
 export type NewAdPerformance = typeof adPerformance.$inferInsert;
+export type AdRecommendation = typeof adRecommendations.$inferSelect;
+export type NewAdRecommendation = typeof adRecommendations.$inferInsert;

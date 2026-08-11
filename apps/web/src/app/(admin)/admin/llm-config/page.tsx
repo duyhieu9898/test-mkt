@@ -401,7 +401,7 @@ export default function LlmConfigPage() {
             const tier = img.value.tier ?? 'balanced';
             const meta = IMAGE_TIER_META[tier] ?? IMAGE_TIER_META.balanced;
             const providerMeta = IMAGE_PROVIDER_META[img.key] ?? { icon: '🖼️' };
-            const hasKey = !!providerMeta.delegatesTo
+            const hasKey = providerMeta.delegatesTo
               ? true
               : img.secrets.apiKey && img.secrets.apiKey !== '(not set)';
             const isConnected = img.status === 'connected';

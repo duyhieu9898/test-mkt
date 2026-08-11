@@ -36,6 +36,40 @@ const FACEBOOK_PAGE_SCOPES = [
   'pages_read_engagement',
   'pages_show_list',
 ];
+export type FacebookAdAccountAsset = {
+  id: string;
+  accountId: string;
+  name: string;
+  currency?: string;
+  timezoneName?: string;
+  status?: string;
+  canRead: boolean;
+  canManage: boolean;
+};
+
+export async function getFacebookAdAccounts(accessToken: string): Promise<FacebookAdAccountAsset[]> {
+  const response = await fetch(
+    `${BASE_URL}/me/adaccounts?fields=id,account_id,name,currency,timezone_name,account_status,capabilities&limit=100&access_token=${encodeURIComponent(accessToken)}`,
+  );
+  if (!response.ok) throw new Error('Unable to load Facebook Ad Accounts');
+  const payload = await response.json() as { data?: Array<Record<string, unknown>> };
+  return (payload.data ?? []).map((account) => {
+    const capabilities = Array.isArray(account.capabilities) ? account.capabilities.map(String) : [];
+    return {
+      id: String(account.id ?? ''),
+      accountId: String(account.account_id ?? account.id ?? '').replace(/^act_/, ''),
+      name: String(account.name ?? account.id ?? 'Facebook Ad Account'),
+      currency: typeof account.currency === 'string' ? account.currency : undefined,
+      timezoneName: typeof account.timezone_name === 'string' ? account.timezone_name : undefined,
+      status: account.account_status == null ? undefined : String(account.account_status),
+      // `/me/adaccounts` is already scoped to accounts visible to the token.
+      // Its `capabilities` field is made of product feature flags, not a user's
+      // READ/ANALYZE/MANAGE task, so it must not disable a read-only selection.
+      canRead: true,
+      canManage: false,
+    };
+  }).filter((account) => Boolean(account.id));
+}
 
 export function getFacebookClientId(): string {
   return process.env.FACEBOOK_APP_ID || process.env.FACEBOOK_CLIENT_ID || '';
@@ -355,6 +389,9 @@ export class FacebookOAuthProvider implements IOAuthProvider {
       client_id: getFacebookClientId(),
       redirect_uri: redirectUri,
       state,
+      // Legacy Facebook connector: supports both Page publishing and paid-ads
+      // mutations. The read-only Ads flow must use its own OAuth route rather
+      // than reducing these scopes.
       scope: 'pages_manage_posts,pages_read_engagement,pages_show_list,ads_management,ads_read,business_management,read_insights',
       response_type: 'code',
     });
@@ -399,6 +436,7 @@ export class FacebookOAuthProvider implements IOAuthProvider {
       `${BASE_URL}/me/accounts?fields=id,name,picture,access_token,tasks&limit=100&access_token=${longData.access_token}`,
     );
     const pagesData = pagesRes.ok ? await pagesRes.json() : { data: [] };
+    const adAccounts = await getFacebookAdAccounts(longData.access_token).catch(() => []);
     const permissionsRes = await fetch(
       `${BASE_URL}/me/permissions?access_token=${longData.access_token}`,
     );
@@ -414,6 +452,7 @@ export class FacebookOAuthProvider implements IOAuthProvider {
       scope: grantedPermissions.join(','),
       extra: {
         pages: pagesData.data || [],
+        adAccounts,
         userAccessToken: longData.access_token,
         userId: (await fbRequest<any>('me?fields=id,name', longData.access_token)).id,
       },
@@ -447,8 +486,8 @@ export class FacebookOAuthProvider implements IOAuthProvider {
 
 export const facebookConfig: PlatformConfig = {
   platformId: 'facebook',
-  displayName: 'Facebook',
-  description: 'Publish posts to Facebook Pages and run Meta Ads campaigns',
+  displayName: 'Meta (Facebook Ads & Social)',
+  description: 'Connect Meta Ad Account for AI performance analysis & link Facebook Page for publishing.',
   category: 'both',
   apiBaseUrl: BASE_URL,
   apiVersion: API_VERSION,

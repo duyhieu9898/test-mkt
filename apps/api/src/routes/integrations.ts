@@ -18,6 +18,7 @@ import { db } from '../lib/db';
 import { eq, and } from 'drizzle-orm';
 import { socialConnections, adConnections, knowledgeBase } from '@1person/core/db';
 import { platformRegistry } from '../services/platforms';
+import { encryptSecret } from '../lib/crypto';
 import {
   buildGoogleDrivePickerAuthUrl,
   buildGoogleDriveAuthUrl,
@@ -125,6 +126,18 @@ integrationsRouter.get('/all-status', async (c) => {
     const existing = connections[conn.platform];
     if (existing) {
       existing.type = 'both';
+      // A Facebook social connection alone is not enough for Meta Ads. Keep
+      // the card in its pending state until an accessible Ad Account is chosen.
+      if (conn.status !== 'connected' || !conn.platformAccountId) {
+        existing.connected = false;
+        existing.status = conn.status;
+        existing.accountName = conn.platformAccountName || undefined;
+      } else {
+        existing.connected = true;
+        existing.status = conn.status;
+        existing.connectedAt = conn.connectedAt?.toISOString();
+        existing.accountName = conn.platformAccountName || undefined;
+      }
     } else {
       connections[conn.platform] = {
         connected: conn.status === 'connected',
@@ -300,7 +313,7 @@ integrationsRouter.get('/:platform/callback', async (c) => {
       ? new Date(Date.now() + tokens.expiresIn * 1000)
       : undefined;
 
-    // Store in social connections if social provider exists
+    // Store in social connections if social provider exists.
     if (platformRegistry.hasSocialProvider(platform)) {
       const existing = await db.query.socialConnections.findFirst({
         where: and(eq(socialConnections.companyId, targetCompanyId), eq(socialConnections.platform, platformForDb)),
@@ -337,14 +350,17 @@ integrationsRouter.get('/:platform/callback', async (c) => {
       });
 
       const values = {
-        accessToken: (tokens.extra?.userAccessToken as string | undefined) || tokens.accessToken,
-        refreshToken: tokens.refreshToken,
+        accessToken: encryptSecret((tokens.extra?.userAccessToken as string | undefined) || tokens.accessToken),
+        refreshToken: tokens.refreshToken ? encryptSecret(tokens.refreshToken) : undefined,
         tokenExpiresAt,
-        platformAccountId: tokens.extra?.adAccountId as string || (tokens.extra?.pages as any[])?.[0]?.id || undefined,
-        platformAccountName: (tokens.extra?.pages as any[])?.[0]?.name || tokens.extra?.username as string || undefined,
+        // Facebook Ads requires an explicit account choice. Never use a Page ID
+        // as a fallback ad account.
+        platformAccountId: tokens.extra?.adAccountId as string || undefined,
+        platformAccountName: tokens.extra?.username as string || undefined,
+        platformPageId: undefined,
         platformBusinessId: tokens.extra?.businessId as string || undefined,
         permissions: tokens.scope?.split(',') || [],
-        status: 'connected' as const,
+        status: (platform === 'facebook' && !tokens.extra?.adAccountId ? 'pending' : 'connected') as const,
         connectedAt: new Date(),
         updatedAt: new Date(),
       };

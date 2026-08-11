@@ -11,7 +11,9 @@
     "lint": "eslint src/",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "dev:seed-meta-ads": "tsx src/scripts/seed-meta-ads-demo.ts",
+    "dev:test-meta-ads-brief": "tsx src/scripts/test-meta-ads-brief.ts"
   },
   "dependencies": {
     "@1person/ai-tenant": "workspace:*",

@@ -255,7 +255,7 @@ class DashboardService {
     }
 
     // Get actual intelligence data from stored results
-    let intelligenceData = { keywords: 0, trends: 0, competitors: 0, painPoints: 0 };
+    const intelligenceData = { keywords: 0, trends: 0, competitors: 0, painPoints: 0 };
     let intelligenceStatus: 'pending' | 'running' | 'done' = 'pending';
     let intelligenceLastRun: Date | undefined;
 

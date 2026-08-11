@@ -9,7 +9,7 @@
  */
 
 import { useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +19,7 @@ import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Sparkles, Rocket, Loader2, Plus, Zap, Star, Gem, Brain, Users, Package, CheckCircle2, ArrowRight, AlertCircle } from 'lucide-react';
+import { Sparkles, Rocket, Loader2, Plus, Zap, Star, Gem, Brain, Users, Package, CheckCircle2, ArrowRight, AlertCircle, Megaphone } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth-store';
@@ -38,6 +38,7 @@ import {
   driveSourceRequestBody,
   type DriveSourceSelection,
 } from '@/components/marketing/drive-source-picker';
+import { FacebookAdsOverview } from '@/components/campaigns/facebook-ads-overview';
 
 type Tier = 'fast' | 'balanced' | 'premium';
 
@@ -83,6 +84,7 @@ const statusVariant: Record<string, string> = {
 export default function CampaignsPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const companyId = params.companyId as string;
   const token = useAuthStore((s) => s.token);
   const [language] = usePreferredAppLanguage('en');
@@ -124,6 +126,7 @@ export default function CampaignsPage() {
   const hasEnoughCredits =
     typeof availableCredits !== 'number' || availableCredits >= selectedCreditCost;
   const canGenerateCampaign = hasCompanyPermission(access.data, 'campaign.generate_ai');
+  const facebookAdsView = searchParams.get('view') === 'facebook-ads';
 
   const onGenerate = async () => {
     if (!token) return;
@@ -187,6 +190,10 @@ export default function CampaignsPage() {
     }
   };
 
+  if (facebookAdsView) {
+    return <div className="max-w-6xl mx-auto space-y-6"><CampaignViews active="facebook-ads" companyId={companyId} /><FacebookAdsOverview /></div>;
+  }
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
@@ -210,6 +217,8 @@ export default function CampaignsPage() {
           <Sparkles className="w-4 h-4" /> Generate Campaign
         </Button>
       </div>
+
+      <CampaignViews active="campaigns" companyId={companyId} />
 
       {/* Business Brain readiness — the unified flow preview.
           Tells the user what the AI knows about their business before
@@ -411,6 +420,14 @@ export default function CampaignsPage() {
       <GuidedTour />
     </div>
   );
+}
+
+function CampaignViews({ active, companyId }: { active: 'campaigns' | 'facebook-ads'; companyId: string }) {
+  const tabs = [
+    { key: 'campaigns' as const, label: 'AI Campaigns', icon: Rocket, href: `/${companyId}/campaigns` },
+    { key: 'facebook-ads' as const, label: 'Facebook Ads', icon: Megaphone, href: `/${companyId}/campaigns?view=facebook-ads` },
+  ];
+  return <div className="border-b border-slate-200 -mx-4 px-4 sm:mx-0 sm:px-0 mb-6"><nav className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Campaign views">{tabs.map((tab) => { const Icon = tab.icon; const selected = tab.key === active; return <Link key={tab.key} href={tab.href} role="tab" aria-selected={selected} className={cn('flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap', selected ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300')}><Icon className="w-4 h-4" />{tab.label}</Link>; })}</nav></div>;
 }
 
 // ============================================================

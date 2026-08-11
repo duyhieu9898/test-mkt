@@ -4,6 +4,15 @@ import { z } from 'zod';
 import { HTTPException } from 'hono/http-exception';
 import { authMiddleware, getUserCompanies } from '../middleware/auth';
 import { adsEngine } from '../services/ads-engine';
+import { db } from '../lib/db';
+import { adCampaigns, adConnections, adSets, ads, type AdRecommendationStatus } from '@1person/core/db';
+import { and, desc, eq } from 'drizzle-orm';
+import { decryptMaybe } from '../lib/crypto';
+import { getFacebookAdAccounts } from '../services/platforms/providers/facebook';
+import { META_ADS_PERFORMANCE_DATE_PRESETS, syncMetaAds } from '../services/meta-ads-sync';
+import { analyzeMetaCampaign, isDevelopmentMetaAdsFixture } from '../services/meta-ads-analysis';
+import { generateMetaAdsBrief, MetaAdsBriefGenerationError } from '../services/meta-ads-brief';
+import { createMetaAdsRecommendation, listMetaAdsRecommendations, MetaAdsRecommendationNotFoundError, setMetaAdsRecommendationStatus } from '../services/meta-ads-recommendations';
 
 const adsRouter = new Hono();
 
@@ -15,6 +24,284 @@ async function verifyCompanyAccess(userId: string, companyId: string): Promise<b
   const userCompanies = await getUserCompanies(userId);
   return userCompanies.some((co: { id: string }) => co.id === companyId);
 }
+
+const selectFacebookAccountSchema = z.object({ accountId: z.string().min(1) });
+const analyzeCampaignSchema = z.object({
+  baseline: z.object({ start: z.string().date(), end: z.string().date() }),
+  current: z.object({ start: z.string().date(), end: z.string().date() }),
+});
+const recommendationStatusSchema = z.object({ status: z.enum(['saved', 'rejected', 'handled_manually']) });
+const metaAdsSyncSchema = z.object({ performanceDatePreset: z.enum(META_ADS_PERFORMANCE_DATE_PRESETS).optional() });
+const FACEBOOK_CAMPAIGNS_PAGE_SIZE = 25;
+
+function overviewPage(value: string | undefined) {
+  const page = Number(value);
+  return Number.isInteger(page) && page > 0 ? page : 1;
+}
+
+async function campaignTimezone(companyId: string, campaignId: string) {
+  const campaign = await db.query.adCampaigns.findFirst({ where: and(eq(adCampaigns.id, campaignId), eq(adCampaigns.companyId, companyId)) });
+  if (!campaign) throw new HTTPException(404, { message: 'Campaign not found' });
+  const connection = await db.query.adConnections.findFirst({ where: and(eq(adConnections.id, campaign.connectionId), eq(adConnections.companyId, companyId), eq(adConnections.platform, 'facebook')) });
+  return connection?.platformAccountTimezone || 'UTC';
+}
+
+adsRouter.get('/company/:companyId/facebook/assets', async (c) => {
+  const companyId = c.req.param('companyId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  const connection = await db.query.adConnections.findFirst({
+    where: and(eq(adConnections.companyId, companyId), eq(adConnections.platform, 'facebook')),
+  });
+  if (!connection) throw new HTTPException(404, { message: 'Connect Facebook before choosing an Ad Account' });
+  const adAccounts = await getFacebookAdAccounts(decryptMaybe(connection.accessToken));
+  return c.json({ data: { adAccounts } });
+});
+
+adsRouter.post('/company/:companyId/facebook/select-account', zValidator('json', selectFacebookAccountSchema), async (c) => {
+  const companyId = c.req.param('companyId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  const connection = await db.query.adConnections.findFirst({
+    where: and(eq(adConnections.companyId, companyId), eq(adConnections.platform, 'facebook')),
+  });
+  if (!connection) throw new HTTPException(404, { message: 'Connect Facebook before choosing an Ad Account' });
+  const assets = await getFacebookAdAccounts(decryptMaybe(connection.accessToken));
+  const selected = assets.find((asset) => asset.id === c.req.valid('json').accountId);
+  if (!selected || !selected.canRead) throw new HTTPException(400, { message: 'Selected Ad Account is not accessible' });
+  await db.update(adConnections).set({
+    // Existing provider normalizes the numeric account ID to `act_<id>` at its
+    // Graph boundary. Persisting the numeric value avoids `act_act_<id>`.
+    platformAccountId: selected.accountId,
+    platformAccountName: selected.name,
+    platformAccountCurrency: selected.currency,
+    platformAccountTimezone: selected.timezoneName,
+    status: 'connected',
+    lastError: null,
+    updatedAt: new Date(),
+  }).where(eq(adConnections.id, connection.id));
+  return c.json({ success: true, data: { account: selected } });
+});
+
+adsRouter.post('/company/:companyId/facebook/sync', zValidator('json', metaAdsSyncSchema), async (c) => {
+  const companyId = c.req.param('companyId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  try {
+    const result = await syncMetaAds(companyId, c.req.valid('json').performanceDatePreset || 'last_30d');
+    return c.json({ success: true, data: result });
+  } catch (error) {
+    throw new HTTPException(400, { message: error instanceof Error ? error.message : 'Meta Ads sync failed' });
+  }
+});
+
+adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
+  const companyId = c.req.param('companyId');
+  const page = overviewPage(c.req.query('page'));
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  const connection = await db.query.adConnections.findFirst({
+    where: and(eq(adConnections.companyId, companyId), eq(adConnections.platform, 'facebook')),
+  });
+  if (!connection) return c.json({ data: { connection: null, campaigns: [], developmentFixtures: [], totals: { spend: 0, impressions: 0, clicks: 0, conversions: 0, costPerConversion: null }, performanceDatePreset: 'last_30d', pagination: { page, pageSize: FACEBOOK_CAMPAIGNS_PAGE_SIZE, total: 0, totalPages: 0 } } });
+  const importedCampaigns = await db.query.adCampaigns.findMany({
+    where: and(eq(adCampaigns.companyId, companyId), eq(adCampaigns.connectionId, connection.id)),
+    orderBy: desc(adCampaigns.updatedAt),
+  });
+  const liveCampaigns = importedCampaigns.filter((campaign) => !isDevelopmentMetaAdsFixture(campaign.platformCampaignId));
+  const developmentFixtures = importedCampaigns.filter((campaign) => isDevelopmentMetaAdsFixture(campaign.platformCampaignId));
+  const total = liveCampaigns.length;
+  const totalPages = Math.ceil(total / FACEBOOK_CAMPAIGNS_PAGE_SIZE);
+  const rawCampaigns = liveCampaigns.slice((page - 1) * FACEBOOK_CAMPAIGNS_PAGE_SIZE, page * FACEBOOK_CAMPAIGNS_PAGE_SIZE);
+
+  const campaignIds = rawCampaigns.map((c) => c.id);
+  const recsMap = new Map<string, { hasAnalysis: boolean; hasNegativeFindings: boolean }>();
+  if (campaignIds.length > 0) {
+    const existingRecs = await db.query.adRecommendations.findMany({
+      where: and(eq(adRecommendations.companyId, companyId), inArray(adRecommendations.campaignId, campaignIds)),
+      orderBy: desc(adRecommendations.createdAt),
+    });
+    for (const rec of existingRecs) {
+      if (!recsMap.has(rec.campaignId)) {
+        recsMap.set(rec.campaignId, {
+          hasAnalysis: true,
+          hasNegativeFindings: Array.isArray(rec.evidence) && rec.evidence.length > 0,
+        });
+      }
+    }
+  }
+
+  const campaigns = rawCampaigns.map((campaign) => {
+    const recInfo = recsMap.get(campaign.id);
+    const analysisStatus = deriveAnalysisStatus({
+      hasAnalysis: Boolean(recInfo?.hasAnalysis),
+      windowImpressions: campaign.impressions,
+      hasNegativeFindings: Boolean(recInfo?.hasNegativeFindings),
+    });
+    const costPerConversion = calculateCostPerConversion(campaign.spentAmount, campaign.conversions);
+    return {
+      ...campaign,
+      analysisStatus,
+      costPerConversion,
+    };
+  });
+
+  const totalsRaw = liveCampaigns.reduce((result, campaign) => ({
+    spend: result.spend + Number(campaign.spentAmount || 0),
+    impressions: result.impressions + campaign.impressions,
+    clicks: result.clicks + campaign.clicks,
+    conversions: result.conversions + campaign.conversions,
+  }), { spend: 0, impressions: 0, clicks: 0, conversions: 0 });
+
+  const totals = {
+    ...totalsRaw,
+    costPerConversion: calculateAggregateCpa(totalsRaw.spend, totalsRaw.conversions),
+  };
+
+  return c.json({
+    data: {
+      connection: {
+        status: connection.status,
+        accountId: connection.platformAccountId,
+        accountName: connection.platformAccountName,
+        currency: connection.platformAccountCurrency,
+        timezone: connection.platformAccountTimezone,
+        lastSyncedAt: connection.lastUsedAt,
+        lastError: connection.lastError,
+      },
+      campaigns,
+      developmentFixtures,
+      totals,
+      performanceDatePreset: connection.metaAdsPerformanceDatePreset,
+      pagination: { page, pageSize: FACEBOOK_CAMPAIGNS_PAGE_SIZE, total, totalPages },
+    },
+  });
+});
+
+adsRouter.get('/company/:companyId/facebook/recommendations', async (c) => {
+  const companyId = c.req.param('companyId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+
+  const statusParam = c.req.query('status');
+  if (statusParam && !['recommended', 'saved', 'rejected', 'handled_manually'].includes(statusParam)) {
+    throw new HTTPException(400, { message: 'Invalid status parameter' });
+  }
+
+  const page = overviewPage(c.req.query('page'));
+  const limitStr = c.req.query('limit');
+  const limit = limitStr && !isNaN(Number(limitStr)) ? Number(limitStr) : 25;
+
+  const result = await listCompanyMetaAdsRecommendations({
+    companyId,
+    status: statusParam as AdRecommendationStatus | undefined,
+    page,
+    limit,
+  });
+
+  return c.json({ success: true, data: result });
+});
+
+adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId', async (c) => {
+  const companyId = c.req.param('companyId');
+  const campaignId = c.req.param('campaignId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  const campaign = await db.query.adCampaigns.findFirst({
+    where: and(eq(adCampaigns.id, campaignId), eq(adCampaigns.companyId, companyId)),
+  });
+  if (!campaign) throw new HTTPException(404, { message: 'Campaign not found' });
+  const [campaignAdSets, campaignAds] = await Promise.all([
+    db.query.adSets.findMany({ where: and(eq(adSets.campaignId, campaign.id), eq(adSets.companyId, companyId)), orderBy: desc(adSets.updatedAt) }),
+    db.query.ads.findMany({ where: and(eq(ads.campaignId, campaign.id), eq(ads.companyId, companyId)), orderBy: desc(ads.updatedAt) }),
+  ]);
+  const connection = await db.query.adConnections.findFirst({
+    where: and(eq(adConnections.id, campaign.connectionId), eq(adConnections.companyId, companyId)),
+  });
+  return c.json({ data: { campaign, adSets: campaignAdSets, ads: campaignAds, currency: connection?.platformAccountCurrency || 'USD', isDevelopmentFixture: isDevelopmentMetaAdsFixture(campaign.platformCampaignId) } });
+});
+
+adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId/ads/:adId', async (c) => {
+  const companyId = c.req.param('companyId');
+  const campaignId = c.req.param('campaignId');
+  const adId = c.req.param('adId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  const ad = await db.query.ads.findFirst({ where: and(eq(ads.id, adId), eq(ads.companyId, companyId), eq(ads.campaignId, campaignId)) });
+  if (!ad) throw new HTTPException(404, { message: 'Ad not found' });
+  const [campaign, adSet] = await Promise.all([
+    db.query.adCampaigns.findFirst({ where: and(eq(adCampaigns.id, campaignId), eq(adCampaigns.companyId, companyId)) }),
+    db.query.adSets.findFirst({ where: and(eq(adSets.id, ad.adSetId), eq(adSets.companyId, companyId)) }),
+  ]);
+  if (!campaign || !adSet) throw new HTTPException(404, { message: 'Ad hierarchy not found' });
+  const connection = await db.query.adConnections.findFirst({ where: and(eq(adConnections.id, campaign.connectionId), eq(adConnections.companyId, companyId)) });
+  return c.json({ data: { campaign, adSet, ad, currency: connection?.platformAccountCurrency || 'USD' } });
+});
+
+adsRouter.post('/company/:companyId/facebook/campaigns/:campaignId/analyze', zValidator('json', analyzeCampaignSchema), async (c) => {
+  const companyId = c.req.param('companyId');
+  const campaignId = c.req.param('campaignId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  const body = c.req.valid('json');
+  const timezone = await campaignTimezone(companyId, campaignId);
+  try {
+    const data = await analyzeMetaCampaign(companyId, campaignId, {
+      baseline: { ...body.baseline, timezone },
+      current: { ...body.current, timezone },
+    });
+    return c.json({ success: true, data });
+  } catch (error) {
+    throw new HTTPException(400, { message: error instanceof Error ? error.message : 'Meta Ads analysis failed' });
+  }
+});
+
+adsRouter.post('/company/:companyId/facebook/campaigns/:campaignId/recommendation-brief', zValidator('json', analyzeCampaignSchema), async (c) => {
+  const companyId = c.req.param('companyId');
+  const campaignId = c.req.param('campaignId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  const body = c.req.valid('json');
+  const timezone = await campaignTimezone(companyId, campaignId);
+  try {
+    const analysis = await analyzeMetaCampaign(companyId, campaignId, {
+      baseline: { ...body.baseline, timezone },
+      current: { ...body.current, timezone },
+    });
+    const brief = await generateMetaAdsBrief(companyId, { targetName: analysis.target.name, findings: analysis.findings, campaignContext: analysis.target.briefContext });
+    const recommendation = brief
+      ? await createMetaAdsRecommendation({ companyId, campaignId, analysis, brief })
+      : null;
+    return c.json({ success: true, data: { ...analysis, brief, recommendation } });
+  } catch (error) {
+    if (error instanceof MetaAdsBriefGenerationError) {
+      throw new HTTPException(422, { message: error.message });
+    }
+    throw error;
+  }
+});
+
+adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId/recommendations', async (c) => {
+  const companyId = c.req.param('companyId');
+  const campaignId = c.req.param('campaignId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  return c.json({ data: await listMetaAdsRecommendations(companyId, campaignId) });
+});
+
+adsRouter.patch('/company/:companyId/facebook/recommendations/:recommendationId', zValidator('json', recommendationStatusSchema), async (c) => {
+  const companyId = c.req.param('companyId');
+  const recommendationId = c.req.param('recommendationId');
+  const { userId } = c.get('user');
+  if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+  try {
+    const recommendation = await setMetaAdsRecommendationStatus(companyId, recommendationId, c.req.valid('json').status as AdRecommendationStatus);
+    return c.json({ success: true, data: recommendation });
+  } catch (error) {
+    if (error instanceof MetaAdsRecommendationNotFoundError) throw new HTTPException(404, { message: error.message });
+    throw error;
+  }
+});
 
 // ============================================
 // AD CONNECTIONS
@@ -73,7 +360,10 @@ adsRouter.get('/company/:companyId/connections', async (c) => {
 
   const connections = await adsEngine.getConnections(companyId);
 
-  return c.json({ data: connections });
+  // Connection records contain encrypted credentials for server-side provider
+  // calls. They must never be included in a browser response.
+  const safeConnections = connections.map(({ accessToken, refreshToken, ...connection }) => connection);
+  return c.json({ data: safeConnections });
 });
 
 // ============================================

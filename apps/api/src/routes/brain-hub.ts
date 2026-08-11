@@ -133,7 +133,7 @@ brainHubRouter.get('/:companyId/events', zValidator('query', listEventsSchema), 
   if (q.type) filters.push(eq(dataEvents.type, q.type as any));
   if (q.sentiment) filters.push(eq(dataEvents.sentiment, q.sentiment as any));
 
-  let baseQuery = db
+  const baseQuery = db
     .select({
       id: dataEvents.id,
       sourceId: dataEvents.sourceId,

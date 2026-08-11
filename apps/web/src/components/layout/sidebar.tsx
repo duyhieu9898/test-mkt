@@ -248,6 +248,7 @@ export function Sidebar() {
       '/brain-hub',
       '/campaigns',
       '/launch',
+      '/ads',
       '/landing-pages',
       '/market',
       '/analytics',

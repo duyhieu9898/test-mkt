@@ -17,6 +17,7 @@
  */
 
 import { db } from '../lib/db';
+import { decryptMaybe } from '../lib/crypto';
 import { eq, and, desc } from 'drizzle-orm';
 import {
   campaigns as mktCampaigns,
@@ -396,7 +397,7 @@ export async function publishCampaignToMeta(
   }
 
   const adAccountId = connection.platformAccountId.replace(/^act_/, '');
-  const accessToken = connection.accessToken;
+  const accessToken = decryptMaybe(connection.accessToken);
 
   // 3. Budget validation
   const dailyBudget = Number(campaign.budgetDaily ?? 0);

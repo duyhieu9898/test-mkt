@@ -116,7 +116,7 @@ app.use(
 app.use(
   '*',
   cors({
-    origin: [env.WEB_URL, 'http://localhost:3004'],
+    origin: [env.WEB_URL, 'http://localhost:3004', 'http://localhost:3000'],
     credentials: true,
   })
 );

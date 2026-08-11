@@ -26,6 +26,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { platformRegistry } from './platforms';
 import type { PlatformConnection } from './platforms';
 import { renderSkillKnowledge } from '@1person/core';
+import { decryptMaybe, encryptSecret } from '../lib/crypto';
 
 // Expert ad-creative playbook injected into creative generation (skill K02).
 const ADS_FRAMEWORK = renderSkillKnowledge('ad-creative');
@@ -68,8 +69,8 @@ export class AdsEngine {
       await db
         .update(adConnections)
         .set({
-          accessToken: credentials.accessToken,
-          refreshToken: credentials.refreshToken,
+          accessToken: encryptSecret(credentials.accessToken),
+          refreshToken: credentials.refreshToken ? encryptSecret(credentials.refreshToken) : undefined,
           tokenExpiresAt: credentials.tokenExpiresAt,
           platformAccountId: credentials.platformAccountId,
           platformAccountName: credentials.platformAccountName,
@@ -88,8 +89,8 @@ export class AdsEngine {
       .values({
         companyId,
         platform,
-        accessToken: credentials.accessToken,
-        refreshToken: credentials.refreshToken,
+        accessToken: encryptSecret(credentials.accessToken),
+        refreshToken: credentials.refreshToken ? encryptSecret(credentials.refreshToken) : undefined,
         tokenExpiresAt: credentials.tokenExpiresAt,
         platformAccountId: credentials.platformAccountId,
         platformAccountName: credentials.platformAccountName,
@@ -162,7 +163,7 @@ export class AdsEngine {
         companyId: connection.companyId,
         platform: connection.platform,
         status: connection.status,
-        accessToken: connection.accessToken,
+        accessToken: decryptMaybe(connection.accessToken),
         platformAccountId: connection.platformAccountId,
         platformBusinessId: connection.platformBusinessId,
       };
@@ -259,7 +260,7 @@ export class AdsEngine {
         const conn: PlatformConnection = {
           id: connection.id, companyId: connection.companyId,
           platform: connection.platform, status: connection.status,
-          accessToken: connection.accessToken,
+          accessToken: decryptMaybe(connection.accessToken),
           platformAccountId: connection.platformAccountId,
         };
         await provider.updateCampaignStatus(conn, campaign.platformCampaignId, 'ACTIVE');
@@ -309,7 +310,7 @@ export class AdsEngine {
         const conn: PlatformConnection = {
           id: connection.id, companyId: connection.companyId,
           platform: connection.platform, status: connection.status,
-          accessToken: connection.accessToken,
+          accessToken: decryptMaybe(connection.accessToken),
           platformAccountId: connection.platformAccountId,
         };
         await provider.updateCampaignStatus(conn, campaign.platformCampaignId, 'PAUSED');
@@ -363,7 +364,7 @@ export class AdsEngine {
         const conn: PlatformConnection = {
           id: connection.id, companyId: connection.companyId,
           platform: connection.platform, status: connection.status,
-          accessToken: connection.accessToken,
+          accessToken: decryptMaybe(connection.accessToken),
           platformAccountId: connection.platformAccountId,
         };
 
@@ -476,7 +477,7 @@ export class AdsEngine {
       const conn: PlatformConnection = {
         id: connection.id, companyId: connection.companyId,
         platform: connection.platform, status: connection.status,
-        accessToken: connection.accessToken,
+        accessToken: decryptMaybe(connection.accessToken),
         platformAccountId: connection.platformAccountId,
       };
 

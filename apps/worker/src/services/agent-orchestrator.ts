@@ -11,21 +11,19 @@
 
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { eq, and, desc, inArray, sql, gte, or } from 'drizzle-orm';
+import { eq, and, desc, inArray, sql, or } from 'drizzle-orm';
 import * as schema from '@1person/core/db';
 import { agentLogger } from '../lib/logger';
-import { queueTask, queueNotification } from '../lib/queue';
 
 // Import all integrated services
-import { getCompanyState, computeCompanyState } from './company-state-engine';
+import { getCompanyState } from './company-state-engine';
 import { decomposeGoal, createTasksFromDecomposition, type GoalInput } from './goal-decomposition';
-import { buildTaskGraph, executeTaskGraph, getReadyTasks, type TaskGraph } from './task-graph';
+import { buildTaskGraph, type TaskGraph } from './task-graph';
 import { executeTask } from './agent-runtime';
-import { sendAgentMessage, delegateTask, updateAgentRelationship } from './agent-communication';
-import { storeMemory, getAgentMemoryContext, createMemoryFromTask } from './memory';
+import { delegateTask, updateAgentRelationship } from './agent-communication';
+import { storeMemory, createMemoryFromTask } from './memory';
 import { spawnAgent, determineAgentToSpawn, retireUnderperformingAgents } from './auto-spawn';
 import { runSelfImprovementCycle } from './self-improvement';
-import { analyzeAgentPerformance } from './evolution';
 
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/oneperson';
 const client = postgres(DATABASE_URL);
@@ -120,7 +118,7 @@ export async function orchestrateObjective(
     const decomposition = await decomposeGoal(objective);
 
     // Step 3: Create task graph in database
-    const { rootTaskId, createdTaskIds, taskIdMap } = await createTasksFromDecomposition(
+    const { rootTaskId, createdTaskIds } = await createTasksFromDecomposition(
       decomposition,
       objective
     );

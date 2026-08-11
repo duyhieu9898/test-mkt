@@ -18,6 +18,7 @@
  */
 
 import { db } from '../lib/db';
+import { decryptMaybe } from '../lib/crypto';
 import { eq, and } from 'drizzle-orm';
 import { companies, campaigns } from '@1person/core/db';
 import { performanceTracker } from '../services/performance-tracker';
@@ -274,7 +275,7 @@ export class FeedbackCron {
       });
       if (!conn || !(conn as any).accessToken) return null;
 
-      const accessToken = (conn as any).accessToken as string;
+      const accessToken = decryptMaybe((conn as any).accessToken as string);
       const graphVersion = 'v21.0';
       const fields = 'impressions,clicks,ctr,spend,reach,actions';
       const url = `https://graph.facebook.com/${graphVersion}/${platformCampaignId}/insights?fields=${fields}&date_preset=last_7d&access_token=${encodeURIComponent(accessToken)}`;

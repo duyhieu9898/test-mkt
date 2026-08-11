@@ -148,6 +148,62 @@
       "when": 1785398400000,
       "tag": "0020_deliverables",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786310400000,
+      "tag": "0021_meta_ads_connection_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786396800000,
+      "tag": "0022_meta_ads_recommendations",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786483200000,
+      "tag": "0023_meta_ads_sync_uniqueness",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786483260000,
+      "tag": "0024_meta_ads_effective_status_and_window",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786483320000,
+      "tag": "0025_meta_ads_default_window_7d",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1786483380000,
+      "tag": "0026_meta_ads_date_presets",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786483440000,
+      "tag": "0027_meta_ads_universal_metrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786483500000,
+      "tag": "0028_meta_ads_default_date_preset_30d",
+      "breakpoints": true
     }
   ]
 }

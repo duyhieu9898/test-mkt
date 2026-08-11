@@ -210,7 +210,7 @@ export class OutreachEngine {
       offset?: number;
     }
   ): Promise<Lead[]> {
-    let query = db.query.leads.findMany({
+    const query = db.query.leads.findMany({
       where: eq(leads.companyId, companyId),
       orderBy: desc(leads.createdAt),
       limit: options?.limit || 50,

@@ -21,14 +21,20 @@
     "db:migrate": "pnpm --filter @1person/core db:migrate",
     "db:migrate:all": "pnpm --filter @1person/core db:migrate && pnpm --filter @1person/ai-tenant db:migrate",
     "db:studio": "pnpm --filter @1person/core db:studio",
-    "docker:up": "docker-compose up -d",
-    "docker:down": "docker-compose down",
+    "docker:up": "docker compose up -d",
+    "docker:up:core": "docker compose up -d postgres redis qdrant meilisearch",
+    "docker:down": "docker compose down",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "devDependencies": {
+    "@next/eslint-plugin-next": "^16.3.0",
     "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^8.67.0",
+    "@typescript-eslint/parser": "^8.67.0",
     "eslint": "^8.56.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "prettier": "^3.2.0",
+    "prettier-plugin-tailwindcss": "^0.8.1",
     "turbo": "^2.0.0",
     "typescript": "^5.3.0"
   }

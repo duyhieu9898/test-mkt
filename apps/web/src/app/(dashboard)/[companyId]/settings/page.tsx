@@ -68,6 +68,16 @@ interface ConnectionStatus {
   type: string;
 }
 
+interface FacebookAdAccount {
+  id: string;
+  name: string;
+  currency?: string;
+  timezoneName?: string;
+  status?: string;
+  canRead: boolean;
+  canManage: boolean;
+}
+
 type PublishingDestinationType = 'wordpress' | 'custom_api' | 'github';
 type PublishingConnectionState = {
   type: PublishingDestinationType;
@@ -123,6 +133,10 @@ export default function SettingsPage() {
   const [connectionStatuses, setConnectionStatuses] = useState<Record<string, ConnectionStatus>>({});
   const [loadingPlatforms, setLoadingPlatforms] = useState(true);
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
+  const [facebookAdAccounts, setFacebookAdAccounts] = useState<FacebookAdAccount[]>([]);
+  const [facebookPickerOpen, setFacebookPickerOpen] = useState(false);
+  const [facebookAssetsLoading, setFacebookAssetsLoading] = useState(false);
+  const [selectingFacebookAccountId, setSelectingFacebookAccountId] = useState<string | null>(null);
 
   const [publishingLoading, setPublishingLoading] = useState(true);
   const [publishingSaving, setPublishingSaving] = useState(false);
@@ -290,6 +304,38 @@ export default function SettingsPage() {
     }
   }, [companyId, token]);
 
+  const openFacebookAdAccountPicker = useCallback(async () => {
+    if (!token) return;
+    setFacebookAssetsLoading(true);
+    try {
+      const result = await api.get<{ data: { adAccounts: FacebookAdAccount[] } }>(
+        `/ads/company/${companyId}/facebook/assets`,
+        { token },
+      );
+      setFacebookAdAccounts(result.data?.adAccounts || []);
+      setFacebookPickerOpen(true);
+    } catch (error) {
+      toast.error((error as Error).message || 'Facebook connected, but we could not load Ad Accounts.');
+    } finally {
+      setFacebookAssetsLoading(false);
+    }
+  }, [companyId, token]);
+
+  const selectFacebookAdAccount = useCallback(async (accountId: string) => {
+    if (!token) return;
+    setSelectingFacebookAccountId(accountId);
+    try {
+      await api.post(`/ads/company/${companyId}/facebook/select-account`, { accountId }, { token });
+      setFacebookPickerOpen(false);
+      toast.success('Meta Ad Account selected. You can now sync read-only performance data.');
+      await loadIntegrations();
+    } catch (error) {
+      toast.error((error as Error).message || 'Could not select this Ad Account.');
+    } finally {
+      setSelectingFacebookAccountId(null);
+    }
+  }, [companyId, loadIntegrations, token]);
+
   // Listen for OAuth popup messages
   useEffect(() => {
     const normalizeOAuthPlatform = (platformId: string) => (
@@ -304,8 +350,10 @@ export default function SettingsPage() {
       setConnectionStatuses((current) => ({
         ...current,
         [platformId]: {
-          connected: true,
-          status: 'connected',
+          // Meta is only fully connected after the user picks one readable
+          // Ad Account. Other providers finish at OAuth.
+          connected: platformId !== 'facebook',
+          status: platformId === 'facebook' ? 'pending' : 'connected',
           connectedAt: new Date().toISOString(),
           accountName: current[platformId]?.accountName,
           type: current[platformId]?.type || 'social',
@@ -313,6 +361,9 @@ export default function SettingsPage() {
       }));
 
       void loadIntegrations({ preserveConnectedPlatform: platformId });
+      if (platformId === 'facebook') {
+        void openFacebookAdAccountPicker();
+      }
       pollConnectedPlatform(platformId);
       [1000, 2500, 5000].forEach((delay) => {
         window.setTimeout(
@@ -335,7 +386,7 @@ export default function SettingsPage() {
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [loadIntegrations, pollConnectedPlatform]);
+  }, [loadIntegrations, openFacebookAdAccountPicker, pollConnectedPlatform]);
 
   const handleSaveCompany = async () => {
     if (!token) return;
@@ -778,8 +829,15 @@ export default function SettingsPage() {
                     isError={isError}
                     errorMessage={isError ? 'Connection expired. Please reconnect.' : undefined}
                     isConnecting={connectingPlatform === platform.platformId}
-                    onConnect={() => handleConnect(platform.platformId)}
+                    onConnect={() => {
+                      if (platform.platformId === 'facebook' && status?.status === 'pending') {
+                        void openFacebookAdAccountPicker();
+                        return;
+                      }
+                      void handleConnect(platform.platformId);
+                    }}
                     onDisconnect={() => handleDisconnect(platform.platformId, platform.displayName)}
+                    connectLabel={platform.platformId === 'facebook' && status?.status === 'pending' ? 'Select Meta Ad Account' : undefined}
                     capabilities={[
                       ...(platform.hasSocial ? ['Post content'] : []),
                       ...(platform.hasAds ? ['Run ads'] : []),
@@ -1009,6 +1067,46 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={facebookPickerOpen} onOpenChange={setFacebookPickerOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Choose a Meta Ad Account</DialogTitle>
+            <DialogDescription>
+              Select the account 1Person may read for campaign analysis. This does not create, edit, or spend on ads.
+            </DialogDescription>
+          </DialogHeader>
+
+          {facebookAssetsLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin" /></div>
+          ) : facebookAdAccounts.length === 0 ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              No accessible Meta Ad Accounts were found for this Facebook login. Confirm that the login has Ads Read access, then reconnect.
+            </div>
+          ) : (
+            <div className="max-h-80 space-y-2 overflow-y-auto">
+              {facebookAdAccounts.map((account) => (
+                <button
+                  key={account.id}
+                  type="button"
+                  disabled={!account.canRead || selectingFacebookAccountId !== null}
+                  onClick={() => void selectFacebookAdAccount(account.id)}
+                  className="w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium">{account.name}</span>
+                    {selectingFacebookAccountId === account.id && <Loader2 className="h-4 w-4 animate-spin" />}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {[account.currency, account.timezoneName].filter(Boolean).join(' · ') || 'Meta Ad Account'}
+                  </p>
+                  {!account.canRead && <p className="mt-1 text-xs text-amber-700">No read permission</p>}
+                </button>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1168,6 +1266,7 @@ function IntegrationCard({
   isConnecting,
   onConnect,
   onDisconnect,
+  connectLabel,
   capabilities,
 }: {
   icon: string;
@@ -1181,6 +1280,7 @@ function IntegrationCard({
   isConnecting?: boolean;
   onConnect: () => void;
   onDisconnect: () => void;
+  connectLabel?: string;
   capabilities?: string[];
 }) {
   return (
@@ -1245,7 +1345,7 @@ function IntegrationCard({
                   ) : (
                     <Link2 className="w-4 h-4" />
                   )}
-                  {isError ? 'Reconnect' : `Connect ${name}`}
+                  {isError ? 'Reconnect' : (connectLabel || `Connect ${name}`)}
                 </Button>
               )}
             </div>
