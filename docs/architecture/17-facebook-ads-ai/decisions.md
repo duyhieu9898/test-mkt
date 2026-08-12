@@ -29,8 +29,9 @@ needs a matching regression test or manual fixture in `testing-and-fixtures`.
 | D22 | Analysis persistence in `ad_campaign_analyses`. | Every analysis run persists snapshots and findings, producing a permanent `analysisId`. |
 | D23 | Brief generation consumes `analysisId` with ownership verification. | Zero findings or `insufficient_data` returns `{ brief: null, recommendation: null }` without LLM invocation. |
 | D24 | Safe legacy sourceAccountId migration and strict fail-closed account guards. | Legacy un-provenanced synced rows with NULL sourceAccountId are cleaned on migration; NULL sourceAccountId fails closed (404/409) rather than acting as a wildcard. |
-| D25 | Sync-based NULL-row reconciliation for legacy provenance. | Migration backfill is best-effort; definitive provenance is assigned when Graph API confirms campaign membership during sync. NULL-provenance rows remain hidden until reconciled. |
+| D25 | Sync-based NULL-row reconciliation for legacy provenance. | Definitive provenance is assigned exclusively when Graph API confirms campaign membership during sync. Migrations do not guess ambiguous provenance. NULL-provenance rows remain hidden until reconciled. |
 | D26 | Account-scoped recommendation status disposition. | PATCH recommendation status validates campaign ownership against selected account (`sourceAccountId`); cross-account recommendation writes fail closed (404). |
+| D27 | Scoped AdSet and Ad reconciliation to candidate Meta campaigns. | AdSet and Ad reconciliation queries are strictly scoped to candidate Meta campaign IDs (`inArray(campaignId, candidateCampaignIds)`). Meta sync never fetches, touches, or archives non-Meta or cross-platform ad sets/ads. |
 
 ## Change protocol
 

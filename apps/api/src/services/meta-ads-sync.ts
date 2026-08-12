@@ -1,4 +1,4 @@
-import { and, eq, or, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { adCampaigns, adConnections, adSets, ads } from '@1person/core/db';
 import { db } from '../lib/db';
 import { decryptMaybe } from '../lib/crypto';
@@ -344,6 +344,7 @@ export async function syncMetaAds(
           )
         ),
       });
+      const candidateCampaignIds = existingCampaigns.map((c) => c.id);
       const campaignsByPlatformId = new Map(
         existingCampaigns
           .filter((row) => row.platformCampaignId)
@@ -399,9 +400,15 @@ export async function syncMetaAds(
         }
       }
 
-      const existingAdSets = await tx.query.adSets.findMany({
-        where: and(eq(adSets.companyId, companyId), or(eq(adSets.sourceAccountId, accountId), isNull(adSets.sourceAccountId))),
-      });
+      const existingAdSets = candidateCampaignIds.length > 0
+        ? await tx.query.adSets.findMany({
+            where: and(
+              eq(adSets.companyId, companyId),
+              inArray(adSets.campaignId, candidateCampaignIds),
+              or(eq(adSets.sourceAccountId, accountId), isNull(adSets.sourceAccountId))
+            ),
+          })
+        : [];
       const adSetsByPlatformId = new Map(
         existingAdSets.filter((row) => row.platformAdSetId).map((row) => [row.platformAdSetId!, row])
       );
@@ -450,9 +457,15 @@ export async function syncMetaAds(
         }
       }
 
-      const existingAds = await tx.query.ads.findMany({
-        where: and(eq(ads.companyId, companyId), or(eq(ads.sourceAccountId, accountId), isNull(ads.sourceAccountId))),
-      });
+      const existingAds = candidateCampaignIds.length > 0
+        ? await tx.query.ads.findMany({
+            where: and(
+              eq(ads.companyId, companyId),
+              inArray(ads.campaignId, candidateCampaignIds),
+              or(eq(ads.sourceAccountId, accountId), isNull(ads.sourceAccountId))
+            ),
+          })
+        : [];
       const adsByPlatformId = new Map(
         existingAds.filter((row) => row.platformAdId).map((row) => [row.platformAdId!, row])
       );
