@@ -292,6 +292,9 @@ adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId', async (c) =>
       adSets: campaignAdSets,
       ads: campaignAds,
       currency: connection.platformAccountCurrency || 'USD',
+      // Analysis fetches the two performance windows live from Meta Insights,
+      // while the hierarchy/creative context comes from the last manual sync.
+      hierarchyLastSyncedAt: connection.lastUsedAt?.toISOString() || null,
       isDevelopmentFixture: isDevelopmentMetaAdsFixture(campaign.platformCampaignId),
       latestAnalysis: latestAnalysis ? {
         analysisId: latestAnalysis.id,

@@ -637,7 +637,7 @@ function CompanyRecommendationsList({
           </div>
         ) : !data?.items.length ? (
           <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-            No recommendations found for this filter. Run explicit 7d analysis on your campaigns to generate evidence.
+            No recommendations found for this filter. Analyze a campaign, then generate its recommendation brief to add it to this queue.
           </div>
         ) : (
           <div className="space-y-4">
@@ -810,4 +810,3 @@ function Metric({
     </Card>
   );
 }
-

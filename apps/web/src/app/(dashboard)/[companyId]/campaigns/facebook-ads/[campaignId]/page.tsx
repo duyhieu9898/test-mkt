@@ -88,6 +88,7 @@ type Detail = {
   adSets: AdSet[];
   ads: Ad[];
   currency: string;
+  hierarchyLastSyncedAt: string | null;
   isDevelopmentFixture: boolean;
   latestAnalysis?: {
     analysisId: string;
@@ -290,6 +291,10 @@ export default function FacebookAdsCampaignDetailPage() {
       </div>
     );
   const { campaign } = detail;
+  const hierarchyAgeHours = detail.hierarchyLastSyncedAt
+    ? (Date.now() - new Date(detail.hierarchyLastSyncedAt).getTime()) / (60 * 60 * 1000)
+    : null;
+  const hierarchyIsStale = hierarchyAgeHours !== null && hierarchyAgeHours >= 24;
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <Link
@@ -346,6 +351,23 @@ export default function FacebookAdsCampaignDetailPage() {
             <p className="mt-0.5 text-xs leading-relaxed text-amber-800/90">
               This campaign is paused in Meta Ads Manager. Ad Sets and Ads below can still display
               their own active configured status.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!detail.isDevelopmentFixture && hierarchyIsStale && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-900">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div>
+            <p className="font-semibold">Hierarchy context may be out of date</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-amber-800/90">
+              Ad Sets, Ads, and creative context were last synced {formatSyncAge(hierarchyAgeHours)} ago.
+              Analysis still fetches its 7-day performance evidence live from Meta Insights.{' '}
+              <Link href={`/${companyId}/campaigns?view=facebook-ads`} className="font-medium underline underline-offset-2">
+                Sync from Overview
+              </Link>{' '}
+              before analyzing to refresh this context.
             </p>
           </div>
         </div>
@@ -619,6 +641,13 @@ function AnalysisCard({
             below are local test data; no Meta Graph request was made.
           </div>
         )}
+        {!analysis.isDevelopmentFixture && (
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+            Budget-change evidence is not available for live Meta analyses yet. Meta Insights reports
+            performance for each window, but not the historical budget configuration needed to verify a
+            budget change.
+          </div>
+        )}
         {analysis.isInsufficientData ? (
           <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/70 p-4 text-sm text-amber-950">
             <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
@@ -882,6 +911,10 @@ function formatEvidenceNumber(metric: string, value: number, currency: string) {
 }
 function formatDelta(value: number | null) {
   return value === null ? 'new / no baseline' : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+}
+function formatSyncAge(hours: number) {
+  if (hours < 48) return 'about 1 day';
+  return `${Math.floor(hours / 24)} days`;
 }
 function comparisonWindows() {
   const format = (date: Date) => date.toISOString().slice(0, 10);
