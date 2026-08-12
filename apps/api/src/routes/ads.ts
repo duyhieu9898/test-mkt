@@ -107,9 +107,17 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
   const connection = await db.query.adConnections.findFirst({
     where: and(eq(adConnections.companyId, companyId), eq(adConnections.platform, 'facebook')),
   });
-  if (!connection) return c.json({ data: { connection: null, campaigns: [], developmentFixtures: [], totals: { spend: 0, impressions: 0, clicks: 0, conversions: 0, costPerConversion: null }, performanceDatePreset: 'last_30d', pagination: { page, pageSize: FACEBOOK_CAMPAIGNS_PAGE_SIZE, total: 0, totalPages: 0 } } });
+  if (!connection || !connection.platformAccountId) return c.json({ data: { connection: connection ? {
+    status: connection.status,
+    accountId: connection.platformAccountId,
+    accountName: connection.platformAccountName,
+    currency: connection.platformAccountCurrency,
+    timezone: connection.platformAccountTimezone,
+    lastSyncedAt: connection.lastUsedAt,
+    lastError: connection.lastError,
+  } : null, campaigns: [], developmentFixtures: [], totals: { spend: 0, impressions: 0, clicks: 0, conversions: 0, costPerConversion: null }, performanceDatePreset: connection?.metaAdsPerformanceDatePreset || 'last_30d', pagination: { page, pageSize: FACEBOOK_CAMPAIGNS_PAGE_SIZE, total: 0, totalPages: 0 } } });
   
-  const accountId = connection.platformAccountId ? connection.platformAccountId.replace(/^act_/, '') : undefined;
+  const accountId = connection.platformAccountId.replace(/^act_/, '');
   const importedCampaigns = await db.query.adCampaigns.findMany({
     where: and(
       eq(adCampaigns.companyId, companyId),
@@ -121,7 +129,7 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
     (campaign) =>
       campaign.status !== 'archived' &&
       !isDevelopmentMetaAdsFixture(campaign.platformCampaignId) &&
-      (!accountId || campaign.sourceAccountId === accountId)
+      campaign.sourceAccountId === accountId
   );
   const developmentFixtures = importedCampaigns.filter((campaign) =>
     isDevelopmentMetaAdsFixture(campaign.platformCampaignId)
@@ -199,7 +207,10 @@ adsRouter.get('/company/:companyId/facebook/recommendations', async (c) => {
   const connection = await db.query.adConnections.findFirst({
     where: and(eq(adConnections.companyId, companyId), eq(adConnections.platform, 'facebook')),
   });
-  const sourceAccountId = connection?.platformAccountId ? connection.platformAccountId.replace(/^act_/, '') : undefined;
+  if (!connection?.platformAccountId) {
+    throw new HTTPException(409, { message: 'Select a Meta Ad Account first' });
+  }
+  const sourceAccountId = connection.platformAccountId.replace(/^act_/, '');
 
   const page = overviewPage(c.req.query('page'));
   const limitStr = c.req.query('limit');
@@ -265,6 +276,16 @@ adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId', async (c) =>
       orderBy: desc(adCampaignAnalyses.analyzedAt),
     }),
   ]);
+  const latestRecommendation = latestAnalysis
+    ? await db.query.adRecommendations.findFirst({
+        where: and(
+          eq(adRecommendations.companyId, companyId),
+          eq(adRecommendations.campaignId, campaign.id),
+          eq(adRecommendations.analysisId, latestAnalysis.id)
+        ),
+        orderBy: desc(adRecommendations.createdAt),
+      })
+    : null;
   return c.json({
     data: {
       campaign,
@@ -279,6 +300,13 @@ adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId', async (c) =>
         baselineSnapshot: latestAnalysis.baselineSnapshot,
         currentSnapshot: latestAnalysis.currentSnapshot,
         analyzedAt: latestAnalysis.analyzedAt.toISOString(),
+        latestRecommendation: latestRecommendation ? {
+          id: latestRecommendation.id,
+          status: latestRecommendation.status,
+          possibleCause: latestRecommendation.possibleCause,
+          suggestedAction: latestRecommendation.suggestedAction,
+          createdAt: latestRecommendation.createdAt.toISOString(),
+        } : null,
       } : null,
     },
   });

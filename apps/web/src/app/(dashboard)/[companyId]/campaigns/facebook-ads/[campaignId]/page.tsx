@@ -96,6 +96,13 @@ type Detail = {
     baselineSnapshot: Record<string, unknown>;
     currentSnapshot: Record<string, unknown>;
     analyzedAt: string;
+    latestRecommendation?: {
+      id: string;
+      status: 'recommended' | 'saved' | 'rejected' | 'handled_manually';
+      possibleCause?: string;
+      suggestedAction?: Brief;
+      createdAt?: string;
+    } | null;
   } | null;
 };
 type Finding = {
@@ -179,6 +186,7 @@ export default function FacebookAdsCampaignDetailPage() {
       setDetail(detailResult.data);
       if (detailResult.data.latestAnalysis) {
         const la = detailResult.data.latestAnalysis;
+        const rec = la.latestRecommendation;
         setAnalysis((current) =>
           current
             ? current
@@ -187,6 +195,15 @@ export default function FacebookAdsCampaignDetailPage() {
                 findings: la.findings || [],
                 isInsufficientData: la.status === 'insufficient_data',
                 isDevelopmentFixture: detailResult.data.isDevelopmentFixture,
+                brief: rec?.suggestedAction || null,
+                recommendation: rec
+                  ? {
+                      id: rec.id,
+                      status: rec.status,
+                      possibleCause: rec.possibleCause,
+                      createdAt: rec.createdAt,
+                    }
+                  : null,
               }
         );
       }
