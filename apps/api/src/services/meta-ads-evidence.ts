@@ -1,6 +1,6 @@
 import { calculateCostPerPrimaryResult, type PrimaryResult } from './meta-ads-results';
 
-export type MetaMetricName = 'spend' | 'impressions' | 'clicks' | 'ctr' | 'conversions' | 'cost_per_result';
+export type MetaMetricName = 'spend' | 'impressions' | 'clicks' | 'ctr' | 'conversions' | 'cost_per_result' | 'primary_result';
 
 export type MetricSnapshot = {
   spend: number;
@@ -34,7 +34,7 @@ export type AdsEvidence = {
 };
 
 export type AdsFinding = {
-  kind: 'budget_increase' | 'ctr_decline' | 'cost_per_result_increase';
+  kind: 'budget_increase' | 'ctr_decline' | 'cost_per_result_increase' | 'primary_result_decline';
   severity: 'high' | 'medium';
   evidence: AdsEvidence;
   /** Supporting facts caused by the same event; not a separate alert. */
@@ -52,8 +52,11 @@ export type AdsObservation = {
 export type AdsEvidenceResult = { observations: AdsObservation[]; findings: AdsFinding[] };
 
 export const MIN_IMPRESSIONS_FOR_ANALYSIS = 1_000;
+/** Require a substantial baseline before treating a CTR movement as actionable. */
 export const MIN_BASELINE_CLICKS_FOR_CTR = 30;
 export const MIN_RESULTS_FOR_EFFICIENCY = 5;
+export const MIN_CURRENT_IMPRESSIONS_FOR_RESULT_DECLINE = 1_000;
+export const MIN_CURRENT_SPEND_SHARE_FOR_RESULT_DECLINE = 0.5;
 
 type FindingInput = {
   target: AdsEvidence['target'];
@@ -125,7 +128,7 @@ export function detectAdsEvidence(input: FindingInput): AdsEvidenceResult {
   }
 
   const ctr = metricEvidence(input, 'ctr', input.baseline.ctr, input.current.ctr, 'CTR');
-  if (ctr.percentChange !== null && ctr.percentChange <= -30 && ctr.sufficientData
+  if (ctr.percentChange !== null && ctr.percentChange <= -29.999999 && ctr.sufficientData
     && input.baseline.clicks >= MIN_BASELINE_CLICKS_FOR_CTR) {
     findings.push({
       kind: 'ctr_decline',
@@ -141,13 +144,29 @@ export function detectAdsEvidence(input: FindingInput): AdsEvidenceResult {
     && baselineResult.type === currentResult.type;
   const baselineCost = calculateCostPerPrimaryResult(input.baseline.spend, baselineResult.count);
   const currentCost = calculateCostPerPrimaryResult(input.current.spend, currentResult.count);
+  const resultDecline = sameSupportedResult
+    && (baselineResult.count || 0) >= MIN_RESULTS_FOR_EFFICIENCY
+    && input.current.impressions >= MIN_CURRENT_IMPRESSIONS_FOR_RESULT_DECLINE
+    && input.baseline.spend > 0
+    && input.current.spend >= input.baseline.spend * MIN_CURRENT_SPEND_SHARE_FOR_RESULT_DECLINE
+    ? metricEvidence(input, 'primary_result', baselineResult.count || 0, currentResult.count || 0, `Results: ${baselineResult.type.replaceAll('_', ' ')}`)
+    : undefined;
+  const severeResultDecline = resultDecline?.percentChange != null && resultDecline.percentChange <= -50;
+  if (severeResultDecline && resultDecline) {
+    findings.push({
+      kind: 'primary_result_decline',
+      severity: resultDecline.percentChange! <= -80 ? 'high' : 'medium',
+      evidence: resultDecline,
+      fact: `Tracked ${baselineResult.type.replaceAll('_', ' ')}s decreased from ${baselineResult.count} to ${currentResult.count} while meaningful delivery continued.`,
+    });
+  }
   if (sameSupportedResult
     && (baselineResult.count || 0) >= MIN_RESULTS_FOR_EFFICIENCY
     && (currentResult.count || 0) >= MIN_RESULTS_FOR_EFFICIENCY
     && baselineCost !== null
     && currentCost !== null) {
     const costPerResult = metricEvidence(input, 'cost_per_result', baselineCost, currentCost, `Cost per ${baselineResult.type.replaceAll('_', ' ')}`);
-    if (costPerResult.percentChange !== null && costPerResult.percentChange >= 30) {
+    if (!severeResultDecline && costPerResult.percentChange !== null && costPerResult.percentChange >= 30) {
       findings.push({
         kind: 'cost_per_result_increase',
         severity: costPerResult.percentChange >= 50 ? 'high' : 'medium',

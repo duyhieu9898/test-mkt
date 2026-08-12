@@ -3,7 +3,7 @@ import { adCampaigns, adConnections, adSets, ads } from '@1person/core/db';
 import { db } from '../lib/db';
 import { decryptMaybe } from '../lib/crypto';
 import { toMetaAdsUserError } from './meta-ads-errors';
-import { extractMetaPrimaryResult, type MetaAction } from './meta-ads-results';
+import { createCampaignMeasurementContext, createMetaMeasurementContext, extractMetaPrimaryResult, legacyConversionCount, type MetaAction, type MetaMeasurementContext } from './meta-ads-results';
 
 const META_API_VERSION = 'v18.0';
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -30,6 +30,10 @@ type MetaAdSet = {
   bid_amount?: string;
   bid_strategy?: string;
   targeting?: Record<string, unknown>;
+  optimization_goal?: string;
+  promoted_object?: Record<string, unknown>;
+  billing_event?: string;
+  destination_type?: string;
 };
 type MetaAd = {
   id: string;
@@ -292,7 +296,7 @@ export async function syncMetaAds(
           token
         ),
         fetchMetaAdsPages<MetaAdSet>(
-          `act_${accountId}/adsets?fields=id,name,status,effective_status,campaign_id,daily_budget,bid_amount,bid_strategy,targeting&limit=250`,
+          `act_${accountId}/adsets?fields=id,name,status,effective_status,campaign_id,daily_budget,bid_amount,bid_strategy,targeting,optimization_goal,promoted_object,billing_event,destination_type&limit=250`,
           token
         ),
         fetchMetaAdsPages<MetaAd>(
@@ -318,6 +322,13 @@ export async function syncMetaAds(
     );
     const objectiveByCampaignId = new Map(
       remoteCampaigns.map((campaign) => [campaign.id, mapObjective(campaign.objective)])
+    );
+    const measurementContextByCampaignId = new Map(
+      remoteCampaigns.map((campaign) => {
+        const objective = mapObjective(campaign.objective);
+        const goals = remoteAdSets.filter((adSet) => adSet.campaign_id === campaign.id).map((adSet) => adSet.optimization_goal ? [adSet.optimization_goal] : []);
+        return [campaign.id, createCampaignMeasurementContext({ campaignObjective: objective, adSetOptimizationGoals: goals })] as const;
+      })
     );
     const adSetInsightsById = new Map(
       adSetInsights.filter((row) => row.adset_id).map((row) => [row.adset_id!, row])
@@ -352,7 +363,8 @@ export async function syncMetaAds(
         const clicks = Math.round(toNumber(insight?.clicks));
         const spend = toNumber(insight?.spend);
         const objective = mapObjective(remote.objective);
-        const primaryResult = extractMetaPrimaryResult({ objective, actions: insight?.actions });
+        const measurementContext = measurementContextByCampaignId.get(remote.id)!;
+        const primaryResult = extractMetaPrimaryResult({ context: measurementContext, actions: insight?.actions });
         const values = {
           name: remote.name || remote.id,
           platform: 'facebook' as const,
@@ -370,8 +382,9 @@ export async function syncMetaAds(
           impressions,
           clicks,
           reach: Math.round(toNumber(insight?.reach)),
-          // Legacy/UI field only. Diagnosis reads the objective-aware result snapshots instead.
-          conversions: Math.round(primaryResult.count || 0),
+          // Link clicks are a valid result, but never a legacy conversion.
+          conversions: legacyConversionCount(primaryResult),
+          targetAudience: { metaMeasurement: measurementContext, lastPrimaryResult: primaryResult } as unknown as typeof adCampaigns.$inferInsert['targetAudience'],
           spentAmount: spend.toFixed(2),
           ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
           cpc: clicks ? (spend / clicks).toFixed(2) : '0',
@@ -419,10 +432,11 @@ export async function syncMetaAds(
         const impressions = Math.round(toNumber(insight?.impressions));
         const clicks = Math.round(toNumber(insight?.clicks));
         const spend = toNumber(insight?.spend);
-        const primaryResult = extractMetaPrimaryResult({
-          objective: remote.campaign_id ? objectiveByCampaignId.get(remote.campaign_id) : undefined,
-          actions: insight?.actions,
+        const measurementContext = createMetaMeasurementContext({
+          campaignObjective: remote.campaign_id ? objectiveByCampaignId.get(remote.campaign_id) : undefined,
+          optimizationGoals: remote.optimization_goal ? [remote.optimization_goal] : [],
         });
+        const primaryResult = extractMetaPrimaryResult({ context: measurementContext, actions: insight?.actions });
         const values = {
           campaignId,
           companyId,
@@ -433,11 +447,11 @@ export async function syncMetaAds(
           dailyBudget: remote.daily_budget ? (toNumber(remote.daily_budget) / 100).toFixed(2) : null,
           bidAmount: remote.bid_amount ? (toNumber(remote.bid_amount) / 100).toFixed(2) : null,
           bidStrategy: remote.bid_strategy || 'lowest_cost',
-          targetAudience: remote.targeting || null,
+          targetAudience: { ...(remote.targeting || {}), metaMeasurement: measurementContext, metaOptimization: { optimizationGoal: remote.optimization_goal || null, promotedObject: remote.promoted_object || null, billingEvent: remote.billing_event || null, destinationType: remote.destination_type || null } },
           impressions,
           clicks,
           reach: Math.round(toNumber(insight?.reach)),
-          conversions: Math.round(primaryResult.count || 0),
+          conversions: legacyConversionCount(primaryResult),
           spentAmount: spend.toFixed(2),
           ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
           cpc: clicks ? (spend / clicks).toFixed(2) : '0',
@@ -481,10 +495,8 @@ export async function syncMetaAds(
         const clicks = Math.round(toNumber(insight?.clicks));
         const creative = remote.creative;
         const linkData = creative?.object_story_spec?.link_data;
-        const primaryResult = extractMetaPrimaryResult({
-          objective: remote.campaign_id ? objectiveByCampaignId.get(remote.campaign_id) : undefined,
-          actions: insight?.actions,
-        });
+        const measurementContext = remote.campaign_id ? measurementContextByCampaignId.get(remote.campaign_id) : undefined;
+        const primaryResult = extractMetaPrimaryResult({ context: measurementContext, actions: insight?.actions });
         const values = {
           adSetId,
           campaignId,
@@ -504,7 +516,7 @@ export async function syncMetaAds(
           impressions,
           clicks,
           reach: Math.round(toNumber(insight?.reach)),
-          conversions: Math.round(primaryResult.count || 0),
+          conversions: legacyConversionCount(primaryResult),
           spentAmount: toNumber(insight?.spend).toFixed(2),
           ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
           cpc: clicks ? (toNumber(insight?.spend) / clicks).toFixed(2) : '0',

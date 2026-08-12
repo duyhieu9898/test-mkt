@@ -46,6 +46,8 @@ type Campaign = {
   cpc: string | null;
   cpm: string | null;
   updatedAt: string;
+  primaryResult?: { type: string; isSupported: boolean; label?: string };
+  costPerResult?: number | null;
 };
 type PerformanceDatePreset =
   | 'today'
@@ -80,7 +82,7 @@ type Overview = {
   } | null;
   campaigns: Campaign[];
   developmentFixtures: Campaign[];
-  totals: { spend: number; impressions: number; clicks: number; conversions: number; costPerConversion: number | null };
+  totals: { spend: number; impressions: number; clicks: number; needsReview: number };
   performanceDatePreset: PerformanceDatePreset;
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
 };
@@ -187,7 +189,7 @@ export function FacebookAdsOverview() {
       setSyncing(false);
     }
   };
-  const totals = overview?.totals || { spend: 0, impressions: 0, clicks: 0, conversions: 0, costPerConversion: null };
+  const totals = overview?.totals || { spend: 0, impressions: 0, clicks: 0, needsReview: 0 };
   const ctr = totals.impressions ? (totals.clicks / totals.impressions) * 100 : 0;
   if (loading)
     return (
@@ -333,12 +335,8 @@ export function FacebookAdsOverview() {
             <Metric icon={TrendingUp} label="CTR" value={`${ctr.toFixed(2)}%`} />
             <Metric
               icon={DollarSign}
-              label="Cost per tracked conversion"
-              value={
-                totals.costPerConversion !== null && totals.costPerConversion !== undefined
-                  ? money(totals.costPerConversion, connection.currency)
-                  : '—'
-              }
+              label="Campaigns needing review"
+              value={totals.needsReview.toLocaleString()}
             />
           </div>
           <Card>
@@ -476,7 +474,7 @@ function CampaignTable({
   companyId,
   currency,
 }: {
-  campaigns: (Campaign & { analysisStatus?: string; costPerConversion?: number | null })[];
+  campaigns: (Campaign & { analysisStatus?: string })[];
   companyId: string;
   currency?: string | null;
 }) {
@@ -489,7 +487,7 @@ function CampaignTable({
             <th className="pb-3 font-medium">Status</th>
             <th className="pb-3 font-medium">AI Analysis</th>
             <th className="pb-3 font-medium">Spend</th>
-            <th className="pb-3 font-medium">Cost / Conv.</th>
+            <th className="pb-3 font-medium">Primary result</th>
             <th className="pb-3 font-medium">Impressions</th>
             <th className="pb-3 font-medium">Reach</th>
             <th className="pb-3 font-medium">Frequency</th>
@@ -535,9 +533,9 @@ function CampaignTable({
                 </td>
                 <td className="py-3">{money(Number(campaign.spentAmount || 0), currency)}</td>
                 <td className="py-3 font-medium">
-                  {campaign.costPerConversion !== null && campaign.costPerConversion !== undefined
-                    ? money(campaign.costPerConversion, currency)
-                    : '—'}
+                  {campaign.primaryResult?.isSupported
+                    ? <>{campaign.primaryResult.label}: {campaign.costPerResult != null ? money(campaign.costPerResult, currency) : '—'}</>
+                    : 'Not available'}
                 </td>
                 <td className="py-3">{campaign.impressions.toLocaleString()}</td>
                 <td className="py-3">{campaign.reach.toLocaleString()}</td>

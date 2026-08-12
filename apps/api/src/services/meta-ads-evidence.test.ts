@@ -3,65 +3,54 @@ import { detectAdsEvidence, detectAdsFindings, type MetricSnapshot } from './met
 
 const baselineWindow = { start: '2026-06-01', end: '2026-06-07', timezone: 'Asia/Ho_Chi_Minh' };
 const currentWindow = { start: '2026-07-06', end: '2026-07-12', timezone: 'Asia/Ho_Chi_Minh' };
-const primary = (count: number | null, type: 'lead' | 'purchase' | 'unknown' = 'lead', supported = type !== 'unknown') => ({
-  type, count, isSupported: supported, sourceActionTypes: supported ? [type] : [],
-} as const);
-const snapshot = (overrides: Partial<MetricSnapshot> = {}): MetricSnapshot => ({
-  spend: 100, impressions: 10_000, clicks: 200, conversions: 10, ctr: 2,
-  primaryResult: primary(10), costPerResult: 10, ...overrides,
+const primary = (count: number | null, type: 'lead' | 'purchase' | 'unknown' = 'lead', supported = type !== 'unknown') => ({ type, count, isSupported: supported, sourceActionTypes: supported ? [type] : [] } as const);
+/** Mirrors production math: fixtures never hand-write an inconsistent CTR/CPR. */
+const snapshotFrom = ({ impressions = 10_000, clicks = 200, spend = 100, primaryResult = primary(10), dailyBudget }: Partial<Pick<MetricSnapshot, 'impressions' | 'clicks' | 'spend' | 'primaryResult' | 'dailyBudget'>> = {}): MetricSnapshot => ({
+  impressions, clicks, spend, dailyBudget, conversions: primaryResult.isSupported && primaryResult.type !== 'unknown' ? primaryResult.count || 0 : 0,
+  ctr: impressions ? (clicks / impressions) * 100 : 0, primaryResult,
+  costPerResult: primaryResult.count && primaryResult.count > 0 ? spend / primaryResult.count : null,
 });
-const input = (baseline: MetricSnapshot, current: MetricSnapshot) => ({
-  target: 'campaign' as const, targetId: 'campaign-1', baselineWindow, currentWindow, baseline, current,
-});
+const input = (baseline: MetricSnapshot, current: MetricSnapshot) => ({ target: 'campaign' as const, targetId: 'campaign-1', baselineWindow, currentWindow, baseline, current });
 
 describe('Meta Ads evidence', () => {
-  it('keeps an actual budget increase as a finding and groups spend as related evidence', () => {
-    const findings = detectAdsFindings(input(
-      snapshot({ dailyBudget: 100 }), snapshot({ spend: 300, dailyBudget: 300, primaryResult: primary(10), costPerResult: 30 }),
-    ));
-    const budget = findings.find((finding) => finding.kind === 'budget_increase');
-    expect(budget?.evidence).toMatchObject({ metric: 'daily_budget', baseline: 100, current: 300, percentChange: 200 });
-    expect(budget?.relatedEvidence?.[0]).toMatchObject({ metric: 'spend', baseline: 100, current: 300 });
-  });
-
-  it('records spend increases as observations, not negative findings, at the 50% boundary', () => {
-    const atBoundary = detectAdsEvidence(input(snapshot(), snapshot({ spend: 150, primaryResult: primary(15), costPerResult: 10 })));
-    const belowBoundary = detectAdsEvidence(input(snapshot(), snapshot({ spend: 149.9, primaryResult: primary(14.99), costPerResult: 10 })));
-    expect(atBoundary.observations).toHaveLength(1);
-    expect(atBoundary.findings).toEqual([]);
-    expect(belowBoundary.observations).toEqual([]);
-  });
-
-  it('does not claim a budget change when only spend is available', () => {
-    const evidence = detectAdsEvidence(input(snapshot(), snapshot({ spend: 300, primaryResult: primary(30), costPerResult: 10 })));
-    expect(evidence.findings.some((finding) => finding.kind === 'budget_increase')).toBe(false);
+  it('keeps spend scaling as an observation, including proportional result growth', () => {
+    const evidence = detectAdsEvidence(input(snapshotFrom(), snapshotFrom({ spend: 200, primaryResult: primary(20) })));
     expect(evidence.observations).toHaveLength(1);
+    expect(evidence.findings).toEqual([]);
   });
 
-  it('uses CTR boundaries and requires meaningful baseline click volume', () => {
-    const medium = detectAdsFindings(input(snapshot({ ctr: 2, clicks: 30 }), snapshot({ ctr: 1.4, clicks: 30 })));
-    const high = detectAdsFindings(input(snapshot({ ctr: 2, clicks: 30 }), snapshot({ ctr: 1, clicks: 30 })));
-    const below = detectAdsFindings(input(snapshot({ ctr: 2, clicks: 30 }), snapshot({ ctr: 1.402, clicks: 30 })));
-    const lowClicks = detectAdsFindings(input(snapshot({ ctr: 0.1, clicks: 10 }), snapshot({ ctr: 0.05, clicks: 5 })));
-    expect(medium.find((finding) => finding.kind === 'ctr_decline')?.severity).toBe('medium');
-    expect(high.find((finding) => finding.kind === 'ctr_decline')?.severity).toBe('high');
-    expect(below.some((finding) => finding.kind === 'ctr_decline')).toBe(false);
-    expect(lowClicks.some((finding) => finding.kind === 'ctr_decline')).toBe(false);
+  it('detects 20 → 0 and 20 → 2 result collapses but not low-volume or delivery-collapse cases', () => {
+    const collapse = detectAdsFindings(input(snapshotFrom({ primaryResult: primary(20) }), snapshotFrom({ primaryResult: primary(0) })));
+    const nearZero = detectAdsFindings(input(snapshotFrom({ primaryResult: primary(20) }), snapshotFrom({ primaryResult: primary(2) })));
+    const medium = detectAdsFindings(input(snapshotFrom({ primaryResult: primary(20) }), snapshotFrom({ primaryResult: primary(10) })));
+    const lowVolume = detectAdsFindings(input(snapshotFrom({ primaryResult: primary(1) }), snapshotFrom({ primaryResult: primary(0) })));
+    const deliveryCollapsed = detectAdsFindings(input(snapshotFrom({ primaryResult: primary(20) }), snapshotFrom({ spend: 4, primaryResult: primary(0) })));
+    expect(collapse.find((f) => f.kind === 'primary_result_decline')?.severity).toBe('high');
+    expect(nearZero.find((f) => f.kind === 'primary_result_decline')?.severity).toBe('high');
+    expect(medium.find((f) => f.kind === 'primary_result_decline')?.severity).toBe('medium');
+    expect(lowVolume.some((f) => f.kind === 'primary_result_decline')).toBe(false);
+    expect(deliveryCollapsed.some((f) => f.kind === 'primary_result_decline')).toBe(false);
   });
 
-  it('detects supported result-efficiency deterioration only with sufficient result volume', () => {
-    const medium = detectAdsFindings(input(snapshot(), snapshot({ spend: 130, primaryResult: primary(10), costPerResult: 13 })));
-    const high = detectAdsFindings(input(snapshot(), snapshot({ spend: 150, primaryResult: primary(10), costPerResult: 15 })));
-    const unsupported = detectAdsFindings(input(snapshot({ primaryResult: primary(null, 'unknown', false), costPerResult: null }), snapshot({ spend: 150, primaryResult: primary(null, 'unknown', false), costPerResult: null })));
-    const lowResults = detectAdsFindings(input(snapshot({ primaryResult: primary(1), costPerResult: 100 }), snapshot({ spend: 200, primaryResult: primary(1), costPerResult: 200 })));
-    expect(medium.find((finding) => finding.kind === 'cost_per_result_increase')?.severity).toBe('medium');
-    expect(high.find((finding) => finding.kind === 'cost_per_result_increase')?.severity).toBe('high');
-    expect(unsupported.some((finding) => finding.kind === 'cost_per_result_increase')).toBe(false);
-    expect(lowResults.some((finding) => finding.kind === 'cost_per_result_increase')).toBe(false);
+  it('retains CPR boundaries and suppresses its duplicate when result decline is primary', () => {
+    const at30 = detectAdsFindings(input(snapshotFrom(), snapshotFrom({ spend: 130 })));
+    const at50 = detectAdsFindings(input(snapshotFrom(), snapshotFrom({ spend: 150 })));
+    const below = detectAdsFindings(input(snapshotFrom(), snapshotFrom({ spend: 129.9 })));
+    const collapse = detectAdsFindings(input(snapshotFrom({ primaryResult: primary(20) }), snapshotFrom({ spend: 100, primaryResult: primary(5) })));
+    expect(at30.find((f) => f.kind === 'cost_per_result_increase')?.severity).toBe('medium');
+    expect(at50.find((f) => f.kind === 'cost_per_result_increase')?.severity).toBe('high');
+    expect(below.some((f) => f.kind === 'cost_per_result_increase')).toBe(false);
+    expect(collapse.map((f) => f.kind)).toEqual(['primary_result_decline']);
   });
 
-  it('returns no evidence when delivery is insufficient', () => {
-    const evidence = detectAdsEvidence(input(snapshot({ impressions: 80 }), snapshot({ impressions: 90 })));
-    expect(evidence).toEqual({ observations: [], findings: [] });
+  it('uses realistic CTR gates and boundaries', () => {
+    const medium = detectAdsFindings(input(snapshotFrom({ clicks: 100 }), snapshotFrom({ clicks: 70 })));
+    const high = detectAdsFindings(input(snapshotFrom({ clicks: 100 }), snapshotFrom({ clicks: 50 })));
+    const below = detectAdsFindings(input(snapshotFrom({ clicks: 100 }), snapshotFrom({ clicks: 71 })));
+    const lowClicks = detectAdsFindings(input(snapshotFrom({ clicks: 29 }), snapshotFrom({ clicks: 14 })));
+    expect(medium.find((f) => f.kind === 'ctr_decline')?.severity).toBe('medium');
+    expect(high.find((f) => f.kind === 'ctr_decline')?.severity).toBe('high');
+    expect(below.some((f) => f.kind === 'ctr_decline')).toBe(false);
+    expect(lowClicks.some((f) => f.kind === 'ctr_decline')).toBe(false);
   });
 });

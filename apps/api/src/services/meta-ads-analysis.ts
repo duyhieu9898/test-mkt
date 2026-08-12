@@ -3,7 +3,7 @@ import { adCampaigns, adConnections, adSets, ads } from '@1person/core/db';
 import { db } from '../lib/db';
 import { decryptMaybe } from '../lib/crypto';
 import { detectAdsEvidence, MIN_IMPRESSIONS_FOR_ANALYSIS, type EvidenceWindow, type MetricSnapshot } from './meta-ads-evidence';
-import { calculateCostPerPrimaryResult, extractMetaPrimaryResult, type MetaAction } from './meta-ads-results';
+import { calculateCostPerPrimaryResult, createCampaignMeasurementContext, extractMetaPrimaryResult, legacyConversionCount, type MetaAction, type MetaMeasurementContext } from './meta-ads-results';
 import { fetchMetaAdsPages } from './meta-ads-sync';
 
 type MetaInsight = {
@@ -26,6 +26,9 @@ export const DEV_DEMO_META_CAMPAIGN_IDS = {
   stable: '1person_dev_demo_stable',
   ctrNoCreative: '1person_dev_demo_ctr_no_creative',
   insufficient: '1person_dev_demo_insufficient',
+  resultEfficiencyDecline: '1person_dev_demo_result_efficiency_decline',
+  resultCollapse: '1person_dev_demo_result_collapse',
+  unsupportedResult: '1person_dev_demo_unsupported_result',
 } as const;
 
 export function isDevelopmentMetaAdsFixture(platformCampaignId: string | null | undefined) {
@@ -39,28 +42,40 @@ const result = (type: MetricSnapshot['primaryResult']['type'], count: number | n
 } as MetricSnapshot['primaryResult']);
 const DEV_DEMO_SCENARIOS: Record<string, DemoScenario> = {
   [DEV_DEMO_META_CAMPAIGN_IDS.budgetAndCtr]: {
-    baseline: { spend: 100, impressions: 12_000, clicks: 180, conversions: 12, ctr: 1.5, primaryResult: result('lead', 12), costPerResult: 8.33, dailyBudget: 100 },
-    current: { spend: 300, impressions: 13_000, clicks: 104, conversions: 7, ctr: 0.8, primaryResult: result('lead', 7), costPerResult: 42.86, dailyBudget: 300 },
+    baseline: { spend: 100, impressions: 120_000, clicks: 1_800, conversions: 12, ctr: 1.5, primaryResult: result('lead', 12), costPerResult: 8.33, dailyBudget: 100 },
+    current: { spend: 300, impressions: 130_000, clicks: 1_040, conversions: 7, ctr: 0.8, primaryResult: result('lead', 7), costPerResult: 42.86, dailyBudget: 300 },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.ctrOnly]: {
-    baseline: { spend: 150, impressions: 12_000, clicks: 240, conversions: 14, ctr: 2, primaryResult: result('lead', 14), costPerResult: 10.71, dailyBudget: 150 },
-    current: { spend: 155, impressions: 12_500, clicks: 125, conversions: 11, ctr: 1, primaryResult: result('lead', 11), costPerResult: 14.09, dailyBudget: 150 },
+    baseline: { spend: 150, impressions: 120_000, clicks: 2_400, conversions: 14, ctr: 2, primaryResult: result('lead', 14), costPerResult: 10.71, dailyBudget: 150 },
+    current: { spend: 155, impressions: 125_000, clicks: 1_250, conversions: 11, ctr: 1, primaryResult: result('lead', 11), costPerResult: 14.09, dailyBudget: 150 },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.spendOnly]: {
-    baseline: { spend: 100, impressions: 10_000, clicks: 150, conversions: 10, ctr: 1.5, primaryResult: result('unknown', null, false), costPerResult: null, dailyBudget: null },
-    current: { spend: 200, impressions: 11_000, clicks: 165, conversions: 11, ctr: 1.5, primaryResult: result('unknown', null, false), costPerResult: null, dailyBudget: null },
+    baseline: { spend: 100, impressions: 100_000, clicks: 1_500, conversions: 10, ctr: 1.5, primaryResult: result('unknown', null, false), costPerResult: null, dailyBudget: null },
+    current: { spend: 200, impressions: 110_000, clicks: 1_650, conversions: 11, ctr: 1.5, primaryResult: result('unknown', null, false), costPerResult: null, dailyBudget: null },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.stable]: {
-    baseline: { spend: 150, impressions: 12_000, clicks: 180, conversions: 12, ctr: 1.5, primaryResult: result('lead', 12), costPerResult: 12.5, dailyBudget: 150 },
-    current: { spend: 152, impressions: 12_100, clicks: 182, conversions: 12, ctr: 1.5, primaryResult: result('lead', 12), costPerResult: 12.67, dailyBudget: 150 },
+    baseline: { spend: 150, impressions: 120_000, clicks: 1_800, conversions: 12, ctr: 1.5, primaryResult: result('lead', 12), costPerResult: 12.5, dailyBudget: 150 },
+    current: { spend: 152, impressions: 121_000, clicks: 1_815, conversions: 12, ctr: 1.5, primaryResult: result('lead', 12), costPerResult: 12.67, dailyBudget: 150 },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.ctrNoCreative]: {
-    baseline: { spend: 150, impressions: 12_000, clicks: 240, conversions: 14, ctr: 2, primaryResult: result('lead', 14), costPerResult: 10.71, dailyBudget: 150 },
-    current: { spend: 155, impressions: 12_500, clicks: 125, conversions: 11, ctr: 1, primaryResult: result('lead', 11), costPerResult: 14.09, dailyBudget: 150 },
+    baseline: { spend: 150, impressions: 120_000, clicks: 2_400, conversions: 14, ctr: 2, primaryResult: result('lead', 14), costPerResult: 10.71, dailyBudget: 150 },
+    current: { spend: 155, impressions: 125_000, clicks: 1_250, conversions: 11, ctr: 1, primaryResult: result('lead', 11), costPerResult: 14.09, dailyBudget: 150 },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.insufficient]: {
     baseline: { spend: 10, impressions: 80, clicks: 4, conversions: 0, ctr: 5, primaryResult: result('lead', 0), costPerResult: null, dailyBudget: 100 },
     current: { spend: 30, impressions: 90, clicks: 1, conversions: 0, ctr: 1.1, primaryResult: result('lead', 0), costPerResult: null, dailyBudget: 300 },
+  },
+  [DEV_DEMO_META_CAMPAIGN_IDS.resultEfficiencyDecline]: {
+    baseline: { spend: 100, impressions: 10_000, clicks: 200, conversions: 10, ctr: 2, primaryResult: result('lead', 10), costPerResult: 10 },
+    current: { spend: 150, impressions: 10_000, clicks: 200, conversions: 10, ctr: 2, primaryResult: result('lead', 10), costPerResult: 15 },
+  },
+  [DEV_DEMO_META_CAMPAIGN_IDS.resultCollapse]: {
+    baseline: { spend: 100, impressions: 10_000, clicks: 200, conversions: 20, ctr: 2, primaryResult: result('lead', 20), costPerResult: 5 },
+    current: { spend: 100, impressions: 10_000, clicks: 200, conversions: 0, ctr: 2, primaryResult: result('lead', 0), costPerResult: null },
+  },
+  [DEV_DEMO_META_CAMPAIGN_IDS.unsupportedResult]: {
+    baseline: { spend: 100, impressions: 10_000, clicks: 200, conversions: 0, ctr: 2, primaryResult: result('unknown', null, false), costPerResult: null },
+    current: { spend: 100, impressions: 10_000, clicks: 200, conversions: 0, ctr: 2, primaryResult: result('unknown', null, false), costPerResult: null },
   },
 };
 
@@ -96,16 +111,16 @@ function toNumber(value: string | undefined) {
   return Number(value || 0) || 0;
 }
 
-function snapshot(row: MetaInsight | undefined, objective: string): MetricSnapshot {
+function snapshot(row: MetaInsight | undefined, context: MetaMeasurementContext): MetricSnapshot {
   const impressions = toNumber(row?.impressions);
   const clicks = toNumber(row?.clicks);
   const spend = toNumber(row?.spend);
-  const primaryResult = extractMetaPrimaryResult({ objective, actions: row?.actions });
+  const primaryResult = extractMetaPrimaryResult({ context, actions: row?.actions });
   return {
     spend,
     impressions,
     clicks,
-    conversions: primaryResult.count || 0,
+    conversions: legacyConversionCount(primaryResult),
     ctr: impressions ? (clicks / impressions) * 100 : 0,
     primaryResult,
     costPerResult: calculateCostPerPrimaryResult(spend, primaryResult.count),
@@ -192,12 +207,23 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
 
     sourceAccountId = activeAccountId;
     const token = decryptMaybe(connection.accessToken);
+    const campaignAdSets = await db.query.adSets.findMany({
+      where: and(eq(adSets.companyId, companyId), eq(adSets.campaignId, campaign.id)),
+      columns: { targetAudience: true },
+    });
+    const measurementContext = createCampaignMeasurementContext({
+      campaignObjective: campaign.objective,
+      adSetOptimizationGoals: campaignAdSets.map((adSet) => {
+        const metadata = adSet.targetAudience as { metaOptimization?: { optimizationGoal?: string | null } } | null;
+        return metadata?.metaOptimization?.optimizationGoal ? [metadata.metaOptimization.optimizationGoal] : [];
+      }),
+    });
     const [baselineRows, currentRows] = await Promise.all([
       fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.baseline), token),
       fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.current), token),
     ]);
-    baseline = snapshot(baselineRows[0], campaign.objective);
-    current = snapshot(currentRows[0], campaign.objective);
+    baseline = snapshot(baselineRows[0], measurementContext);
+    current = snapshot(currentRows[0], measurementContext);
   }
 
   const isInsufficientData = !hasSufficientDelivery(baseline) || !hasSufficientDelivery(current);

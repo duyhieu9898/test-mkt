@@ -27,9 +27,12 @@
 | Unsupported or ambiguous result actions | No result-efficiency finding. |
 | Stable delivery | No finding or recommendation when delivery is meaningful but no threshold is crossed. |
 | CTR ↓, no synced creative | Do not offer a creative test; use delivery review only. |
+| Result efficiency decline | Cost per supported result worsens without a severe result-collapse duplicate. |
+| Primary result collapse | Meaningful result volume falls toward zero with delivery retained. |
+| Unsupported result | Unknown or ambiguous KPI remains unavailable. |
 | Insufficient data | No forced recommendation. |
 
-All four scenarios are seeded today under `[DEV DEMO]`. Add scenarios only with
+All nine scenarios are seeded today under `[DEV DEMO]`. Add scenarios only with
 a matching test; fixtures must be local-only and clearly labeled.
 
 ## Commands

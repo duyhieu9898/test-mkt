@@ -19,16 +19,21 @@ const connection = await db.query.adConnections.findFirst({
 if (!connection) throw new Error('Connect and select a Facebook Ad Account before seeding the demo');
 
 const demos = [
-  { id: DEV_DEMO_META_CAMPAIGN_IDS.budgetAndCtr, name: '[DEV DEMO] Budget increase + CTR decline', budget: '300.00', spend: '300.00', impressions: 13_000, clicks: 104, ctr: '0.80', headline: 'Help your child speak English' },
-  { id: DEV_DEMO_META_CAMPAIGN_IDS.ctrOnly, name: '[DEV DEMO] CTR decline, stable budget', budget: '150.00', spend: '155.00', impressions: 12_500, clicks: 125, ctr: '1.00', headline: 'English learning made playful' },
-  { id: DEV_DEMO_META_CAMPAIGN_IDS.spendOnly, name: '[DEV DEMO] Spend increase, no budget history', budget: '200.00', spend: '200.00', impressions: 11_000, clicks: 165, ctr: '1.50', headline: 'Build English confidence' },
-  { id: DEV_DEMO_META_CAMPAIGN_IDS.stable, name: '[DEV DEMO] Stable delivery', budget: '150.00', spend: '152.00', impressions: 12_100, clicks: 182, ctr: '1.50', headline: 'Keep building English confidence' },
-  { id: DEV_DEMO_META_CAMPAIGN_IDS.ctrNoCreative, name: '[DEV DEMO] CTR decline, no synced creative', budget: '150.00', spend: '155.00', impressions: 12_500, clicks: 125, ctr: '1.00', headline: 'No creative is synced', createCreative: false },
-  { id: DEV_DEMO_META_CAMPAIGN_IDS.insufficient, name: '[DEV DEMO] Insufficient data', budget: '300.00', spend: '30.00', impressions: 90, clicks: 1, ctr: '1.10', headline: 'Try English activities today' },
+  { id: DEV_DEMO_META_CAMPAIGN_IDS.budgetAndCtr, name: '[DEV DEMO] Budget increase + CTR decline', budget: '300.00', spend: '300.00', impressions: 130_000, clicks: 1_040, conversions: 7, ctr: '0.80', headline: 'Help your child speak English' },
+  { id: DEV_DEMO_META_CAMPAIGN_IDS.ctrOnly, name: '[DEV DEMO] CTR decline, stable budget', budget: '150.00', spend: '155.00', impressions: 125_000, clicks: 1_250, conversions: 11, ctr: '1.00', headline: 'English learning made playful' },
+  { id: DEV_DEMO_META_CAMPAIGN_IDS.spendOnly, name: '[DEV DEMO] Spend increase, no budget history', budget: '200.00', spend: '200.00', impressions: 110_000, clicks: 1_650, conversions: 11, ctr: '1.50', headline: 'Build English confidence' },
+  { id: DEV_DEMO_META_CAMPAIGN_IDS.stable, name: '[DEV DEMO] Stable delivery', budget: '150.00', spend: '152.00', impressions: 121_000, clicks: 1_815, conversions: 12, ctr: '1.50', headline: 'Keep building English confidence' },
+  { id: DEV_DEMO_META_CAMPAIGN_IDS.ctrNoCreative, name: '[DEV DEMO] CTR decline, no synced creative', budget: '150.00', spend: '155.00', impressions: 125_000, clicks: 1_250, conversions: 11, ctr: '1.00', headline: 'No creative is synced', createCreative: false },
+  { id: DEV_DEMO_META_CAMPAIGN_IDS.insufficient, name: '[DEV DEMO] Insufficient data', budget: '300.00', spend: '30.00', impressions: 90, clicks: 1, conversions: 0, ctr: '1.10', headline: 'Try English activities today' },
+  { id: DEV_DEMO_META_CAMPAIGN_IDS.resultEfficiencyDecline, name: '[DEV DEMO] Result efficiency decline', budget: '150.00', spend: '150.00', impressions: 10_000, clicks: 200, conversions: 10, ctr: '2.00', headline: 'Check result efficiency' },
+  { id: DEV_DEMO_META_CAMPAIGN_IDS.resultCollapse, name: '[DEV DEMO] Primary result collapse', budget: '100.00', spend: '100.00', impressions: 10_000, clicks: 200, conversions: 0, ctr: '2.00', headline: 'Check delivery after result collapse' },
+  { id: DEV_DEMO_META_CAMPAIGN_IDS.unsupportedResult, name: '[DEV DEMO] Unsupported primary result', budget: '100.00', spend: '100.00', impressions: 10_000, clicks: 200, conversions: 0, ctr: '2.00', headline: 'Unsupported result semantics' },
 ] as const;
 
 const seeded: Array<{ campaignId: string; name: string; url: string }> = [];
 for (const demo of demos) {
+  const cpc = (Number(demo.spend) / demo.clicks).toFixed(2);
+  const cpm = ((Number(demo.spend) * 1_000) / demo.impressions).toFixed(2);
   let campaign = await db.query.adCampaigns.findFirst({ where: and(eq(adCampaigns.companyId, companyId), eq(adCampaigns.platformCampaignId, demo.id)) });
   // Upgrade the first fixture created before the scenario matrix existed.
   if (!campaign && demo.id === DEV_DEMO_META_CAMPAIGN_IDS.budgetAndCtr) {
@@ -43,22 +48,46 @@ for (const demo of demos) {
     const [created] = await db.insert(adCampaigns).values({
       companyId, connectionId: connection.id, platform: 'facebook', platformCampaignId: demo.id, sourceAccountId,
       name: demo.name, objective: 'traffic', status: 'active', dailyBudget: demo.budget,
-      impressions: demo.impressions, clicks: demo.clicks, conversions: 7, reach: Math.round(demo.impressions * 0.75), spentAmount: demo.spend, ctr: demo.ctr, cpc: '1.00', cpm: '20.00',
+      impressions: demo.impressions, clicks: demo.clicks, conversions: demo.conversions, reach: Math.round(demo.impressions * 0.75), spentAmount: demo.spend, ctr: demo.ctr, cpc, cpm,
     }).returning();
     if (!created) throw new Error(`Could not create ${demo.name}`);
     campaign = created;
+  } else {
+    const [updated] = await db.update(adCampaigns).set({
+      connectionId: connection.id, sourceAccountId, name: demo.name, dailyBudget: demo.budget,
+      impressions: demo.impressions, clicks: demo.clicks, conversions: demo.conversions,
+      reach: Math.round(demo.impressions * 0.75), spentAmount: demo.spend, ctr: demo.ctr, cpc, cpm,
+      updatedAt: new Date(),
+    }).where(eq(adCampaigns.id, campaign.id)).returning();
+    if (!updated) throw new Error(`Could not refresh ${demo.name}`);
+    campaign = updated;
   }
   const adSetPlatformId = `${demo.id}_adset`;
   let adSet = await db.query.adSets.findFirst({ where: and(eq(adSets.companyId, companyId), eq(adSets.campaignId, campaign.id), eq(adSets.platformAdSetId, adSetPlatformId)) });
   if (!adSet) {
-    const [created] = await db.insert(adSets).values({ companyId, campaignId: campaign.id, platformAdSetId: adSetPlatformId, sourceAccountId, name: '[DEV DEMO] Parents in Ho Chi Minh City', status: 'active', dailyBudget: demo.budget, impressions: demo.impressions, clicks: demo.clicks, conversions: 7, spentAmount: demo.spend }).returning();
+    const [created] = await db.insert(adSets).values({ companyId, campaignId: campaign.id, platformAdSetId: adSetPlatformId, sourceAccountId, name: '[DEV DEMO] Parents in Ho Chi Minh City', status: 'active', dailyBudget: demo.budget, impressions: demo.impressions, clicks: demo.clicks, conversions: demo.conversions, spentAmount: demo.spend }).returning();
     if (!created) throw new Error(`Could not create Ad Set for ${demo.name}`);
     adSet = created;
+  } else {
+    const [updated] = await db.update(adSets).set({
+      sourceAccountId, dailyBudget: demo.budget, impressions: demo.impressions, clicks: demo.clicks,
+      conversions: demo.conversions, spentAmount: demo.spend, updatedAt: new Date(),
+    }).where(eq(adSets.id, adSet.id)).returning();
+    if (!updated) throw new Error(`Could not refresh Ad Set for ${demo.name}`);
+    adSet = updated;
   }
   if (demo.createCreative !== false) {
     const adPlatformId = `${demo.id}_ad`;
     const existingAd = await db.query.ads.findFirst({ where: and(eq(ads.companyId, companyId), eq(ads.campaignId, campaign.id), eq(ads.platformAdId, adPlatformId)) });
-    if (!existingAd) await db.insert(ads).values({ companyId, campaignId: campaign.id, adSetId: adSet.id, platformAdId: adPlatformId, platformCreativeId: `${demo.id}_creative`, sourceAccountId, name: '[DEV DEMO] Creative A', type: 'image', status: 'active', headline: demo.headline, primaryText: 'A local development fixture. It never reaches Meta.', callToAction: 'Learn More', impressions: demo.impressions, clicks: demo.clicks, conversions: 7, spentAmount: demo.spend, ctr: demo.ctr });
+    if (!existingAd) {
+      await db.insert(ads).values({ companyId, campaignId: campaign.id, adSetId: adSet.id, platformAdId: adPlatformId, platformCreativeId: `${demo.id}_creative`, sourceAccountId, name: '[DEV DEMO] Creative A', type: 'image', status: 'active', headline: demo.headline, primaryText: 'A local development fixture. It never reaches Meta.', callToAction: 'Learn More', impressions: demo.impressions, clicks: demo.clicks, conversions: demo.conversions, spentAmount: demo.spend, ctr: demo.ctr });
+    } else {
+      await db.update(ads).set({
+        adSetId: adSet.id, sourceAccountId, headline: demo.headline, impressions: demo.impressions,
+        clicks: demo.clicks, conversions: demo.conversions, spentAmount: demo.spend, ctr: demo.ctr,
+        updatedAt: new Date(),
+      }).where(eq(ads.id, existingAd.id));
+    }
   }
   seeded.push({ campaignId: campaign.id, name: demo.name, url: `/${companyId}/campaigns/facebook-ads/${campaign.id}` });
 }

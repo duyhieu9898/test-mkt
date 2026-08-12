@@ -15,9 +15,15 @@ export class MetaAdsRecommendationNotFoundError extends Error {
 export function selectPrimaryFindingForAction(findings: AdsFinding[], actionType: MetaAdsBrief['actionType']): AdsFinding | undefined {
   if (actionType === 'review_budget') return findings.find((finding) => finding.kind === 'budget_increase');
   if (actionType === 'creative_test') return findings.find((finding) => finding.kind === 'ctr_decline');
+  const priority: Record<AdsFinding['kind'], number> = {
+    primary_result_decline: 4,
+    cost_per_result_increase: 3,
+    ctr_decline: 2,
+    budget_increase: 1,
+  };
   return [...findings].sort((a, b) => {
     const severity = { high: 2, medium: 1 };
-    return severity[b.severity] - severity[a.severity];
+    return severity[b.severity] - severity[a.severity] || priority[b.kind] - priority[a.kind];
   })[0];
 }
 

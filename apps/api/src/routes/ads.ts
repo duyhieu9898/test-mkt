@@ -115,7 +115,7 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
     timezone: connection.platformAccountTimezone,
     lastSyncedAt: connection.lastUsedAt,
     lastError: connection.lastError,
-  } : null, campaigns: [], developmentFixtures: [], totals: { spend: 0, impressions: 0, clicks: 0, conversions: 0, costPerConversion: null }, performanceDatePreset: connection?.metaAdsPerformanceDatePreset || 'last_30d', pagination: { page, pageSize: FACEBOOK_CAMPAIGNS_PAGE_SIZE, total: 0, totalPages: 0 } } });
+  } : null, campaigns: [], developmentFixtures: [], totals: { spend: 0, impressions: 0, clicks: 0, needsReview: 0 }, performanceDatePreset: connection?.metaAdsPerformanceDatePreset || 'last_30d', pagination: { page, pageSize: FACEBOOK_CAMPAIGNS_PAGE_SIZE, total: 0, totalPages: 0 } } });
   
   const accountId = connection.platformAccountId.replace(/^act_/, '');
   const importedCampaigns = await db.query.adCampaigns.findMany({
@@ -154,11 +154,17 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
 
   const campaigns = rawCampaigns.map((campaign) => {
     const analysisStatus = analysisMap.get(campaign.id) || 'not_analyzed';
-    const costPerConversion = calculateCostPerConversion(campaign.spentAmount, campaign.conversions);
+    const metadata = campaign.targetAudience as { metaMeasurement?: { resultType?: string; isSupported?: boolean }; lastPrimaryResult?: { count?: number | null } } | null;
+    const primaryResult = metadata?.metaMeasurement;
+    const resultLabel = primaryResult?.isSupported ? primaryResult.resultType?.replaceAll('_', ' ') : 'not available';
+    const resultCount = metadata?.lastPrimaryResult?.count;
+    const costPerResult = primaryResult?.isSupported && resultCount != null && resultCount > 0
+      ? Number(campaign.spentAmount || 0) / resultCount : null;
     return {
       ...campaign,
       analysisStatus,
-      costPerConversion,
+      primaryResult: { type: primaryResult?.resultType || 'unknown', isSupported: Boolean(primaryResult?.isSupported), label: resultLabel },
+      costPerResult,
     };
   });
 
@@ -166,12 +172,11 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
     spend: result.spend + Number(campaign.spentAmount || 0),
     impressions: result.impressions + campaign.impressions,
     clicks: result.clicks + campaign.clicks,
-    conversions: result.conversions + campaign.conversions,
-  }), { spend: 0, impressions: 0, clicks: 0, conversions: 0 });
+  }), { spend: 0, impressions: 0, clicks: 0 });
 
   const totals = {
     ...totalsRaw,
-    costPerConversion: calculateAggregateCpa(totalsRaw.spend, totalsRaw.conversions),
+    needsReview: [...analysisMap.values()].filter((status) => status === 'needs_review').length,
   };
 
   return c.json({

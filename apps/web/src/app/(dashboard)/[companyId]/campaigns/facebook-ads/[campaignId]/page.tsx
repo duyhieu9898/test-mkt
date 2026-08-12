@@ -82,6 +82,7 @@ type Campaign = {
   ctr: string | null;
   cpc: string | null;
   cpm: string | null;
+  targetAudience?: { lastPrimaryResult?: { type: string; count: number | null; isSupported: boolean } } | null;
 };
 type Detail = {
   campaign: Campaign;
@@ -428,6 +429,10 @@ function CampaignTabs({
   };
 
   const { campaign } = detail;
+  const primaryResult = campaign.targetAudience?.lastPrimaryResult;
+  const primaryResultLabel = primaryResult?.isSupported ? primaryResult.type.replaceAll('_', ' ') : 'Not available';
+  const primaryCost = primaryResult?.isSupported && primaryResult.count && primaryResult.count > 0
+    ? Number(campaign.spentAmount || 0) / primaryResult.count : null;
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
@@ -447,14 +452,11 @@ function CampaignTabs({
           <Metric icon={Eye} label="Impressions" value={campaign.impressions.toLocaleString()} />
           <Metric icon={Users} label="Reach" value={campaign.reach.toLocaleString()} />
           <Metric icon={Repeat} label="Frequency" value={Number(campaign.frequency || 0).toFixed(2)} />
-          <Metric icon={TrendingUp} label="Conversions" value={campaign.conversions.toLocaleString()} />
+          <Metric icon={TrendingUp} label={`Results: ${primaryResultLabel}`} value={primaryResult?.isSupported ? (primaryResult.count || 0).toLocaleString() : '—'} />
           <Metric
             icon={DollarSign}
-            label="Cost per tracked conversion"
-            value={formatMoney(
-              campaign.conversions ? (Number(campaign.spentAmount || 0) / campaign.conversions).toString() : null,
-              detail.currency
-            )}
+            label={`Cost / ${primaryResultLabel}`}
+            value={formatMoney(primaryCost?.toString() || null, detail.currency)}
           />
           <Metric icon={MousePointer} label="Clicks" value={campaign.clicks.toLocaleString()} />
           <Metric icon={Percent} label="CTR" value={`${Number(campaign.ctr || 0).toFixed(2)}%`} />

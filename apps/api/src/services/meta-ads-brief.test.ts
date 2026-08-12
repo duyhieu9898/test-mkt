@@ -101,12 +101,12 @@ describe('Meta Ads brief contract', () => {
       .toContain('review_delivery must cite negative-finding evidence.');
   });
 
-  it('accepts a related evidence ID as a known source when it supports the action', () => {
+  it('accepts related evidence as known context but not as primary action permission', () => {
     const withRelated = { ...ctrDeclineFinding, relatedEvidence: [{ ...finding.evidence, id: 'related-ctr-evidence' }] };
     const context = buildMetaAdsBriefValidationContext({ findings: [withRelated], brandContext: '', campaignContext });
     expect(validateMetaAdsBrief(brief({
       actionType: 'creative_test', creativeTest: { sourceCreativeId: 'creative-1', type: 'message_variant' },
       grounding: { actionSourceIds: ['related-ctr-evidence'] },
-    }), [withRelated], context)).toEqual([]);
+    }), [withRelated], context)).toContain('creative_test must cite CTR-decline evidence.');
   });
 });

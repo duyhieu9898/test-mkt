@@ -98,17 +98,18 @@ export function validateMetaAdsBrief(brief: MetaAdsBrief, findings: AdsFinding[]
   if (brief.grounding.actionSourceIds.length === 0 || brief.grounding.actionSourceIds.some((id) => !context.sourceIds.has(id))) {
     violations.push('The recommended action must cite known evidence, Brand IQ, or campaign context source IDs.');
   }
-  const evidenceIdsFor = (predicate: (finding: AdsFinding) => boolean) => new Set(
-    findings.filter(predicate).flatMap((finding) => [finding.evidence.id, ...(finding.relatedEvidence?.map((evidence) => evidence.id) || [])])
+  // Related evidence explains an event but cannot authorize an action.
+  const primaryEvidenceIdsFor = (predicate: (finding: AdsFinding) => boolean) => new Set(
+    findings.filter(predicate).map((finding) => finding.evidence.id)
   );
   const hasRelevantEvidence = (ids: Set<string>) => brief.grounding.actionSourceIds.some((id) => ids.has(id));
-  if (brief.actionType === 'creative_test' && !hasRelevantEvidence(evidenceIdsFor((finding) => finding.kind === 'ctr_decline'))) {
+  if (brief.actionType === 'creative_test' && !hasRelevantEvidence(primaryEvidenceIdsFor((finding) => finding.kind === 'ctr_decline'))) {
     violations.push('creative_test must cite CTR-decline evidence.');
   }
-  if (brief.actionType === 'review_budget' && !hasRelevantEvidence(evidenceIdsFor((finding) => finding.evidence.metric === 'daily_budget'))) {
+  if (brief.actionType === 'review_budget' && !hasRelevantEvidence(primaryEvidenceIdsFor((finding) => finding.evidence.metric === 'daily_budget'))) {
     violations.push('review_budget must cite daily-budget evidence.');
   }
-  if (brief.actionType === 'review_delivery' && !hasRelevantEvidence(evidenceIdsFor(() => true))) {
+  if (brief.actionType === 'review_delivery' && !hasRelevantEvidence(primaryEvidenceIdsFor(() => true))) {
     violations.push('review_delivery must cite negative-finding evidence.');
   }
   if (brief.creativeTest && !context.sourceIds.has(`creative:${brief.creativeTest.sourceCreativeId}`)) {

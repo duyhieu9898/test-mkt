@@ -39,7 +39,7 @@ describe('selectPrimaryFindingForAction', () => {
   it('binds the recommendation record to the evidence supporting its selected action', () => {
     expect(selectPrimaryFindingForAction(findings, 'review_budget')?.kind).toBe('budget_increase');
     expect(selectPrimaryFindingForAction(findings, 'creative_test')?.kind).toBe('ctr_decline');
-    expect(selectPrimaryFindingForAction(findings, 'review_delivery')?.kind).toBe('budget_increase');
+    expect(selectPrimaryFindingForAction(findings, 'review_delivery')?.kind).toBe('cost_per_result_increase');
   });
 });
 
