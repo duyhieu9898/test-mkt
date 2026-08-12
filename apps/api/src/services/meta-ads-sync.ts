@@ -3,6 +3,7 @@ import { adCampaigns, adConnections, adSets, ads } from '@1person/core/db';
 import { db } from '../lib/db';
 import { decryptMaybe } from '../lib/crypto';
 import { toMetaAdsUserError } from './meta-ads-errors';
+import { extractMetaPrimaryResult, type MetaAction } from './meta-ads-results';
 
 const META_API_VERSION = 'v18.0';
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -61,7 +62,7 @@ type MetaInsight = {
   reach?: string;
   frequency?: string;
   spend?: string;
-  actions?: Array<{ action_type?: string; value?: string }>;
+  actions?: MetaAction[];
 };
 
 type MetaPage<T> = { data?: T[]; paging?: { next?: string } };
@@ -134,16 +135,6 @@ function mapAdType(
   if (type.includes('COLLECTION')) return 'collection';
   return 'image';
 }
-function conversionCount(actions: MetaInsight['actions']) {
-  return (actions || [])
-    .filter((action) =>
-      ['purchase', 'lead', 'complete_registration', 'offsite_conversion'].includes(
-        action.action_type || ''
-      )
-    )
-    .reduce((total, action) => total + toNumber(action.value), 0);
-}
-
 function accountDate(timezone: string) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
@@ -325,6 +316,9 @@ export async function syncMetaAds(
     const campaignInsightsById = new Map(
       campaignInsights.filter((row) => row.campaign_id).map((row) => [row.campaign_id!, row])
     );
+    const objectiveByCampaignId = new Map(
+      remoteCampaigns.map((campaign) => [campaign.id, mapObjective(campaign.objective)])
+    );
     const adSetInsightsById = new Map(
       adSetInsights.filter((row) => row.adset_id).map((row) => [row.adset_id!, row])
     );
@@ -357,12 +351,14 @@ export async function syncMetaAds(
         const impressions = Math.round(toNumber(insight?.impressions));
         const clicks = Math.round(toNumber(insight?.clicks));
         const spend = toNumber(insight?.spend);
+        const objective = mapObjective(remote.objective);
+        const primaryResult = extractMetaPrimaryResult({ objective, actions: insight?.actions });
         const values = {
           name: remote.name || remote.id,
           platform: 'facebook' as const,
           sourceAccountId: accountId,
           origin: 'meta_synced_readonly' as const,
-          objective: mapObjective(remote.objective),
+          objective,
           status: mapMetaAdsStatus(remote.status),
           effectiveStatus: remote.effective_status || remote.status || null,
           dailyBudget: remote.daily_budget ? (toNumber(remote.daily_budget) / 100).toFixed(2) : null,
@@ -374,7 +370,8 @@ export async function syncMetaAds(
           impressions,
           clicks,
           reach: Math.round(toNumber(insight?.reach)),
-          conversions: Math.round(conversionCount(insight?.actions)),
+          // Legacy/UI field only. Diagnosis reads the objective-aware result snapshots instead.
+          conversions: Math.round(primaryResult.count || 0),
           spentAmount: spend.toFixed(2),
           ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
           cpc: clicks ? (spend / clicks).toFixed(2) : '0',
@@ -422,6 +419,10 @@ export async function syncMetaAds(
         const impressions = Math.round(toNumber(insight?.impressions));
         const clicks = Math.round(toNumber(insight?.clicks));
         const spend = toNumber(insight?.spend);
+        const primaryResult = extractMetaPrimaryResult({
+          objective: remote.campaign_id ? objectiveByCampaignId.get(remote.campaign_id) : undefined,
+          actions: insight?.actions,
+        });
         const values = {
           campaignId,
           companyId,
@@ -436,7 +437,7 @@ export async function syncMetaAds(
           impressions,
           clicks,
           reach: Math.round(toNumber(insight?.reach)),
-          conversions: Math.round(conversionCount(insight?.actions)),
+          conversions: Math.round(primaryResult.count || 0),
           spentAmount: spend.toFixed(2),
           ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
           cpc: clicks ? (spend / clicks).toFixed(2) : '0',
@@ -480,6 +481,10 @@ export async function syncMetaAds(
         const clicks = Math.round(toNumber(insight?.clicks));
         const creative = remote.creative;
         const linkData = creative?.object_story_spec?.link_data;
+        const primaryResult = extractMetaPrimaryResult({
+          objective: remote.campaign_id ? objectiveByCampaignId.get(remote.campaign_id) : undefined,
+          actions: insight?.actions,
+        });
         const values = {
           adSetId,
           campaignId,
@@ -499,7 +504,7 @@ export async function syncMetaAds(
           impressions,
           clicks,
           reach: Math.round(toNumber(insight?.reach)),
-          conversions: Math.round(conversionCount(insight?.actions)),
+          conversions: Math.round(primaryResult.count || 0),
           spentAmount: toNumber(insight?.spend).toFixed(2),
           ctr: impressions ? ((clicks / impressions) * 100).toFixed(2) : '0',
           cpc: clicks ? (toNumber(insight?.spend) / clicks).toFixed(2) : '0',

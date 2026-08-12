@@ -1,12 +1,17 @@
-export type MetaMetricName = 'spend' | 'impressions' | 'clicks' | 'ctr' | 'conversions';
+import { calculateCostPerPrimaryResult, type PrimaryResult } from './meta-ads-results';
+
+export type MetaMetricName = 'spend' | 'impressions' | 'clicks' | 'ctr' | 'conversions' | 'cost_per_result';
 
 export type MetricSnapshot = {
   spend: number;
   impressions: number;
   clicks: number;
-  conversions: number;
+  /** Retained for legacy dashboard metrics; diagnosis uses primaryResult only. */
+  conversions?: number;
   /** Percentage, for example 1.25 means 1.25%. */
   ctr: number;
+  primaryResult: PrimaryResult;
+  costPerResult: number | null;
   dailyBudget?: number | null;
 };
 
@@ -29,7 +34,7 @@ export type AdsEvidence = {
 };
 
 export type AdsFinding = {
-  kind: 'spend_increase' | 'budget_increase' | 'ctr_decline';
+  kind: 'budget_increase' | 'ctr_decline' | 'cost_per_result_increase';
   severity: 'high' | 'medium';
   evidence: AdsEvidence;
   /** Supporting facts caused by the same event; not a separate alert. */
@@ -38,7 +43,17 @@ export type AdsFinding = {
   fact: string;
 };
 
+export type AdsObservation = {
+  kind: 'spend_increase';
+  evidence: AdsEvidence;
+  fact: string;
+};
+
+export type AdsEvidenceResult = { observations: AdsObservation[]; findings: AdsFinding[] };
+
 export const MIN_IMPRESSIONS_FOR_ANALYSIS = 1_000;
+export const MIN_BASELINE_CLICKS_FOR_CTR = 30;
+export const MIN_RESULTS_FOR_EFFICIENCY = 5;
 
 type FindingInput = {
   target: AdsEvidence['target'];
@@ -80,12 +95,13 @@ function metricEvidence(input: FindingInput, metric: AdsEvidence['metric'], base
  * conservative: an LLM never invents a trend when the two supplied windows
  * don't support one.
  */
-export function detectAdsFindings(input: FindingInput): AdsFinding[] {
+export function detectAdsEvidence(input: FindingInput): AdsEvidenceResult {
   const findings: AdsFinding[] = [];
+  const observations: AdsObservation[] = [];
   const spend = metricEvidence(input, 'spend', input.baseline.spend, input.current.spend, 'Spend');
   // Without enough delivery, percentage movements are too volatile for an AI
   // recommendation. The UI presents this as INSUFFICIENT_DATA instead.
-  if (!spend.sufficientData) return findings;
+  if (!spend.sufficientData) return { observations, findings };
   let budgetFindingCreated = false;
   if (input.baseline.dailyBudget != null && input.current.dailyBudget != null) {
     const budget = metricEvidence(input, 'daily_budget', input.baseline.dailyBudget, input.current.dailyBudget, 'Daily budget');
@@ -102,14 +118,15 @@ export function detectAdsFindings(input: FindingInput): AdsFinding[] {
   }
 
   if (!budgetFindingCreated && spend.percentChange !== null && spend.percentChange >= 50) {
-    findings.push({
-      kind: 'spend_increase', severity: spend.percentChange >= 100 ? 'high' : 'medium', evidence: spend,
+    observations.push({
+      kind: 'spend_increase', evidence: spend,
       fact: `Spend increased by ${spend.percentChange.toFixed(1)}% between the selected windows.`,
     });
   }
 
   const ctr = metricEvidence(input, 'ctr', input.baseline.ctr, input.current.ctr, 'CTR');
-  if (ctr.percentChange !== null && ctr.percentChange <= -30 && ctr.sufficientData) {
+  if (ctr.percentChange !== null && ctr.percentChange <= -30 && ctr.sufficientData
+    && input.baseline.clicks >= MIN_BASELINE_CLICKS_FOR_CTR) {
     findings.push({
       kind: 'ctr_decline',
       severity: ctr.percentChange <= -50 ? 'high' : 'medium',
@@ -117,5 +134,32 @@ export function detectAdsFindings(input: FindingInput): AdsFinding[] {
       fact: `CTR decreased by ${Math.abs(ctr.percentChange).toFixed(1)}% between the selected windows.`,
     });
   }
-  return findings;
+
+  const baselineResult = input.baseline.primaryResult;
+  const currentResult = input.current.primaryResult;
+  const sameSupportedResult = baselineResult.isSupported && currentResult.isSupported
+    && baselineResult.type === currentResult.type;
+  const baselineCost = calculateCostPerPrimaryResult(input.baseline.spend, baselineResult.count);
+  const currentCost = calculateCostPerPrimaryResult(input.current.spend, currentResult.count);
+  if (sameSupportedResult
+    && (baselineResult.count || 0) >= MIN_RESULTS_FOR_EFFICIENCY
+    && (currentResult.count || 0) >= MIN_RESULTS_FOR_EFFICIENCY
+    && baselineCost !== null
+    && currentCost !== null) {
+    const costPerResult = metricEvidence(input, 'cost_per_result', baselineCost, currentCost, `Cost per ${baselineResult.type.replaceAll('_', ' ')}`);
+    if (costPerResult.percentChange !== null && costPerResult.percentChange >= 30) {
+      findings.push({
+        kind: 'cost_per_result_increase',
+        severity: costPerResult.percentChange >= 50 ? 'high' : 'medium',
+        evidence: costPerResult,
+        fact: `Cost per ${baselineResult.type.replaceAll('_', ' ')} increased by ${costPerResult.percentChange.toFixed(1)}% between the selected windows.`,
+      });
+    }
+  }
+  return { observations, findings };
+}
+
+/** Compatibility entry point for callers that need only negative findings. */
+export function detectAdsFindings(input: FindingInput): AdsFinding[] {
+  return detectAdsEvidence(input).findings;
 }

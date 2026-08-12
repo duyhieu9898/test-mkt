@@ -2,14 +2,15 @@ import { and, eq } from 'drizzle-orm';
 import { adCampaigns, adConnections, adSets, ads } from '@1person/core/db';
 import { db } from '../lib/db';
 import { decryptMaybe } from '../lib/crypto';
-import { detectAdsFindings, MIN_IMPRESSIONS_FOR_ANALYSIS, type EvidenceWindow, type MetricSnapshot } from './meta-ads-evidence';
+import { detectAdsEvidence, MIN_IMPRESSIONS_FOR_ANALYSIS, type EvidenceWindow, type MetricSnapshot } from './meta-ads-evidence';
+import { calculateCostPerPrimaryResult, extractMetaPrimaryResult, type MetaAction } from './meta-ads-results';
 import { fetchMetaAdsPages } from './meta-ads-sync';
 
 type MetaInsight = {
   impressions?: string;
   clicks?: string;
   spend?: string;
-  actions?: Array<{ action_type?: string; value?: string }>;
+  actions?: MetaAction[];
 };
 
 export type MetaAnalysisWindows = {
@@ -33,30 +34,33 @@ export function isDevelopmentMetaAdsFixture(platformCampaignId: string | null | 
 }
 
 type DemoScenario = { baseline: MetricSnapshot; current: MetricSnapshot };
+const result = (type: MetricSnapshot['primaryResult']['type'], count: number | null, isSupported = true) => ({
+  type, count, isSupported, sourceActionTypes: isSupported && type !== 'unknown' ? [type] : [],
+} as MetricSnapshot['primaryResult']);
 const DEV_DEMO_SCENARIOS: Record<string, DemoScenario> = {
   [DEV_DEMO_META_CAMPAIGN_IDS.budgetAndCtr]: {
-    baseline: { spend: 100, impressions: 12_000, clicks: 180, conversions: 12, ctr: 1.5, dailyBudget: 100 },
-    current: { spend: 300, impressions: 13_000, clicks: 104, conversions: 7, ctr: 0.8, dailyBudget: 300 },
+    baseline: { spend: 100, impressions: 12_000, clicks: 180, conversions: 12, ctr: 1.5, primaryResult: result('lead', 12), costPerResult: 8.33, dailyBudget: 100 },
+    current: { spend: 300, impressions: 13_000, clicks: 104, conversions: 7, ctr: 0.8, primaryResult: result('lead', 7), costPerResult: 42.86, dailyBudget: 300 },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.ctrOnly]: {
-    baseline: { spend: 150, impressions: 12_000, clicks: 240, conversions: 14, ctr: 2, dailyBudget: 150 },
-    current: { spend: 155, impressions: 12_500, clicks: 125, conversions: 11, ctr: 1, dailyBudget: 150 },
+    baseline: { spend: 150, impressions: 12_000, clicks: 240, conversions: 14, ctr: 2, primaryResult: result('lead', 14), costPerResult: 10.71, dailyBudget: 150 },
+    current: { spend: 155, impressions: 12_500, clicks: 125, conversions: 11, ctr: 1, primaryResult: result('lead', 11), costPerResult: 14.09, dailyBudget: 150 },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.spendOnly]: {
-    baseline: { spend: 100, impressions: 10_000, clicks: 150, conversions: 10, ctr: 1.5, dailyBudget: null },
-    current: { spend: 200, impressions: 11_000, clicks: 165, conversions: 11, ctr: 1.5, dailyBudget: null },
+    baseline: { spend: 100, impressions: 10_000, clicks: 150, conversions: 10, ctr: 1.5, primaryResult: result('unknown', null, false), costPerResult: null, dailyBudget: null },
+    current: { spend: 200, impressions: 11_000, clicks: 165, conversions: 11, ctr: 1.5, primaryResult: result('unknown', null, false), costPerResult: null, dailyBudget: null },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.stable]: {
-    baseline: { spend: 150, impressions: 12_000, clicks: 180, conversions: 12, ctr: 1.5, dailyBudget: 150 },
-    current: { spend: 152, impressions: 12_100, clicks: 182, conversions: 12, ctr: 1.5, dailyBudget: 150 },
+    baseline: { spend: 150, impressions: 12_000, clicks: 180, conversions: 12, ctr: 1.5, primaryResult: result('lead', 12), costPerResult: 12.5, dailyBudget: 150 },
+    current: { spend: 152, impressions: 12_100, clicks: 182, conversions: 12, ctr: 1.5, primaryResult: result('lead', 12), costPerResult: 12.67, dailyBudget: 150 },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.ctrNoCreative]: {
-    baseline: { spend: 150, impressions: 12_000, clicks: 240, conversions: 14, ctr: 2, dailyBudget: 150 },
-    current: { spend: 155, impressions: 12_500, clicks: 125, conversions: 11, ctr: 1, dailyBudget: 150 },
+    baseline: { spend: 150, impressions: 12_000, clicks: 240, conversions: 14, ctr: 2, primaryResult: result('lead', 14), costPerResult: 10.71, dailyBudget: 150 },
+    current: { spend: 155, impressions: 12_500, clicks: 125, conversions: 11, ctr: 1, primaryResult: result('lead', 11), costPerResult: 14.09, dailyBudget: 150 },
   },
   [DEV_DEMO_META_CAMPAIGN_IDS.insufficient]: {
-    baseline: { spend: 10, impressions: 80, clicks: 4, conversions: 0, ctr: 5, dailyBudget: 100 },
-    current: { spend: 30, impressions: 90, clicks: 1, conversions: 0, ctr: 1.1, dailyBudget: 300 },
+    baseline: { spend: 10, impressions: 80, clicks: 4, conversions: 0, ctr: 5, primaryResult: result('lead', 0), costPerResult: null, dailyBudget: 100 },
+    current: { spend: 30, impressions: 90, clicks: 1, conversions: 0, ctr: 1.1, primaryResult: result('lead', 0), costPerResult: null, dailyBudget: 300 },
   },
 };
 
@@ -92,21 +96,19 @@ function toNumber(value: string | undefined) {
   return Number(value || 0) || 0;
 }
 
-function conversions(actions: MetaInsight['actions']) {
-  return (actions || [])
-    .filter((action) => ['purchase', 'lead', 'complete_registration', 'offsite_conversion'].includes(action.action_type || ''))
-    .reduce((total, action) => total + toNumber(action.value), 0);
-}
-
-function snapshot(row: MetaInsight | undefined): MetricSnapshot {
+function snapshot(row: MetaInsight | undefined, objective: string): MetricSnapshot {
   const impressions = toNumber(row?.impressions);
   const clicks = toNumber(row?.clicks);
+  const spend = toNumber(row?.spend);
+  const primaryResult = extractMetaPrimaryResult({ objective, actions: row?.actions });
   return {
-    spend: toNumber(row?.spend),
+    spend,
     impressions,
     clicks,
-    conversions: conversions(row?.actions),
+    conversions: primaryResult.count || 0,
     ctr: impressions ? (clicks / impressions) * 100 : 0,
+    primaryResult,
+    costPerResult: calculateCostPerPrimaryResult(spend, primaryResult.count),
     // Meta Insights returns performance, not historical budget configuration.
     // Do not infer a past budget from spend.
     dailyBudget: null,
@@ -194,12 +196,12 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
       fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.baseline), token),
       fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.current), token),
     ]);
-    baseline = snapshot(baselineRows[0]);
-    current = snapshot(currentRows[0]);
+    baseline = snapshot(baselineRows[0], campaign.objective);
+    current = snapshot(currentRows[0], campaign.objective);
   }
 
   const isInsufficientData = !hasSufficientDelivery(baseline) || !hasSufficientDelivery(current);
-  const findings = detectAdsFindings({
+  const evidence = detectAdsEvidence({
     target: 'campaign',
     targetId: campaign.id,
     baseline,
@@ -209,6 +211,8 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
     ...(isDevelopmentFixture ? { source: 'development_fixture' } : {}),
   });
 
+  const findings = evidence.findings;
+  const observations = evidence.observations;
   const status: AnalysisStatus = isInsufficientData
     ? 'insufficient_data'
     : findings.length > 0
@@ -225,7 +229,7 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
     baselineWindow: windows.baseline as Record<string, unknown>,
     currentWindow: windows.current as Record<string, unknown>,
     baselineSnapshot: baseline as Record<string, unknown>,
-    currentSnapshot: current as Record<string, unknown>,
+    currentSnapshot: { ...current, observations } as Record<string, unknown>,
     findings: findings as Record<string, unknown>[],
     analysisVersion: 'meta-ads-v1',
     analyzedAt: new Date(),
@@ -241,6 +245,7 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
     status,
     isDevelopmentFixture,
     isInsufficientData,
+    observations,
     findings,
   };
 }
@@ -273,4 +278,3 @@ export function deriveAnalysisStatus(args: {
   if (args.hasNegativeFindings) return 'needs_review';
   return 'no_issues_detected';
 }
-

@@ -20,7 +20,28 @@ vi.mock('../lib/db', () => ({
   },
 }));
 
-import { setMetaAdsRecommendationStatus } from './meta-ads-recommendations';
+import { selectPrimaryFindingForAction, setMetaAdsRecommendationStatus } from './meta-ads-recommendations';
+import type { AdsFinding } from './meta-ads-evidence';
+
+const evidence = (id: string, metric: AdsFinding['evidence']['metric']) => ({
+  id, target: 'campaign' as const, targetId: 'campaign-1', metric, baseline: 1, current: 2, delta: 1,
+  percentChange: 100, baselineWindow: { start: '2026-01-01', end: '2026-01-07', timezone: 'UTC' },
+  currentWindow: { start: '2026-01-08', end: '2026-01-14', timezone: 'UTC' }, source: 'meta_insights' as const,
+  sufficientData: true, label: metric,
+});
+const findings: AdsFinding[] = [
+  { kind: 'budget_increase', severity: 'high', fact: 'Budget increased.', evidence: evidence('budget', 'daily_budget') },
+  { kind: 'ctr_decline', severity: 'medium', fact: 'CTR declined.', evidence: evidence('ctr', 'ctr') },
+  { kind: 'cost_per_result_increase', severity: 'high', fact: 'Cost per lead increased.', evidence: evidence('cpr', 'cost_per_result') },
+];
+
+describe('selectPrimaryFindingForAction', () => {
+  it('binds the recommendation record to the evidence supporting its selected action', () => {
+    expect(selectPrimaryFindingForAction(findings, 'review_budget')?.kind).toBe('budget_increase');
+    expect(selectPrimaryFindingForAction(findings, 'creative_test')?.kind).toBe('ctr_decline');
+    expect(selectPrimaryFindingForAction(findings, 'review_delivery')?.kind).toBe('budget_increase');
+  });
+});
 
 describe('setMetaAdsRecommendationStatus', () => {
   beforeEach(() => vi.clearAllMocks());

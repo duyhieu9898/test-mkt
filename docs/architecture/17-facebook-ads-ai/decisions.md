@@ -32,6 +32,10 @@ needs a matching regression test or manual fixture in `testing-and-fixtures`.
 | D25 | Sync-based NULL-row reconciliation for legacy provenance. | Definitive legacy provenance is assigned only when Graph API confirms remote object membership during sync. Migrations do not guess ambiguous provenance. NULL-provenance rows remain hidden until reconciled. |
 | D26 | Account-scoped recommendation status disposition. | PATCH recommendation status validates campaign ownership against selected account (`sourceAccountId`); cross-account recommendation writes fail closed (404). |
 | D27 | Scoped AdSet and Ad reconciliation to candidate Meta campaigns. | Meta sync may reconcile/archive AdSets and Ads only inside candidate Meta campaign hierarchy (`inArray(campaignId, candidateCampaignIds)`). Meta sync never fetches, touches, or archives non-Meta or cross-platform ad sets/ads. |
+| D28 | Primary result evidence is objective-aware. | Only explicit objective/action mappings may supply a result KPI. Unknown or ambiguous action semantics fail closed. |
+| D29 | Observations are not negative findings. | A spend increase is retained as an observation but never alone changes analysis status to `needs_review`. |
+| D30 | Metric-specific sufficiency complements delivery sufficiency. | CTR needs at least 30 baseline clicks; cost-per-result needs at least 5 results in both windows, in addition to the 1,000-impression gate. |
+| D31 | Recommendations bind to action-relevant evidence. | The persisted type/problem is selected deterministically for the chosen action, and grounding must cite evidence that permits that action. |
 
 ## Change protocol
 

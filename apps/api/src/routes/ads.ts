@@ -300,6 +300,9 @@ adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId', async (c) =>
         analysisId: latestAnalysis.id,
         status: latestAnalysis.status,
         findings: latestAnalysis.findings,
+        observations: Array.isArray((latestAnalysis.currentSnapshot as { observations?: unknown })?.observations)
+          ? (latestAnalysis.currentSnapshot as { observations: unknown[] }).observations
+          : [],
         baselineSnapshot: latestAnalysis.baselineSnapshot,
         currentSnapshot: latestAnalysis.currentSnapshot,
         analyzedAt: latestAnalysis.analyzedAt.toISOString(),

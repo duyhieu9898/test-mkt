@@ -3,11 +3,22 @@ import { adCampaigns, adRecommendations, type AdRecommendationStatus } from '@1p
 import { db } from '../lib/db';
 import type { analyzeMetaCampaign } from './meta-ads-analysis';
 import type { MetaAdsBrief } from './meta-ads-brief';
+import type { AdsFinding } from './meta-ads-evidence';
 
 type MetaCampaignAnalysis = Awaited<ReturnType<typeof analyzeMetaCampaign>>;
 
 export class MetaAdsRecommendationNotFoundError extends Error {
   constructor() { super('Recommendation not found'); }
+}
+
+/** Selects the evidence that actually permits the selected bounded action. */
+export function selectPrimaryFindingForAction(findings: AdsFinding[], actionType: MetaAdsBrief['actionType']): AdsFinding | undefined {
+  if (actionType === 'review_budget') return findings.find((finding) => finding.kind === 'budget_increase');
+  if (actionType === 'creative_test') return findings.find((finding) => finding.kind === 'ctr_decline');
+  return [...findings].sort((a, b) => {
+    const severity = { high: 2, medium: 1 };
+    return severity[b.severity] - severity[a.severity];
+  })[0];
 }
 
 /** Persist only facts returned by the server-side analysis and its bounded brief. */
@@ -17,7 +28,7 @@ export async function createMetaAdsRecommendation(args: {
   analysis: MetaCampaignAnalysis;
   brief: MetaAdsBrief;
 }) {
-  const primaryFinding = args.analysis.findings[0];
+  const primaryFinding = selectPrimaryFindingForAction(args.analysis.findings, args.brief.actionType);
   if (!primaryFinding) throw new Error('A recommendation requires at least one evidence-backed finding');
   const existing = await db.query.adRecommendations.findFirst({
     where: and(eq(adRecommendations.companyId, args.companyId), eq(adRecommendations.campaignId, args.campaignId), eq(adRecommendations.status, 'recommended')),
@@ -151,4 +162,3 @@ export async function setMetaAdsRecommendationStatus(companyId: string, recommen
   if (!recommendation) throw new MetaAdsRecommendationNotFoundError();
   return recommendation;
 }
-

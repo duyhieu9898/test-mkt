@@ -8,9 +8,9 @@ import type { MetaAdsBrief, MetaAdsBriefContext } from './meta-ads-brief';
 import type { AdsFinding } from './meta-ads-evidence';
 
 const finding: AdsFinding = {
-  kind: 'spend_increase', severity: 'high', fact: 'Spend increased by 200.0% between the selected windows.',
+  kind: 'cost_per_result_increase', severity: 'high', fact: 'Cost per lead increased by 200.0% between the selected windows.',
   evidence: {
-    id: 'evidence-1', target: 'campaign', targetId: 'campaign-1', metric: 'spend', baseline: 100, current: 300,
+    id: 'evidence-1', target: 'campaign', targetId: 'campaign-1', metric: 'cost_per_result', baseline: 10, current: 30,
     delta: 200, percentChange: 200, baselineWindow: { start: '2026-06-01', end: '2026-06-07', timezone: 'Asia/Ho_Chi_Minh' },
     currentWindow: { start: '2026-07-06', end: '2026-07-12', timezone: 'Asia/Ho_Chi_Minh' }, source: 'meta_insights', sufficientData: true, label: 'Spend',
   },
@@ -88,5 +88,25 @@ describe('Meta Ads brief contract', () => {
     }), [finding], context)).toEqual(expect.arrayContaining([
       'The recommended action must cite known evidence, Brand IQ, or campaign context source IDs.',
     ]));
+  });
+
+  it('requires action-relevant finding evidence rather than campaign context alone', () => {
+    const context = buildMetaAdsBriefValidationContext({ findings: [ctrDeclineFinding], brandContext: '', campaignContext });
+    expect(validateMetaAdsBrief(brief({
+      actionType: 'creative_test',
+      creativeTest: { sourceCreativeId: 'creative-1', type: 'message_variant' },
+      grounding: { actionSourceIds: ['campaign_context'] },
+    }), [ctrDeclineFinding], context)).toContain('creative_test must cite CTR-decline evidence.');
+    expect(validateMetaAdsBrief(brief({ grounding: { actionSourceIds: ['campaign_context'] } }), [finding], context))
+      .toContain('review_delivery must cite negative-finding evidence.');
+  });
+
+  it('accepts a related evidence ID as a known source when it supports the action', () => {
+    const withRelated = { ...ctrDeclineFinding, relatedEvidence: [{ ...finding.evidence, id: 'related-ctr-evidence' }] };
+    const context = buildMetaAdsBriefValidationContext({ findings: [withRelated], brandContext: '', campaignContext });
+    expect(validateMetaAdsBrief(brief({
+      actionType: 'creative_test', creativeTest: { sourceCreativeId: 'creative-1', type: 'message_variant' },
+      grounding: { actionSourceIds: ['related-ctr-evidence'] },
+    }), [withRelated], context)).toEqual([]);
   });
 });

@@ -94,6 +94,7 @@ type Detail = {
     analysisId: string;
     status: string;
     findings: Finding[];
+    observations?: Observation[];
     baselineSnapshot: Record<string, unknown>;
     currentSnapshot: Record<string, unknown>;
     analyzedAt: string;
@@ -128,6 +129,7 @@ type Finding = {
     percentChange: number | null;
   }>;
 };
+type Observation = Pick<Finding, 'kind' | 'fact' | 'evidence'>;
 type Brief = {
   possibleCause: string;
   recommendedAction: string;
@@ -149,6 +151,7 @@ type Recommendation = {
 type Analysis = {
   analysisId?: string;
   findings: Finding[];
+  observations?: Observation[];
   isDevelopmentFixture?: boolean;
   isInsufficientData?: boolean;
   brief?: Brief | null;
@@ -194,6 +197,7 @@ export default function FacebookAdsCampaignDetailPage() {
             : {
                 analysisId: la.analysisId,
                 findings: la.findings || [],
+                observations: la.observations || [],
                 isInsufficientData: la.status === 'insufficient_data',
                 isDevelopmentFixture: detailResult.data.isDevelopmentFixture,
                 brief: rec?.suggestedAction || null,
@@ -646,6 +650,16 @@ function AnalysisCard({
             Budget-change evidence is not available for live Meta analyses yet. Meta Insights reports
             performance for each window, but not the historical budget configuration needed to verify a
             budget change.
+          </div>
+        )}
+        {!!analysis.observations?.length && (
+          <div className="rounded-md border bg-muted/30 p-3 text-sm">
+            <p className="font-medium">Observations</p>
+            {analysis.observations.map((observation) => (
+              <p key={observation.evidence.id} className="mt-1 text-xs text-muted-foreground">
+                {observation.fact} This is recorded for context and does not by itself require review.
+              </p>
+            ))}
           </div>
         )}
         {analysis.isInsufficientData ? (

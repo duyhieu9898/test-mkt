@@ -4,6 +4,9 @@
 
 - Sync hierarchy is idempotent.
 - A budget raise is never inferred from spend alone.
+- Spend increases are observations; they do not alone create `needs_review`.
+- Primary-result efficiency is evaluated only for supported objective/action mappings with sufficient result volume.
+- CTR decline requires both the 1,000-impression delivery gate and at least 30 baseline clicks.
 - A budget/spend event is grouped, not duplicated.
 - Brief prompt carries evidence, Brand IQ, campaign/creative context, and does
   uses only evidence-allowed action types and synced creative IDs.
@@ -19,6 +22,9 @@
 | Budget ↑ + Spend ↑ + CTR ↓ | One budget finding, spend related impact, correlation-only possible cause. |
 | Budget stable + CTR ↓ | No budget/targeting claim; a creative test may be proposed as hypothesis. |
 | Spend ↑, no historical budget | Say spend increased only. |
+| Spend ↑ + stable cost/result | Observation only; no recommendation. |
+| Cost/result ↑ with supported result KPI | Delivery review only; do not infer targeting, bid, or budget cause. |
+| Unsupported or ambiguous result actions | No result-efficiency finding. |
 | Stable delivery | No finding or recommendation when delivery is meaningful but no threshold is crossed. |
 | CTR ↓, no synced creative | Do not offer a creative test; use delivery review only. |
 | Insufficient data | No forced recommendation. |
