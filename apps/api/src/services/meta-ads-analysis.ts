@@ -3,7 +3,7 @@ import { adCampaigns, adConnections, adSets, ads } from '@1person/core/db';
 import { db } from '../lib/db';
 import { decryptMaybe } from '../lib/crypto';
 import { detectAdsEvidence, MIN_IMPRESSIONS_FOR_ANALYSIS, type EvidenceWindow, type MetricSnapshot } from './meta-ads-evidence';
-import { calculateCostPerPrimaryResult, createCampaignMeasurementContext, extractMetaPrimaryResult, legacyConversionCount, type MetaAction, type MetaMeasurementContext } from './meta-ads-results';
+import { calculateCostPerPrimaryResult, createCampaignMeasurementContext, extractMetaPrimaryResult, isMeasurementRelevantAdSet, legacyConversionCount, type MetaAction, type MetaMeasurementContext } from './meta-ads-results';
 import { fetchMetaAdsPages } from './meta-ads-sync';
 
 type MetaInsight = {
@@ -209,13 +209,13 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
     const token = decryptMaybe(connection.accessToken);
     const campaignAdSets = await db.query.adSets.findMany({
       where: and(eq(adSets.companyId, companyId), eq(adSets.campaignId, campaign.id)),
-      columns: { targetAudience: true },
+      columns: { targetAudience: true, status: true },
     });
     const measurementContext = createCampaignMeasurementContext({
       campaignObjective: campaign.objective,
-      adSetOptimizationGoals: campaignAdSets.map((adSet) => {
-        const metadata = adSet.targetAudience as { metaOptimization?: { optimizationGoal?: string | null } } | null;
-        return metadata?.metaOptimization?.optimizationGoal ? [metadata.metaOptimization.optimizationGoal] : [];
+      adSets: campaignAdSets.filter((adSet) => isMeasurementRelevantAdSet(adSet.status)).map((adSet) => {
+        const metadata = adSet.targetAudience as { metaOptimization?: { optimizationGoal?: string | null; promotedObject?: Record<string, unknown> | null; billingEvent?: string | null; destinationType?: string | null } } | null;
+        return metadata?.metaOptimization || {};
       }),
     });
     const [baselineRows, currentRows] = await Promise.all([

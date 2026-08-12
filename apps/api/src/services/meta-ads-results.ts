@@ -17,6 +17,13 @@ export type MetaMeasurementContext = {
   reason?: string;
 };
 
+export type MetaAdSetMeasurementInput = {
+  optimizationGoal?: string | null;
+  promotedObject?: Record<string, unknown> | null;
+  billingEvent?: string | null;
+  destinationType?: string | null;
+};
+
 // Meta can report one event through several equivalent action names. They are
 // alternatives, never additive sources. First match wins, deterministically.
 export const ACTION_PRECEDENCE: Record<Exclude<PrimaryResultType, 'unknown'>, readonly string[]> = {
@@ -30,37 +37,50 @@ function normalizedGoals(goals: readonly string[] | null | undefined) {
   return [...new Set((goals || []).filter(Boolean).map((goal) => goal.toUpperCase()))];
 }
 
-function supportedType(objective: string | null | undefined, goals: string[]): PrimaryResultType {
-  const normalizedObjective = objective?.toLowerCase() || '';
-  const compatible = (needle: string) => goals.some((goal) => goal.includes(needle));
-  if (normalizedObjective === 'leads' && compatible('LEAD')) return 'lead';
-  if (normalizedObjective === 'sales' && compatible('PURCHASE')) return 'purchase';
-  if (normalizedObjective === 'traffic' && compatible('LINK_CLICK')) return 'link_click';
-  if (normalizedObjective === 'conversions' && compatible('COMPLETE_REGISTRATION')) return 'registration';
-  return 'unknown';
+function promotedEvent(promotedObject: Record<string, unknown> | null | undefined) {
+  const value = promotedObject?.custom_event_type;
+  return typeof value === 'string' ? value.toUpperCase() : undefined;
+}
+
+/** The only place Meta objective, optimization, and event semantics become a V1 result type. */
+export function derivePrimaryResultType(input: { campaignObjective: string | null | undefined } & MetaAdSetMeasurementInput): Pick<MetaMeasurementContext, 'resultType' | 'isSupported' | 'reason'> {
+  const normalizedObjective = input.campaignObjective?.toLowerCase() || '';
+  const optimizationGoal = input.optimizationGoal?.toUpperCase();
+  if (normalizedObjective === 'leads' && (optimizationGoal === 'LEAD_GENERATION' || optimizationGoal === 'QUALITY_LEAD')) return { resultType: 'lead', isSupported: true };
+  if (normalizedObjective === 'traffic' && optimizationGoal === 'LINK_CLICKS') return { resultType: 'link_click', isSupported: true };
+  if (normalizedObjective === 'traffic' && optimizationGoal === 'LANDING_PAGE_VIEWS') return { resultType: 'unknown', isSupported: false, reason: 'Landing-page-view optimization is not a supported V1 action result.' };
+  if (normalizedObjective === 'conversions' && optimizationGoal === 'COMPLETE_REGISTRATION') return { resultType: 'registration', isSupported: true };
+  if (normalizedObjective === 'sales' && optimizationGoal === 'PURCHASE') return { resultType: 'purchase', isSupported: true };
+  if (normalizedObjective === 'sales' && (optimizationGoal === 'OFFSITE_CONVERSIONS' || optimizationGoal === 'VALUE')) {
+    if (promotedEvent(input.promotedObject) === 'PURCHASE') return { resultType: 'purchase', isSupported: true };
+    return { resultType: 'unknown', isSupported: false, reason: 'Conversion/value optimization requires an unambiguous PURCHASE promoted-object event.' };
+  }
+  return { resultType: 'unknown', isSupported: false, reason: optimizationGoal ? 'Objective and optimization goal do not identify one supported result.' : 'No optimization goal is available for this live campaign.' };
 }
 
 /** Objective is necessary but a live KPI is supported only when its ad-set
  * optimization context agrees. This deliberately fails closed. */
-export function createMetaMeasurementContext(args: { campaignObjective: string | null | undefined; optimizationGoals?: readonly string[] | null; fixtureResultType?: PrimaryResultType }): MetaMeasurementContext {
-  const goals = normalizedGoals(args.optimizationGoals);
+export function createMetaMeasurementContext(args: { campaignObjective: string | null | undefined; optimizationGoals?: readonly string[] | null; fixtureResultType?: PrimaryResultType } & MetaAdSetMeasurementInput): MetaMeasurementContext {
+  const goals = normalizedGoals(args.optimizationGoals || (args.optimizationGoal ? [args.optimizationGoal] : []));
   if (args.fixtureResultType && args.fixtureResultType !== 'unknown') {
     return { campaignObjective: args.campaignObjective || null, optimizationGoals: goals, resultType: args.fixtureResultType, isSupported: true };
   }
-  const resultType = supportedType(args.campaignObjective, goals);
-  return resultType === 'unknown'
-    ? { campaignObjective: args.campaignObjective || null, optimizationGoals: goals, resultType, isSupported: false, reason: goals.length ? 'Objective and optimization goal do not identify one supported result.' : 'No optimization goal is available for this live campaign.' }
-    : { campaignObjective: args.campaignObjective || null, optimizationGoals: goals, resultType, isSupported: true };
+  const result = derivePrimaryResultType({ ...args, optimizationGoal: args.optimizationGoal || goals[0] });
+  return { campaignObjective: args.campaignObjective || null, optimizationGoals: goals, ...result };
 }
 
-export function createCampaignMeasurementContext(args: { campaignObjective: string | null | undefined; adSetOptimizationGoals: readonly (readonly string[] | null | undefined)[]; fixtureResultType?: PrimaryResultType }): MetaMeasurementContext {
+export function createCampaignMeasurementContext(args: { campaignObjective: string | null | undefined; adSets: readonly MetaAdSetMeasurementInput[]; fixtureResultType?: PrimaryResultType }): MetaMeasurementContext {
   if (args.fixtureResultType) return createMetaMeasurementContext({ campaignObjective: args.campaignObjective, fixtureResultType: args.fixtureResultType });
-  const contexts = args.adSetOptimizationGoals.map((goals) => createMetaMeasurementContext({ campaignObjective: args.campaignObjective, optimizationGoals: goals }));
+  const contexts = args.adSets.map((adSet) => createMetaMeasurementContext({ campaignObjective: args.campaignObjective, ...adSet }));
   if (contexts.length === 0) return createMetaMeasurementContext({ campaignObjective: args.campaignObjective });
   if (contexts.some((context) => !context.isSupported) || new Set(contexts.map((context) => context.resultType)).size !== 1) {
-    return { campaignObjective: args.campaignObjective || null, optimizationGoals: normalizedGoals(args.adSetOptimizationGoals.flatMap((goals) => goals || [])), resultType: 'unknown', isSupported: false, reason: 'Ad-set optimization goals are unsupported or ambiguous for one campaign result.' };
+    return { campaignObjective: args.campaignObjective || null, optimizationGoals: normalizedGoals(args.adSets.map((adSet) => adSet.optimizationGoal || '').filter(Boolean)), resultType: 'unknown', isSupported: false, reason: 'Ad-set optimization contexts are unsupported or ambiguous for one campaign result.' };
   }
   return contexts[0]!;
+}
+
+export function isMeasurementRelevantAdSet(status: string | null | undefined) {
+  return status?.toLowerCase() !== 'archived';
 }
 
 function actionCount(action: MetaAction) {

@@ -32,7 +32,7 @@
 | Unsupported result | Unknown or ambiguous KPI remains unavailable. |
 | Insufficient data | No forced recommendation. |
 
-All nine scenarios are seeded today under `[DEV DEMO]`. Add scenarios only with
+Nine development fixtures cover the behavioral scenarios above. Add scenarios only with
 a matching test; fixtures must be local-only and clearly labeled.
 
 ## Commands

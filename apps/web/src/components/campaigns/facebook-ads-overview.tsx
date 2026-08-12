@@ -46,7 +46,7 @@ type Campaign = {
   cpc: string | null;
   cpm: string | null;
   updatedAt: string;
-  primaryResult?: { type: string; isSupported: boolean; label?: string };
+  primaryResult?: { type: string; count: number | null; isSupported: boolean; label?: string };
   costPerResult?: number | null;
 };
 type PerformanceDatePreset =
@@ -534,8 +534,8 @@ function CampaignTable({
                 <td className="py-3">{money(Number(campaign.spentAmount || 0), currency)}</td>
                 <td className="py-3 font-medium">
                   {campaign.primaryResult?.isSupported
-                    ? <>{campaign.primaryResult.label}: {campaign.costPerResult != null ? money(campaign.costPerResult, currency) : '—'}</>
-                    : 'Not available'}
+                    ? <div><div className="capitalize">{campaign.primaryResult.label}: {(campaign.primaryResult.count || 0).toLocaleString()}</div><div className="text-xs font-normal text-muted-foreground">{campaign.costPerResult != null ? `${money(campaign.costPerResult, currency)} / ${campaign.primaryResult.label}` : 'No cost available'}</div></div>
+                    : <span title="Result semantics are not reliably available from the current Meta optimization setup.">Not available</span>}
                 </td>
                 <td className="py-3">{campaign.impressions.toLocaleString()}</td>
                 <td className="py-3">{campaign.reach.toLocaleString()}</td>

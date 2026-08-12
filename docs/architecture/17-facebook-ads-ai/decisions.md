@@ -20,7 +20,7 @@ needs a matching regression test or manual fixture in `testing-and-fixtures`.
 | D13 | A creative test needs CTR-decline evidence and a synced creative. | Spend change alone, or a campaign without synced creative context, may only lead to delivery review. |
 | D14 | Meaningful but stable delivery does not need a recommendation. | No finding means no brief; this is distinct from `INSUFFICIENT_DATA`. |
 | D15 | `AnalysisStatus` is decoupled from disposition status. | Precedence: `not_analyzed` → `insufficient_data` (<1k window impressions) → `needs_review` (findings > 0) → `no_issues_detected`. |
-| D16 | Cost per conversion uses strict math & weighted sum. | `conversions <= 0` returns `null` (`—`/`N/A`); aggregate CPA is `SUM(spend) / SUM(conversions)`. |
+| D16 | Cost-per-result math is strict and result-type scoped. | Result count `<= 0` returns `null`; cost/result is spend divided by a compatible result count, and heterogeneous results are never aggregated into one CPA. |
 | D17 | Campaign Detail uses client-side data fetching and state hydration. | API endpoints return hydrated hierarchy and latest analysis; client manages reactive tab and session state. |
 | D18 | OAuth state nonces are single-use and company-bound. | `oauth_states` table tracks `consumed_at` and `expires_at`; state nonces expire in 10m and cannot be reused. |
 | D19 | Strict read-only Meta guard at both provider and service layer. | Both `FacebookAdProvider` and `AdsEngine` throw `MetaAdsReadOnlyError` on paid ad mutations. |
@@ -32,7 +32,7 @@ needs a matching regression test or manual fixture in `testing-and-fixtures`.
 | D25 | Sync-based NULL-row reconciliation for legacy provenance. | Definitive legacy provenance is assigned only when Graph API confirms remote object membership during sync. Migrations do not guess ambiguous provenance. NULL-provenance rows remain hidden until reconciled. |
 | D26 | Account-scoped recommendation status disposition. | PATCH recommendation status validates campaign ownership against selected account (`sourceAccountId`); cross-account recommendation writes fail closed (404). |
 | D27 | Scoped AdSet and Ad reconciliation to candidate Meta campaigns. | Meta sync may reconcile/archive AdSets and Ads only inside candidate Meta campaign hierarchy (`inArray(campaignId, candidateCampaignIds)`). Meta sync never fetches, touches, or archives non-Meta or cross-platform ad sets/ads. |
-| D28 | Primary Result requires objective and optimization context. | A live KPI is supported only when campaign objective, ad-set optimization/performance goal, and action semantics identify one result. Objective alone does not prove KPI. |
+| D28 | Primary Result requires current objective, Ad Set, and event context. | A live KPI is supported only when campaign objective, measurement-relevant Ad Set optimization context, and promoted-object event semantics where needed identify one result. Objective alone does not prove KPI. |
 | D29 | Observations are not negative findings. | A spend increase is retained as an observation but never alone changes analysis status to `needs_review`. |
 | D30 | Metric-specific sufficiency complements delivery sufficiency. | CTR needs at least 30 baseline clicks; cost-per-result needs at least 5 results in both windows, in addition to the 1,000-impression gate. |
 | D31 | Recommendations bind to action-relevant evidence. | The persisted type/problem is selected deterministically for the chosen action, and grounding must cite evidence that permits that action. |

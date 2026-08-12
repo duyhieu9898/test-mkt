@@ -11,6 +11,7 @@ import { decryptMaybe } from '../lib/crypto';
 import { getFacebookAdAccounts } from '../services/platforms/providers/facebook';
 import { META_ADS_PERFORMANCE_DATE_PRESETS, syncMetaAds } from '../services/meta-ads-sync';
 import { analyzeMetaCampaign, isDevelopmentMetaAdsFixture, calculateCostPerConversion, calculateAggregateCpa, calculate7dAnalysisWindows, loadBriefContext } from '../services/meta-ads-analysis';
+import { countCampaignsNeedingReview, latestAnalysisStatusByCampaignId } from '../services/meta-ads-overview';
 import { generateMetaAdsBrief, MetaAdsBriefGenerationError } from '../services/meta-ads-brief';
 import { createMetaAdsRecommendation, listMetaAdsRecommendations, listCompanyMetaAdsRecommendations, MetaAdsRecommendationNotFoundError, setMetaAdsRecommendationStatus } from '../services/meta-ads-recommendations';
 import { MetaAdsReadOnlyError, toMetaAdsUserError } from '../services/meta-ads-errors';
@@ -134,22 +135,18 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
   const developmentFixtures = importedCampaigns.filter((campaign) =>
     isDevelopmentMetaAdsFixture(campaign.platformCampaignId)
   );
+  const liveCampaignIds = liveCampaigns.map((campaign) => campaign.id);
   const total = liveCampaigns.length;
   const totalPages = Math.ceil(total / FACEBOOK_CAMPAIGNS_PAGE_SIZE);
   const rawCampaigns = liveCampaigns.slice((page - 1) * FACEBOOK_CAMPAIGNS_PAGE_SIZE, page * FACEBOOK_CAMPAIGNS_PAGE_SIZE);
 
-  const campaignIds = rawCampaigns.map((c) => c.id);
-  const analysisMap = new Map<string, string>();
-  if (campaignIds.length > 0) {
+  let analysisMap = new Map<string, string>();
+  if (liveCampaignIds.length > 0) {
     const latestAnalyses = await db.query.adCampaignAnalyses.findMany({
-      where: and(eq(adCampaignAnalyses.companyId, companyId), inArray(adCampaignAnalyses.campaignId, campaignIds)),
+      where: and(eq(adCampaignAnalyses.companyId, companyId), inArray(adCampaignAnalyses.campaignId, liveCampaignIds)),
       orderBy: desc(adCampaignAnalyses.analyzedAt),
     });
-    for (const record of latestAnalyses) {
-      if (!analysisMap.has(record.campaignId)) {
-        analysisMap.set(record.campaignId, record.status);
-      }
-    }
+    analysisMap = latestAnalysisStatusByCampaignId(latestAnalyses);
   }
 
   const campaigns = rawCampaigns.map((campaign) => {
@@ -163,7 +160,7 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
     return {
       ...campaign,
       analysisStatus,
-      primaryResult: { type: primaryResult?.resultType || 'unknown', isSupported: Boolean(primaryResult?.isSupported), label: resultLabel },
+      primaryResult: { type: primaryResult?.resultType || 'unknown', count: resultCount ?? null, isSupported: Boolean(primaryResult?.isSupported), label: resultLabel },
       costPerResult,
     };
   });
@@ -176,7 +173,7 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
 
   const totals = {
     ...totalsRaw,
-    needsReview: [...analysisMap.values()].filter((status) => status === 'needs_review').length,
+    needsReview: countCampaignsNeedingReview(liveCampaignIds, analysisMap),
   };
 
   return c.json({

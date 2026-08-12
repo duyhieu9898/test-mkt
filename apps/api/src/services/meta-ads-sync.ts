@@ -3,7 +3,7 @@ import { adCampaigns, adConnections, adSets, ads } from '@1person/core/db';
 import { db } from '../lib/db';
 import { decryptMaybe } from '../lib/crypto';
 import { toMetaAdsUserError } from './meta-ads-errors';
-import { createCampaignMeasurementContext, createMetaMeasurementContext, extractMetaPrimaryResult, legacyConversionCount, type MetaAction, type MetaMeasurementContext } from './meta-ads-results';
+import { createCampaignMeasurementContext, createMetaMeasurementContext, extractMetaPrimaryResult, isMeasurementRelevantAdSet, legacyConversionCount, type MetaAction, type MetaMeasurementContext } from './meta-ads-results';
 
 const META_API_VERSION = 'v18.0';
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -326,8 +326,10 @@ export async function syncMetaAds(
     const measurementContextByCampaignId = new Map(
       remoteCampaigns.map((campaign) => {
         const objective = mapObjective(campaign.objective);
-        const goals = remoteAdSets.filter((adSet) => adSet.campaign_id === campaign.id).map((adSet) => adSet.optimization_goal ? [adSet.optimization_goal] : []);
-        return [campaign.id, createCampaignMeasurementContext({ campaignObjective: objective, adSetOptimizationGoals: goals })] as const;
+        const adSets = remoteAdSets
+          .filter((adSet) => adSet.campaign_id === campaign.id && isMeasurementRelevantAdSet(mapMetaAdSetStatus(adSet.status)))
+          .map((adSet) => ({ optimizationGoal: adSet.optimization_goal, promotedObject: adSet.promoted_object, billingEvent: adSet.billing_event, destinationType: adSet.destination_type }));
+        return [campaign.id, createCampaignMeasurementContext({ campaignObjective: objective, adSets })] as const;
       })
     );
     const adSetInsightsById = new Map(
@@ -434,7 +436,10 @@ export async function syncMetaAds(
         const spend = toNumber(insight?.spend);
         const measurementContext = createMetaMeasurementContext({
           campaignObjective: remote.campaign_id ? objectiveByCampaignId.get(remote.campaign_id) : undefined,
-          optimizationGoals: remote.optimization_goal ? [remote.optimization_goal] : [],
+          optimizationGoal: remote.optimization_goal,
+          promotedObject: remote.promoted_object,
+          billingEvent: remote.billing_event,
+          destinationType: remote.destination_type,
         });
         const primaryResult = extractMetaPrimaryResult({ context: measurementContext, actions: insight?.actions });
         const values = {
