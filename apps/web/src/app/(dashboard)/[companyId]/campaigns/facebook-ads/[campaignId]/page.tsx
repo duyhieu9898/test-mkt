@@ -89,6 +89,14 @@ type Detail = {
   ads: Ad[];
   currency: string;
   isDevelopmentFixture: boolean;
+  latestAnalysis?: {
+    analysisId: string;
+    status: string;
+    findings: Finding[];
+    baselineSnapshot: Record<string, unknown>;
+    currentSnapshot: Record<string, unknown>;
+    analyzedAt: string;
+  } | null;
 };
 type Finding = {
   kind: string;
@@ -169,6 +177,19 @@ export default function FacebookAdsCampaignDetailPage() {
           }),
       ]);
       setDetail(detailResult.data);
+      if (detailResult.data.latestAnalysis) {
+        const la = detailResult.data.latestAnalysis;
+        setAnalysis((current) =>
+          current
+            ? current
+            : {
+                analysisId: la.analysisId,
+                findings: la.findings || [],
+                isInsufficientData: la.status === 'insufficient_data',
+                isDevelopmentFixture: detailResult.data.isDevelopmentFixture,
+              }
+        );
+      }
       if (recommendationsResult) setRecommendations(recommendationsResult.data);
     } catch (error) {
       const msg = (error as Error).message || 'Could not load this campaign.';
@@ -755,7 +776,7 @@ function AdCard({
         <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
           <span>{formatMoney(ad.spentAmount, currency)} spent</span>
           <span>
-            Cost/Conv:{' '}
+            Cost per tracked conversion:{' '}
             {ad.conversions > 0
               ? formatMoney((Number(ad.spentAmount || 0) / ad.conversions).toString(), currency)
               : '—'}

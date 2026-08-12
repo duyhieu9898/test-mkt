@@ -51,9 +51,8 @@ Recommendation, and disposition UI.
 
 - All screens are scoped to the active `companyId` and selected Ad Account.
 - Page selection is optional in V1; Ad Account selection is required.
-- Delivery status and AI analysis status are different fields.
-- Analysis status: `NOT_ANALYZED`, `INSUFFICIENT_DATA`, `GOOD`, `WATCH`, `NEEDS_ATTENTION`.
-- Recommendation disposition: `SAVED`, `REJECTED`, `HANDLED_MANUALLY`.
+- Analysis status: `not_analyzed`, `insufficient_data`, `needs_review`, `no_issues_detected`.
+- Recommendation disposition: `recommended`, `saved`, `rejected`, `handled_manually`.
 - Show raw Meta errors only in server logs; UI gives an actionable message.
 
 ## 1. Campaigns — not connected
@@ -132,7 +131,7 @@ rather than guessing an unmapped result or ROAS.
 **Content:** campaign header, objective/target if configured, current vs prior
 window metrics, ad-set/ad hierarchy, creative metadata, and evidence cards.
 
-**Tabs:** Overview, Ad Sets, Ads, Creatives, AI Analysis.
+**Tabs/Sections:** Overview (with current performance & findings), Ad Sets, Ads, Recommendation History.
 
 **Actions:** open lower-level entity; `Re-analyze` when eligible; open a
 recommendation.

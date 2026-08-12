@@ -119,6 +119,7 @@ adsRouter.get('/company/:companyId/facebook/overview', async (c) => {
   });
   const liveCampaigns = importedCampaigns.filter(
     (campaign) =>
+      campaign.status !== 'archived' &&
       !isDevelopmentMetaAdsFixture(campaign.platformCampaignId) &&
       (!accountId || campaign.sourceAccountId === accountId)
   );
@@ -237,8 +238,13 @@ async function requireCurrentMetaCampaign(companyId: string, campaignId: string)
   const isFixture = isDevelopmentMetaAdsFixture(campaign.platformCampaignId);
   const activeAccountId = connection.platformAccountId ? connection.platformAccountId.replace(/^act_/, '') : undefined;
 
-  if (!isFixture && activeAccountId && campaign.sourceAccountId && campaign.sourceAccountId !== activeAccountId) {
-    throw new HTTPException(404, { message: 'Campaign does not belong to the currently selected Meta Ad Account' });
+  if (!isFixture) {
+    if (!activeAccountId) {
+      throw new HTTPException(409, { message: 'Select a Meta Ad Account first' });
+    }
+    if (campaign.sourceAccountId !== activeAccountId) {
+      throw new HTTPException(404, { message: 'Campaign does not belong to the currently selected Meta Ad Account' });
+    }
   }
 
   return { campaign, connection, activeAccountId };
@@ -251,11 +257,31 @@ adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId', async (c) =>
   if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
 
   const { campaign, connection } = await requireCurrentMetaCampaign(companyId, campaignId);
-  const [campaignAdSets, campaignAds] = await Promise.all([
+  const [campaignAdSets, campaignAds, latestAnalysis] = await Promise.all([
     db.query.adSets.findMany({ where: and(eq(adSets.campaignId, campaign.id), eq(adSets.companyId, companyId)), orderBy: desc(adSets.updatedAt) }),
     db.query.ads.findMany({ where: and(eq(ads.campaignId, campaign.id), eq(ads.companyId, companyId)), orderBy: desc(ads.updatedAt) }),
+    db.query.adCampaignAnalyses.findFirst({
+      where: and(eq(adCampaignAnalyses.companyId, companyId), eq(adCampaignAnalyses.campaignId, campaign.id)),
+      orderBy: desc(adCampaignAnalyses.analyzedAt),
+    }),
   ]);
-  return c.json({ data: { campaign, adSets: campaignAdSets, ads: campaignAds, currency: connection.platformAccountCurrency || 'USD', isDevelopmentFixture: isDevelopmentMetaAdsFixture(campaign.platformCampaignId) } });
+  return c.json({
+    data: {
+      campaign,
+      adSets: campaignAdSets,
+      ads: campaignAds,
+      currency: connection.platformAccountCurrency || 'USD',
+      isDevelopmentFixture: isDevelopmentMetaAdsFixture(campaign.platformCampaignId),
+      latestAnalysis: latestAnalysis ? {
+        analysisId: latestAnalysis.id,
+        status: latestAnalysis.status,
+        findings: latestAnalysis.findings,
+        baselineSnapshot: latestAnalysis.baselineSnapshot,
+        currentSnapshot: latestAnalysis.currentSnapshot,
+        analyzedAt: latestAnalysis.analyzedAt.toISOString(),
+      } : null,
+    },
+  });
 });
 
 adsRouter.get('/company/:companyId/facebook/campaigns/:campaignId/ads/:adId', async (c) => {

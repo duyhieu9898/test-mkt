@@ -390,3 +390,12 @@ export async function evolveAllAgents(companyId?: string): Promise<EvolutionResu
   logger.info('Evolution cycle completed', { agentsProcessed: results.length });
   return results;
 }
+
+export async function evaluateAgent(
+  agentId: string,
+  _periodType?: string,
+  _periodStart?: Date,
+  _periodEnd?: Date,
+): Promise<EvolutionResult> {
+  return generateEvolutionRecommendations(agentId);
+}

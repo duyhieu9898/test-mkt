@@ -21,13 +21,14 @@ needs a matching regression test or manual fixture in `testing-and-fixtures`.
 | D14 | Meaningful but stable delivery does not need a recommendation. | No finding means no brief; this is distinct from `INSUFFICIENT_DATA`. |
 | D15 | `AnalysisStatus` is decoupled from disposition status. | Precedence: `not_analyzed` → `insufficient_data` (<1k window impressions) → `needs_review` (findings > 0) → `no_issues_detected`. |
 | D16 | Cost per conversion uses strict math & weighted sum. | `conversions <= 0` returns `null` (`—`/`N/A`); aggregate CPA is `SUM(spend) / SUM(conversions)`. |
-| D17 | Campaign Detail tabs use Server Component data fetching and URL tab state (`?tab=`). | Deep linking and refresh persistence work predictably without bundling client pages. |
+| D17 | Campaign Detail uses client-side data fetching and state hydration. | API endpoints return hydrated hierarchy and latest analysis; client manages reactive tab and session state. |
 | D18 | OAuth state nonces are single-use and company-bound. | `oauth_states` table tracks `consumed_at` and `expires_at`; state nonces expire in 10m and cannot be reused. |
 | D19 | Strict read-only Meta guard at both provider and service layer. | Both `FacebookAdProvider` and `AdsEngine` throw `MetaAdsReadOnlyError` on paid ad mutations. |
 | D20 | Ad Account isolation via `sourceAccountId`. | All Meta data objects and recommendations are filtered by `sourceAccountId`. Switching accounts isolates views. |
 | D21 | Sync separation of Phase A (Network) and Phase B (DB Transaction). | Graph API fetching occurs outside DB transaction; DB upserts/archives run in `db.transaction()`. |
 | D22 | Analysis persistence in `ad_campaign_analyses`. | Every analysis run persists snapshots and findings, producing a permanent `analysisId`. |
 | D23 | Brief generation consumes `analysisId` with ownership verification. | Zero findings or `insufficient_data` returns `{ brief: null, recommendation: null }` without LLM invocation. |
+| D24 | Safe legacy sourceAccountId migration and strict fail-closed account guards. | Legacy un-provenanced synced rows with NULL sourceAccountId are cleaned on migration; NULL sourceAccountId fails closed (404/409) rather than acting as a wildcard. |
 
 ## Change protocol
 

@@ -181,11 +181,14 @@ export async function analyzeMetaCampaign(companyId: string, campaignId: string,
     if (!connection) throw new Error('Meta Ad Account is not connected');
 
     const activeAccountId = connection.platformAccountId ? connection.platformAccountId.replace(/^act_/, '') : undefined;
-    if (campaign.sourceAccountId && activeAccountId && campaign.sourceAccountId !== activeAccountId) {
+    if (!activeAccountId) {
+      throw new Error('Select a Meta Ad Account first');
+    }
+    if (campaign.sourceAccountId !== activeAccountId) {
       throw new Error('Campaign does not belong to the currently selected Meta Ad Account');
     }
 
-    sourceAccountId = activeAccountId || campaign.sourceAccountId || 'unknown';
+    sourceAccountId = activeAccountId;
     const token = decryptMaybe(connection.accessToken);
     const [baselineRows, currentRows] = await Promise.all([
       fetchMetaAdsPages<MetaInsight>(insightsPath(campaign.platformCampaignId, windows.baseline), token),

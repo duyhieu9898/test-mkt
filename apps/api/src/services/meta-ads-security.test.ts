@@ -24,6 +24,15 @@ vi.mock('../lib/db', () => ({
           accessToken: 'token',
         })),
       },
+      adSets: {
+        findMany: vi.fn(async () => []),
+      },
+      ads: {
+        findMany: vi.fn(async () => []),
+      },
+      adCampaignAnalyses: {
+        findFirst: vi.fn(async () => null),
+      },
     },
   },
 }));
@@ -94,5 +103,29 @@ describe('Meta Ads V1 Invariants & Security', () => {
     await expect(adsEngine.pauseCampaign('campaign-1', 'company-1')).rejects.toThrow(
       MetaAdsReadOnlyError
     );
+  });
+
+  it('analyzeMetaCampaign throws fail-closed error if sourceAccountId does not match active account', async () => {
+    const { analyzeMetaCampaign } = await import('./meta-ads-analysis');
+    const dummyWindows = {
+      baseline: { start: '2026-08-01', end: '2026-08-07', timezone: 'UTC' },
+      current: { start: '2026-08-08', end: '2026-08-14', timezone: 'UTC' },
+    };
+
+    // Mock DB returns a campaign with sourceAccountId 'account-B', while connection is '123'
+    const { db } = await import('../lib/db');
+    vi.mocked(db.query.adCampaigns.findFirst).mockResolvedValueOnce({
+      id: 'campaign-1',
+      companyId: 'company-1',
+      connectionId: 'connection-1',
+      platform: 'facebook',
+      platformCampaignId: '123456789', // non-fixture
+      sourceAccountId: 'account-B',
+      objective: 'conversions',
+    } as any);
+
+    await expect(
+      analyzeMetaCampaign('company-1', 'campaign-1', dummyWindows)
+    ).rejects.toThrow('Campaign does not belong to the currently selected Meta Ad Account');
   });
 });
