@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or, isNull } from 'drizzle-orm';
 import { adCampaigns, adConnections, adSets, ads } from '@1person/core/db';
 import { db } from '../lib/db';
 import { decryptMaybe } from '../lib/crypto';
@@ -97,6 +97,22 @@ export function mapMetaAdsStatus(
   if (status === 'ARCHIVED' || status === 'DELETED') return 'archived';
   return 'draft';
 }
+export function mapMetaAdSetStatus(
+  status: MetaStatus | undefined
+): 'active' | 'paused' | 'completed' | 'archived' | 'draft' {
+  const mapped = mapMetaAdsStatus(status);
+  if (mapped === 'pending_review' || mapped === 'rejected') return 'paused';
+  return mapped;
+}
+export function mapMetaAdStatus(
+  status: MetaStatus | undefined
+): 'draft' | 'pending_review' | 'active' | 'paused' | 'rejected' | 'archived' {
+  const mapped = mapMetaAdsStatus(status);
+  if (mapped === 'completed') return 'archived';
+  return mapped;
+}
+
+
 function mapObjective(
   value: string | undefined
 ): 'awareness' | 'traffic' | 'engagement' | 'leads' | 'app_promotion' | 'sales' | 'conversions' {
@@ -322,7 +338,10 @@ export async function syncMetaAds(
         where: and(
           eq(adCampaigns.companyId, companyId),
           eq(adCampaigns.connectionId, connection.id),
-          eq(adCampaigns.sourceAccountId, accountId)
+          or(
+            eq(adCampaigns.sourceAccountId, accountId),
+            isNull(adCampaigns.sourceAccountId)
+          )
         ),
       });
       const campaignsByPlatformId = new Map(
@@ -381,7 +400,7 @@ export async function syncMetaAds(
       }
 
       const existingAdSets = await tx.query.adSets.findMany({
-        where: and(eq(adSets.companyId, companyId), eq(adSets.sourceAccountId, accountId)),
+        where: and(eq(adSets.companyId, companyId), or(eq(adSets.sourceAccountId, accountId), isNull(adSets.sourceAccountId))),
       });
       const adSetsByPlatformId = new Map(
         existingAdSets.filter((row) => row.platformAdSetId).map((row) => [row.platformAdSetId!, row])
@@ -401,7 +420,7 @@ export async function syncMetaAds(
           companyId,
           sourceAccountId: accountId,
           name: remote.name || remote.id,
-          status: mapMetaAdsStatus(remote.status),
+          status: mapMetaAdSetStatus(remote.status),
           effectiveStatus: remote.effective_status || remote.status || null,
           dailyBudget: remote.daily_budget ? (toNumber(remote.daily_budget) / 100).toFixed(2) : null,
           bidAmount: remote.bid_amount ? (toNumber(remote.bid_amount) / 100).toFixed(2) : null,
@@ -432,7 +451,7 @@ export async function syncMetaAds(
       }
 
       const existingAds = await tx.query.ads.findMany({
-        where: and(eq(ads.companyId, companyId), eq(ads.sourceAccountId, accountId)),
+        where: and(eq(ads.companyId, companyId), or(eq(ads.sourceAccountId, accountId), isNull(ads.sourceAccountId))),
       });
       const adsByPlatformId = new Map(
         existingAds.filter((row) => row.platformAdId).map((row) => [row.platformAdId!, row])
@@ -455,7 +474,7 @@ export async function syncMetaAds(
           sourceAccountId: accountId,
           name: remote.name || remote.id,
           type: mapAdType(creative?.object_type),
-          status: mapMetaAdsStatus(remote.status),
+          status: mapMetaAdStatus(remote.status),
           effectiveStatus: remote.effective_status || remote.status || null,
           headline: linkData?.name || null,
           primaryText: linkData?.message || null,

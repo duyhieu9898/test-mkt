@@ -41,7 +41,7 @@ const fixtures = vi.hoisted(() => {
 vi.mock('../lib/db', () => ({ db: fixtures.db }));
 vi.mock('../lib/crypto', () => ({ decryptMaybe: (value: string) => value }));
 vi.mock('@1person/core/db', () => fixtures.tables);
-vi.mock('drizzle-orm', () => ({ and: () => undefined, eq: () => undefined }));
+vi.mock('drizzle-orm', () => ({ and: () => undefined, eq: () => undefined, or: () => undefined, isNull: () => undefined }));
 
 import { mapMetaAdsStatus, syncMetaAds } from './meta-ads-sync';
 

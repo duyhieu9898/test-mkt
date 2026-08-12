@@ -130,7 +130,20 @@ export async function listCompanyMetaAdsRecommendations(args: {
   };
 }
 
-export async function setMetaAdsRecommendationStatus(companyId: string, recommendationId: string, status: AdRecommendationStatus) {
+export async function setMetaAdsRecommendationStatus(companyId: string, recommendationId: string, status: AdRecommendationStatus, sourceAccountId: string) {
+  // Verify recommendation belongs to the selected account via campaign ownership
+  const existing = await db.query.adRecommendations.findFirst({
+    where: and(eq(adRecommendations.id, recommendationId), eq(adRecommendations.companyId, companyId)),
+  });
+  if (!existing) throw new MetaAdsRecommendationNotFoundError();
+
+  const campaign = await db.query.adCampaigns.findFirst({
+    where: and(eq(adCampaigns.id, existing.campaignId), eq(adCampaigns.companyId, companyId)),
+  });
+  if (!campaign || campaign.sourceAccountId !== sourceAccountId) {
+    throw new MetaAdsRecommendationNotFoundError();
+  }
+
   const [recommendation] = await db.update(adRecommendations)
     .set({ status, updatedAt: new Date() })
     .where(and(eq(adRecommendations.id, recommendationId), eq(adRecommendations.companyId, companyId)))

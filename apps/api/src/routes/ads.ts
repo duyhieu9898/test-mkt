@@ -433,8 +433,17 @@ adsRouter.patch('/company/:companyId/facebook/recommendations/:recommendationId'
   const recommendationId = c.req.param('recommendationId');
   const { userId } = c.get('user');
   if (!(await verifyCompanyAccess(userId, companyId))) throw new HTTPException(403, { message: 'Access denied' });
+
+  const connection = await db.query.adConnections.findFirst({
+    where: and(eq(adConnections.companyId, companyId), eq(adConnections.platform, 'facebook')),
+  });
+  if (!connection?.platformAccountId) {
+    throw new HTTPException(409, { message: 'Select a Meta Ad Account first' });
+  }
+  const sourceAccountId = connection.platformAccountId.replace(/^act_/, '');
+
   try {
-    const recommendation = await setMetaAdsRecommendationStatus(companyId, recommendationId, c.req.valid('json').status as AdRecommendationStatus);
+    const recommendation = await setMetaAdsRecommendationStatus(companyId, recommendationId, c.req.valid('json').status as AdRecommendationStatus, sourceAccountId);
     return c.json({ success: true, data: recommendation });
   } catch (error) {
     if (error instanceof MetaAdsRecommendationNotFoundError) throw new HTTPException(404, { message: error.message });
