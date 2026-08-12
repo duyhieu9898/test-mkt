@@ -28,12 +28,19 @@ needs a matching regression test or manual fixture in `testing-and-fixtures`.
 | D21 | Sync separation of Phase A (Network) and Phase B (DB Transaction). | Graph API fetching occurs outside DB transaction; DB upserts/archives run in `db.transaction()`. |
 | D22 | Analysis persistence in `ad_campaign_analyses`. | Every analysis run persists snapshots and findings, producing a permanent `analysisId`. |
 | D23 | Brief generation consumes `analysisId` with ownership verification. | Zero findings or `insufficient_data` returns `{ brief: null, recommendation: null }` without LLM invocation. |
-| D24 | Safe legacy sourceAccountId migration and strict fail-closed account guards. | Legacy un-provenanced synced rows with NULL sourceAccountId are cleaned on migration; NULL sourceAccountId fails closed (404/409) rather than acting as a wildcard. |
-| D25 | Sync-based NULL-row reconciliation for legacy provenance. | Definitive provenance is assigned exclusively when Graph API confirms campaign membership during sync. Migrations do not guess ambiguous provenance. NULL-provenance rows remain hidden until reconciled. |
+| D24 | Missing/unknown provenance fails closed. | Migration does not infer account ownership. NULL sourceAccountId fails closed (404/409) rather than acting as a wildcard. |
+| D25 | Sync-based NULL-row reconciliation for legacy provenance. | Definitive legacy provenance is assigned only when Graph API confirms remote object membership during sync. Migrations do not guess ambiguous provenance. NULL-provenance rows remain hidden until reconciled. |
 | D26 | Account-scoped recommendation status disposition. | PATCH recommendation status validates campaign ownership against selected account (`sourceAccountId`); cross-account recommendation writes fail closed (404). |
-| D27 | Scoped AdSet and Ad reconciliation to candidate Meta campaigns. | AdSet and Ad reconciliation queries are strictly scoped to candidate Meta campaign IDs (`inArray(campaignId, candidateCampaignIds)`). Meta sync never fetches, touches, or archives non-Meta or cross-platform ad sets/ads. |
+| D27 | Scoped AdSet and Ad reconciliation to candidate Meta campaigns. | Meta sync may reconcile/archive AdSets and Ads only inside candidate Meta campaign hierarchy (`inArray(campaignId, candidateCampaignIds)`). Meta sync never fetches, touches, or archives non-Meta or cross-platform ad sets/ads. |
 
 ## Change protocol
 
 When accepting an improvement, append an ID, describe its invariant, and add
 or amend a test scenario. Do not silently weaken an earlier decision.
+
+Before first production deployment:
+- migration history may still be cleaned while environments are disposable.
+
+After first shared/prod deployment:
+- treat applied migrations as immutable;
+- use new migrations for corrective changes.

@@ -22,9 +22,43 @@ const fixtures = vi.hoisted(() => {
   const db = {
     query: {
       adConnections: { findFirst: vi.fn(async () => connection) },
-      adCampaigns: { findMany: vi.fn(async () => campaigns) },
-      adSets: { findMany: vi.fn(async () => adSets) },
-      ads: { findMany: vi.fn(async () => ads) },
+      adCampaigns: {
+        findMany: vi.fn(async () => {
+          const currentAccountId = connection.platformAccountId.replace(/^act_/, '');
+          return campaigns.filter(
+            (c) =>
+              c.companyId === connection.companyId &&
+              c.connectionId === connection.id &&
+              (c.sourceAccountId === currentAccountId || c.sourceAccountId == null)
+          );
+        }),
+      },
+      adSets: {
+        findMany: vi.fn(async (params?: any) => {
+          const currentAccountId = connection.platformAccountId.replace(/^act_/, '');
+          const candidateCampaignIds =
+            params?.where?.args?.find((a: any) => a?.type === 'inArray')?.list || [];
+          return adSets.filter(
+            (s) =>
+              s.companyId === connection.companyId &&
+              candidateCampaignIds.includes(s.campaignId) &&
+              (s.sourceAccountId === currentAccountId || s.sourceAccountId == null)
+          );
+        }),
+      },
+      ads: {
+        findMany: vi.fn(async (params?: any) => {
+          const currentAccountId = connection.platformAccountId.replace(/^act_/, '');
+          const candidateCampaignIds =
+            params?.where?.args?.find((a: any) => a?.type === 'inArray')?.list || [];
+          return ads.filter(
+            (a) =>
+              a.companyId === connection.companyId &&
+              candidateCampaignIds.includes(a.campaignId) &&
+              (a.sourceAccountId === currentAccountId || a.sourceAccountId == null)
+          );
+        }),
+      },
     },
     insert: vi.fn((table: unknown) => ({
       values: (values: Record<string, unknown>) => {
@@ -35,10 +69,14 @@ const fixtures = vi.hoisted(() => {
     })),
     update: vi.fn((table: unknown) => ({
       set: (values: Record<string, unknown>) => ({
-        where: async (where: unknown) => {
-          updates.push({ table, values, where });
-          // If updating a row in store by id, apply updates
-          return undefined;
+        where: async (whereClause: any) => {
+          updates.push({ table, values, where: whereClause });
+          const store = storeFor(table);
+          const targetId = whereClause?.type === 'eq' ? whereClause.right : undefined;
+          if (targetId) {
+            const targetRow = store.find((r: any) => r.id === targetId);
+            if (targetRow) Object.assign(targetRow, values);
+          }
         },
       }),
     })),
@@ -58,7 +96,11 @@ vi.mock('../lib/db', () => ({ db: fixtures.db }));
 vi.mock('../lib/crypto', () => ({ decryptMaybe: (value: string) => value }));
 vi.mock('@1person/core/db', () => fixtures.tables);
 vi.mock('drizzle-orm', () => ({
-  and: () => undefined, eq: () => undefined, or: () => undefined, isNull: () => undefined, inArray: () => undefined,
+  and: (...args: unknown[]) => ({ type: 'and', args }),
+  eq: (left: unknown, right: unknown) => ({ type: 'eq', left, right }),
+  or: (...args: unknown[]) => ({ type: 'or', args }),
+  isNull: (field: unknown) => ({ type: 'isNull', field }),
+  inArray: (field: unknown, list: unknown[]) => ({ type: 'inArray', field, list }),
 }));
 
 import { mapMetaAdsStatus, syncMetaAds } from './meta-ads-sync';
@@ -154,5 +196,253 @@ describe('syncMetaAds', () => {
     expect(mapMetaAdsStatus('PENDING_REVIEW')).toBe('pending_review');
     expect(mapMetaAdsStatus('REJECTED')).toBe('rejected');
     expect(mapMetaAdsStatus('COMPLETED')).toBe('completed');
+  });
+
+  // Task 4.1: Account switch A -> B -> A
+  it('isolates account data when switching connections A -> B -> A', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: string) => {
+      if (input.includes('act_accountA/campaigns?')) {
+        return jsonResponse({ data: [{ id: 'meta-campaign-A', name: 'Campaign A', status: 'ACTIVE' }] });
+      }
+      if (input.includes('act_accountB/campaigns?')) {
+        return jsonResponse({ data: [{ id: 'meta-campaign-B', name: 'Campaign B', status: 'ACTIVE' }] });
+      }
+      if (input.includes('/adsets?') || input.includes('/ads?')) return jsonResponse({ data: [] });
+      if (input.includes('level=')) return jsonResponse({ data: [] });
+      throw new Error(`Unexpected Meta request: ${input}`);
+    }));
+
+    // 1. Sync Account A
+    fixtures.connection.platformAccountId = 'act_accountA';
+    await syncMetaAds('company-1');
+
+    expect(fixtures.campaigns).toHaveLength(1);
+    const campAId = fixtures.campaigns[0].id;
+    expect(fixtures.campaigns[0]).toMatchObject({
+      platformCampaignId: 'meta-campaign-A',
+      sourceAccountId: 'accountA',
+    });
+
+    // 2. Switch connection to Account B and Sync
+    fixtures.connection.platformAccountId = 'act_accountB';
+    await syncMetaAds('company-1');
+
+    // Both A and B campaigns exist in DB, but A campaign was untouched
+    expect(fixtures.campaigns).toHaveLength(2);
+    const campA = fixtures.campaigns.find((c) => c.platformCampaignId === 'meta-campaign-A');
+    const campB = fixtures.campaigns.find((c) => c.platformCampaignId === 'meta-campaign-B');
+    expect(campA).toMatchObject({ id: campAId, sourceAccountId: 'accountA' });
+    expect(campB).toMatchObject({ sourceAccountId: 'accountB' });
+
+    // 3. Switch back to Account A and Sync again
+    fixtures.connection.platformAccountId = 'act_accountA';
+    await syncMetaAds('company-1');
+
+    // No duplicate inserted, total remains 2, campA local ID stable
+    expect(fixtures.campaigns).toHaveLength(2);
+    const campAReused = fixtures.campaigns.find((c) => c.platformCampaignId === 'meta-campaign-A');
+    expect(campAReused?.id).toBe(campAId);
+    expect(campAReused?.sourceAccountId).toBe('accountA');
+  });
+
+  // Task 4.2: Multiple NULL legacy campaigns
+  it('reconciles multiple NULL legacy campaigns to their respective accounts correctly', async () => {
+    fixtures.campaigns.push(
+      {
+        id: 'legacy-c-A',
+        companyId: 'company-1',
+        connectionId: 'connection-1',
+        platformCampaignId: 'remote-A',
+        sourceAccountId: null,
+        status: 'active',
+      },
+      {
+        id: 'legacy-c-B',
+        companyId: 'company-1',
+        connectionId: 'connection-1',
+        platformCampaignId: 'remote-B',
+        sourceAccountId: null,
+        status: 'active',
+      }
+    );
+
+    vi.stubGlobal('fetch', vi.fn((input: string) => {
+      if (input.includes('act_accountB/campaigns?')) {
+        return jsonResponse({ data: [{ id: 'remote-B', name: 'Campaign B', status: 'ACTIVE' }] });
+      }
+      if (input.includes('act_accountA/campaigns?')) {
+        return jsonResponse({ data: [{ id: 'remote-A', name: 'Campaign A', status: 'ACTIVE' }] });
+      }
+      if (input.includes('/adsets?') || input.includes('/ads?')) return jsonResponse({ data: [] });
+      if (input.includes('level=')) return jsonResponse({ data: [] });
+      throw new Error(`Unexpected Meta request: ${input}`);
+    }));
+
+    // Sync B: Graph returns remote-B
+    fixtures.connection.platformAccountId = 'act_accountB';
+    await syncMetaAds('company-1');
+
+    const legacyB = fixtures.campaigns.find((c) => c.id === 'legacy-c-B');
+    const legacyA = fixtures.campaigns.find((c) => c.id === 'legacy-c-A');
+
+    expect(legacyB?.sourceAccountId).toBe('accountB');
+    expect(legacyA?.sourceAccountId).toBeNull();
+
+    // Then Sync A: Graph returns remote-A
+    fixtures.connection.platformAccountId = 'act_accountA';
+    await syncMetaAds('company-1');
+
+    expect(legacyA?.sourceAccountId).toBe('accountA');
+  });
+
+  // Task 4.3: Full hierarchy reconciliation
+  it('reconciles full hierarchy (Campaign -> AdSet -> Ad) with NULL sourceAccountId without duplicates', async () => {
+    fixtures.campaigns.push({
+      id: 'legacy-c1',
+      companyId: 'company-1',
+      connectionId: 'connection-1',
+      platformCampaignId: 'remote-c1',
+      sourceAccountId: null,
+      status: 'active',
+    });
+    fixtures.adSets.push({
+      id: 'legacy-as1',
+      companyId: 'company-1',
+      campaignId: 'legacy-c1',
+      platformAdSetId: 'remote-as1',
+      sourceAccountId: null,
+      status: 'active',
+    });
+    fixtures.ads.push({
+      id: 'legacy-ad1',
+      companyId: 'company-1',
+      campaignId: 'legacy-c1',
+      adSetId: 'legacy-as1',
+      platformAdId: 'remote-ad1',
+      sourceAccountId: null,
+      status: 'active',
+    });
+
+    vi.stubGlobal('fetch', vi.fn((input: string) => {
+      if (input.includes('/campaigns?')) return jsonResponse({ data: [{ id: 'remote-c1', name: 'Meta Campaign', status: 'ACTIVE' }] });
+      if (input.includes('/adsets?')) return jsonResponse({ data: [{ id: 'remote-as1', campaign_id: 'remote-c1', name: 'Meta AdSet', status: 'ACTIVE' }] });
+      if (input.includes('/ads?')) return jsonResponse({ data: [{ id: 'remote-ad1', campaign_id: 'remote-c1', adset_id: 'remote-as1', name: 'Meta Ad', status: 'ACTIVE', creative: { id: 'cr-1' } }] });
+      if (input.includes('level=')) return jsonResponse({ data: [] });
+      throw new Error(`Unexpected Meta request: ${input}`);
+    }));
+
+    await syncMetaAds('company-1');
+
+    expect(fixtures.campaigns).toHaveLength(1);
+    expect(fixtures.adSets).toHaveLength(1);
+    expect(fixtures.ads).toHaveLength(1);
+
+    expect(fixtures.campaigns[0]).toMatchObject({
+      id: 'legacy-c1',
+      sourceAccountId: '123',
+      origin: 'meta_synced_readonly',
+    });
+    expect(fixtures.adSets[0]).toMatchObject({
+      id: 'legacy-as1',
+      sourceAccountId: '123',
+    });
+    expect(fixtures.ads[0]).toMatchObject({
+      id: 'legacy-ad1',
+      sourceAccountId: '123',
+    });
+  });
+
+  // Task 4.4: Mixed-platform protection
+  it('protects non-Meta campaigns, ad sets, and ads from sync modifications', async () => {
+    fixtures.campaigns.push({
+      id: 'meta-c1',
+      companyId: 'company-1',
+      connectionId: 'connection-1',
+      platformCampaignId: 'meta-remote-1',
+      sourceAccountId: '123',
+      status: 'active',
+    });
+    fixtures.campaigns.push({
+      id: 'google-c1',
+      companyId: 'company-1',
+      connectionId: 'connection-google',
+      platformCampaignId: 'g-camp-1',
+      sourceAccountId: null,
+      status: 'active',
+    });
+    fixtures.adSets.push({
+      id: 'google-as1',
+      companyId: 'company-1',
+      campaignId: 'google-c1',
+      platformAdSetId: 'g-adset-1',
+      sourceAccountId: null,
+      status: 'active',
+    });
+    fixtures.ads.push({
+      id: 'google-ad1',
+      companyId: 'company-1',
+      campaignId: 'google-c1',
+      adSetId: 'google-as1',
+      platformAdId: 'g-ad-1',
+      sourceAccountId: null,
+      status: 'active',
+    });
+
+    vi.stubGlobal('fetch', vi.fn((input: string) => {
+      if (input.includes('/campaigns?')) return jsonResponse({ data: [{ id: 'meta-remote-1', name: 'Updated Meta', status: 'ACTIVE' }] });
+      if (input.includes('/adsets?')) return jsonResponse({ data: [] });
+      if (input.includes('/ads?')) return jsonResponse({ data: [] });
+      if (input.includes('level=')) return jsonResponse({ data: [] });
+      throw new Error(`Unexpected Meta request: ${input}`);
+    }));
+
+    await syncMetaAds('company-1');
+
+    const googleCamp = fixtures.campaigns.find((c) => c.id === 'google-c1');
+    const googleAdSet = fixtures.adSets.find((a) => a.id === 'google-as1');
+    const googleAd = fixtures.ads.find((a) => a.id === 'google-ad1');
+
+    expect(googleCamp).toMatchObject({ status: 'active', sourceAccountId: null });
+    expect(googleAdSet).toMatchObject({ status: 'active', sourceAccountId: null });
+    expect(googleAd).toMatchObject({ status: 'active', sourceAccountId: null });
+
+    const updatedIds = fixtures.updates.map((u) => (u.where as any)?.right);
+    expect(updatedIds).not.toContain('google-c1');
+    expect(updatedIds).not.toContain('google-as1');
+    expect(updatedIds).not.toContain('google-ad1');
+  });
+
+  // Task 4.5: Legacy row not present in current account
+  it('preserves legacy NULL campaign when not present in current account and reconciles on correct account sync', async () => {
+    fixtures.campaigns.push({
+      id: 'legacy-c-A',
+      companyId: 'company-1',
+      connectionId: 'connection-1',
+      platformCampaignId: 'campaign-A',
+      sourceAccountId: null,
+      status: 'active',
+    });
+
+    vi.stubGlobal('fetch', vi.fn((input: string) => {
+      if (input.includes('act_accountB/campaigns?')) return jsonResponse({ data: [] });
+      if (input.includes('act_accountA/campaigns?')) return jsonResponse({ data: [{ id: 'campaign-A', name: 'Campaign A', status: 'ACTIVE' }] });
+      if (input.includes('/adsets?') || input.includes('/ads?')) return jsonResponse({ data: [] });
+      if (input.includes('level=')) return jsonResponse({ data: [] });
+      throw new Error(`Unexpected Meta request: ${input}`);
+    }));
+
+    // Account B sync where Graph returns empty
+    fixtures.connection.platformAccountId = 'act_accountB';
+    await syncMetaAds('company-1');
+
+    const legacyCampB = fixtures.campaigns.find((c) => c.id === 'legacy-c-A');
+    expect(legacyCampB?.sourceAccountId).toBeNull();
+
+    // Switch to Account A sync where Graph returns campaign-A
+    fixtures.connection.platformAccountId = 'act_accountA';
+    await syncMetaAds('company-1');
+
+    const legacyCampA = fixtures.campaigns.find((c) => c.id === 'legacy-c-A');
+    expect(legacyCampA?.sourceAccountId).toBe('accountA');
   });
 });

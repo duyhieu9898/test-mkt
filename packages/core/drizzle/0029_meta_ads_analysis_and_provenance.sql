@@ -2,8 +2,6 @@ ALTER TABLE "ad_campaigns" ADD COLUMN "source_account_id" text;
 --> statement-breakpoint
 ALTER TABLE "ad_campaigns" ADD COLUMN "origin" text NOT NULL DEFAULT 'managed';
 --> statement-breakpoint
-UPDATE "ad_campaigns" SET "origin" = 'meta_synced_readonly' WHERE "platform" = 'facebook';
---> statement-breakpoint
 ALTER TABLE "ad_sets" ADD COLUMN "source_account_id" text;
 --> statement-breakpoint
 ALTER TABLE "ads" ADD COLUMN "source_account_id" text;
